@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Interview Prep{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Interview Preparation</h2>
+    <p>Got an interview? Get a 2-week action plan with portfolio projects, certifications, and trap question defenses.</p>
+</div>
+
+{% if not resume %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">📄</div>
+        <h3>Set up your Master Resume first</h3>
+        <a href="{{ url_for('master_resume.master_resume_page') }}" class="btn btn-primary">Set Up Master Resume</a>
+    </div>
+</div>
+{% else %}
+<div class="card mb-6">
+    <h3 class="card-title mb-4">Job Details</h3>
+    <div class="form-group">
+        <label class="form-label">Job Description</label>
+        <textarea id="jd-input" class="form-textarea tall" placeholder="Paste the job description..."></textarea>
+    </div>
+    <div class="form-group">
+        <label class="form-label">Additional Skills (optional)</label>
+        <input type="text" id="skills-input" class="form-input" placeholder="Comma-separated skills not on resume">
+    </div>
+    <button class="btn btn-primary btn-lg" onclick="runInterviewPlan()">🎯 Generate 2-Week Action Plan</button>
+</div>
+<div id="interview-results"></div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const resumeText = {{ resume.to_resume_text()|tojson if resume else '""' }};
+
+async function runInterviewPlan() {
+    const jd = document.getElementById('jd-input').value.trim();
+    if (!jd) return showToast('Please paste the job description.', 'error');
+    const skills = document.getElementById('skills-input').value.trim();
+    showLoading('Creating your 2-week interview domination plan...');
+    try {
+        const res = await fetch('/interview-prep/api/plan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jd_text: jd, resume_text: resumeText, skill_list: skills })
+        });
+        const data = await res.json();
+        hideLoading();
+        if (data.error) return showToast(data.error, 'error');
+        updateCost(data.cost_usd);
+        renderPlan(data.plan);
+    } catch (e) { hideLoading(); showToast('API error: ' + e.message, 'error'); }
+}
+
+function renderPlan(p) {
+    if (typeof p === 'string') {
+        document.getElementById('interview-results').innerHTML = `<div class="card"><pre style="white-space:pre-wrap;color:var(--text-secondary)">${p}</pre></div>`;
+        return;
+    }
+    let html = '';
+
+    // Portfolio Projects
+    if (p.portfolio_projects) {
+        html += '<div class="result-section"><h3>🔨 Portfolio Projects</h3>';
+        p.portfolio_projects.forEach(proj => {
+            html += `<div class="card mb-4">
+                <div class="flex-between mb-4"><strong style="font-size:var(--text-lg)">${proj.name}</strong><span class="badge badge-info">${proj.time_estimate}</span></div>
+                <p class="text-muted">${proj.description}</p>
+                <p class="mt-2"><strong>Tech:</strong> ${proj.tech_stack} | <strong>Skills:</strong> ${(proj.skills_demonstrated||[]).join(', ')}</p>
+                <div class="result-fix mt-4"><strong>Resume Line:</strong> ${proj.resume_line||''}</div>
+                <div class="result-fix mt-2"><strong>Interview Pitch:</strong> ${proj.interview_talking_point||''}</div>
+            </div>`;
+        });
+        html += '</div>';
+    }
+
+    // Certifications
+    if (p.certifications) {
+        html += '<div class="result-section"><h3>🏆 Certifications</h3><div class="card-grid">';
+        p.certifications.forEach(c => {
+            html += `<div class="card"><strong>${c.name}</strong>
+                <p class="text-muted mt-2">${c.provider} • ${c.cost} • ${c.time_to_complete}</p>
+                <div class="result-fix mt-4"><strong>Resume Line:</strong> ${c.resume_line||''}</div>
+                ${c.url ? `<a href="${c.url}" target="_blank" class="btn btn-sm btn-secondary mt-4">Enroll →</a>` : ''}
+            </div>`;
+        });
+        html += '</div></div>';
+    }
+
+    // Trap Questions
+    if (p.trap_questions) {
+        html += '<div class="result-section"><h3>⚠️ Trap Questions</h3>';
+        p.trap_questions.forEach(q => {
+            html += `<div class="card mb-4" style="border-left:4px solid var(--accent-warning)">
+                <strong style="color:var(--accent-warning)">Q: "${q.question}"</strong>
+                <p class="text-muted mt-2"><em>Tests: ${q.weakness_targeted}</em></p>
+                <div class="result-fix mt-4"><strong>Defense:</strong> ${q.defense_script}</div>
+                ${q.follow_up_likely ? `<div class="mt-2 text-muted"><strong>Follow-up:</strong> "${q.follow_up_likely}" → ${q.follow_up_defense||''}</div>` : ''}
+            </div>`;
+        });
+        html += '</div>';
+    }
+
+    // Schedule
+    if (p.two_week_schedule) {
+        html += '<div class="result-section"><h3>📅 2-Week Schedule</h3><div class="card-grid">';
+        for (const [week, data] of Object.entries(p.two_week_schedule)) {
+            html += `<div class="card"><h4 class="card-title mb-4">${week.replace('_',' ')}</h4>`;
+            for (const [day, focus] of Object.entries(data)) {
+                html += `<div class="result-item mb-2"><strong>${day.replace(/_/g,' ')}:</strong> <span class="text-muted">${focus}</span></div>`;
+            }
+            html += '</div>';
+        }
+        html += '</div></div>';
+    }
+
+    document.getElementById('interview-results').innerHTML = html;
+}
+</script>
+{% endblock %}

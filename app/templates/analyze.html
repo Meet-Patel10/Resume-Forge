@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{% block title %}Analyze JD{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Analyze Job Description</h2>
+    <p>Paste a job description. Get a brutal critique, keyword gap map, and gaps identified — no sugarcoating.</p>
+</div>
+
+{% if not resume %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">📄</div>
+        <h3>Set up your Master Resume first</h3>
+        <p>You need a master resume before you can analyze job descriptions against it.</p>
+        <a href="{{ url_for('master_resume.master_resume_page') }}" class="btn btn-primary">Set Up Master Resume</a>
+    </div>
+</div>
+{% else %}
+
+<!-- Input Section -->
+<div class="card mb-6">
+    <h3 class="card-title mb-4">Job Description</h3>
+    <div class="form-group">
+        <textarea id="jd-input" class="form-textarea tall" placeholder="Paste the full job description here..."></textarea>
+    </div>
+    <div class="flex gap-4">
+        <button class="btn btn-primary" onclick="runCritique()" id="btn-critique">
+            🔍 Brutal Critique
+        </button>
+        <button class="btn btn-secondary" onclick="runKeywords()" id="btn-keywords">
+            🔑 Extract Keywords
+        </button>
+        <button class="btn btn-secondary" onclick="runGapFill()" id="btn-gap" style="display:none">
+            🧩 Fill Gaps
+        </button>
+    </div>
+</div>
+
+<!-- Tabs for Results -->
+<div class="tabs" id="result-tabs" style="display: none;">
+    <button class="tab active" data-tab="critique">Brutal Critique</button>
+    <button class="tab" data-tab="keywords">Keyword Map</button>
+    <button class="tab" data-tab="gaps">Gap Filler</button>
+</div>
+
+<!-- Critique Results -->
+<div class="tab-content active" id="tab-critique">
+    <div id="critique-results"></div>
+</div>
+
+<!-- Keyword Results -->
+<div class="tab-content" id="tab-keywords">
+    <div id="keyword-results"></div>
+</div>
+
+<!-- Gap Results -->
+<div class="tab-content" id="tab-gaps">
+    <div id="gap-results"></div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const resumeText = {{ resume.to_resume_text()|tojson if resume else '""' }};
+    let keywordGaps = [];
+
+    // ===== Tab Switching =====
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        });
+    });
+
+    // ===== Brutal Critique =====
+    async function runCritique() {
+        const jd = document.getElementById('jd-input').value.trim();
+        if (!jd) return showToast('Please paste a job description first.', 'error');
+
+        showLoading('Running brutal critique... This hiring manager has zero patience.');
+        try {
+            const res = await fetch('/analyze/api/critique', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jd_text: jd, resume_text: resumeText })
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+            updateCost(data.cost_usd);
+            document.getElementById('result-tabs').style.display = 'flex';
+            renderCritique(data.critique);
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function renderCritique(c) {
+        if (typeof c === 'string') {
+            document.getElementById('critique-results').innerHTML = `<div class="card"><pre style="white-space:pre-wrap;color:var(--text-secondary)">${c}</pre></div>`;
+            return;
+        }
+
+        let html = '';
+
+        // Verdict Banner
+        const verdictColor = c.overall_verdict === 'hire' ? 'success' : c.overall_verdict === 'reject' ? 'danger' : 'warning';
+        html += `
+            <div class="card mb-6" style="border-left: 4px solid var(--accent-${verdictColor})">
+                <div class="flex-between">
+                    <div>
+                        <span class="badge badge-${verdictColor}" style="font-size: var(--text-base); padding: var(--space-2) var(--space-4)">
+                            ${c.overall_verdict ? c.overall_verdict.toUpperCase() : 'N/A'}
+                        </span>
+                        <span style="margin-left: var(--space-4); color: var(--text-secondary)">
+                            ⏱ Survives ${c.survival_time_seconds || '?'}s before rejection
+                        </span>
+                    </div>
+                </div>
+                <p class="mt-4" style="color: var(--text-secondary)">${c.time_to_reject || ''}</p>
+                <p class="mt-2">${c.verdict_reasoning || ''}</p>
+            </div>
+        `;
+
+        // Instant Rejections
+        if (c.instant_rejections && c.instant_rejections.length) {
+            html += '<div class="result-section"><h3>🚨 Instant Rejections</h3>';
+            c.instant_rejections.forEach(r => {
+                html += `
+                    <div class="result-item">
+                        <div class="result-item-header">
+                            <strong>${r.issue}</strong>
+                            <span class="badge severity-${r.severity}">Severity: ${r.severity}/10</span>
+                        </div>
+                        <div class="result-item-body">${r.location ? '<em>Location: ' + r.location + '</em>' : ''}</div>
+                        <div class="result-fix"><strong>Fix:</strong> ${r.fix}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Vague Statements
+        if (c.vague_statements && c.vague_statements.length) {
+            html += '<div class="result-section"><h3>😶‍🌫️ Vague Statements</h3>';
+            c.vague_statements.forEach(v => {
+                html += `
+                    <div class="result-item">
+                        <div class="result-item-body">
+                            <div style="text-decoration: line-through; color: var(--accent-danger); margin-bottom: var(--space-2)">"${v.original}"</div>
+                            <div class="text-muted">${v.problem}</div>
+                        </div>
+                        <div class="result-fix"><strong>Rewrite:</strong> "${v.rewrite}"</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Missing Requirements
+        if (c.missing_requirements && c.missing_requirements.length) {
+            html += '<div class="result-section"><h3>❌ Missing Requirements</h3>';
+            c.missing_requirements.forEach(m => {
+                const impColor = m.importance === 'critical' ? 'danger' : m.importance === 'important' ? 'warning' : 'muted';
+                html += `
+                    <div class="result-item">
+                        <div class="result-item-header">
+                            <strong>${m.requirement}</strong>
+                            <span class="badge badge-${impColor}">${m.importance}</span>
+                        </div>
+                        <div class="result-fix"><strong>Suggestion:</strong> ${m.suggestion}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Strengths
+        if (c.strengths && c.strengths.length) {
+            html += '<div class="result-section"><h3>✅ Strengths</h3>';
+            c.strengths.forEach(s => {
+                html += `
+                    <div class="result-item" style="border-left: 3px solid var(--accent-success)">
+                        <strong>${s.point}</strong>
+                        <div class="result-item-body mt-2">${s.why_it_works}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        document.getElementById('critique-results').innerHTML = html;
+    }
+
+    // ===== Keyword Extraction =====
+    async function runKeywords() {
+        const jd = document.getElementById('jd-input').value.trim();
+        if (!jd) return showToast('Please paste a job description first.', 'error');
+
+        showLoading('Extracting keywords and mapping gaps...');
+        try {
+            const res = await fetch('/analyze/api/keywords', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jd_text: jd, resume_text: resumeText })
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+            updateCost(data.cost_usd);
+            document.getElementById('result-tabs').style.display = 'flex';
+
+            // Switch to keywords tab
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('[data-tab="keywords"]').classList.add('active');
+            document.getElementById('tab-keywords').classList.add('active');
+
+            renderKeywords(data.keywords);
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function renderKeywords(k) {
+        if (typeof k === 'string') {
+            document.getElementById('keyword-results').innerHTML = `<div class="card"><pre style="white-space:pre-wrap;color:var(--text-secondary)">${k}</pre></div>`;
+            return;
+        }
+
+        let html = '';
+
+        // ATS Overview
+        if (k.ats_optimization) {
+            const ats = k.ats_optimization;
+            html += `
+                <div class="card mb-6">
+                    <h3 class="card-title">ATS Match Overview</h3>
+                    <div class="stat-value mt-4">${ats.current_match_percentage || 0}%</div>
+                    <div class="stat-label">Keyword Match Rate</div>
+                    ${ats.critical_missing ? `<div class="mt-4"><strong class="text-danger">Critical Missing:</strong> ${ats.critical_missing.join(', ')}</div>` : ''}
+                </div>
+            `;
+        }
+
+        // 6-Second Scan
+        if (k.six_second_scan) {
+            const scan = k.six_second_scan;
+            html += `
+                <div class="card mb-6" style="border-left: 4px solid var(--accent-${scan.passes_scan ? 'success' : 'danger'})">
+                    <h3 class="card-title">📱 6-Second Scan</h3>
+                    <p class="mt-2"><strong>First impression:</strong> ${scan.first_impression}</p>
+                    <p class="mt-2 badge badge-${scan.passes_scan ? 'success' : 'danger'}">${scan.passes_scan ? 'PASSES' : 'FAILS'} 6-second scan</p>
+                    <p class="mt-2 text-muted">${scan.improvement || ''}</p>
+                </div>
+            `;
+        }
+
+        // Keyword Grid
+        if (k.top_keywords && k.top_keywords.length) {
+            html += '<div class="keyword-grid">';
+            keywordGaps = [];
+            k.top_keywords.forEach(kw => {
+                const statusClass = kw.resume_status === 'strong_match' ? 'match-strong' :
+                                   kw.resume_status === 'weak_match' ? 'match-weak' : 'match-missing';
+                const statusIcon = kw.resume_status === 'strong_match' ? '✅' :
+                                  kw.resume_status === 'weak_match' ? '⚠️' : '❌';
+
+                if (kw.resume_status !== 'strong_match') keywordGaps.push(kw.keyword);
+
+                html += `
+                    <div class="keyword-card ${statusClass}">
+                        <div class="flex-between mb-4">
+                            <strong>${statusIcon} ${kw.keyword}</strong>
+                            <span class="badge badge-primary">Priority: ${kw.priority}/10</span>
+                        </div>
+                        <p class="text-muted" style="font-size: var(--text-sm)">${kw.jd_context || ''}</p>
+                        ${kw.resume_evidence ? `<p class="mt-2" style="font-size: var(--text-sm)"><strong>Your evidence:</strong> ${kw.resume_evidence}</p>` : ''}
+                        <div class="result-fix mt-4">
+                            <strong>Add:</strong> "${kw.phrase_to_add || ''}"<br>
+                            <span class="text-muted">→ ${kw.where_to_add || 'Skills section'}</span>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+
+            // Show gap fill button if gaps exist
+            if (keywordGaps.length) {
+                document.getElementById('btn-gap').style.display = 'inline-flex';
+            }
+        }
+
+        document.getElementById('keyword-results').innerHTML = html;
+    }
+
+    // ===== Gap Filler =====
+    async function runGapFill() {
+        const jd = document.getElementById('jd-input').value.trim();
+        if (!jd) return showToast('Please paste a job description first.', 'error');
+
+        showLoading('Finding micro-projects and certifications to bridge gaps...');
+        try {
+            const res = await fetch('/analyze/api/gap-fill', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jd_text: jd, resume_text: resumeText, keyword_gaps: keywordGaps })
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+            updateCost(data.cost_usd);
+
+            // Switch to gaps tab
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector('[data-tab="gaps"]').classList.add('active');
+            document.getElementById('tab-gaps').classList.add('active');
+
+            renderGaps(data.gap_analysis);
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function renderGaps(g) {
+        if (typeof g === 'string') {
+            document.getElementById('gap-results').innerHTML = `<div class="card"><pre style="white-space:pre-wrap;color:var(--text-secondary)">${g}</pre></div>`;
+            return;
+        }
+
+        let html = '';
+
+        // Rewritten Summary
+        if (g.rewritten_summary) {
+            html += `
+                <div class="card mb-6" style="border-left: 4px solid var(--accent-primary)">
+                    <h3 class="card-title">✨ Rewritten Summary</h3>
+                    <p class="mt-4" style="line-height: 1.7">${g.rewritten_summary}</p>
+                </div>
+            `;
+        }
+
+        // Micro Projects
+        if (g.micro_projects && g.micro_projects.length) {
+            html += '<div class="result-section"><h3>🔨 Micro Projects (2-Week Sprint)</h3>';
+            g.micro_projects.forEach(p => {
+                html += `
+                    <div class="card mb-4">
+                        <div class="flex-between mb-4">
+                            <strong style="font-size: var(--text-lg)">${p.title}</strong>
+                            <span class="badge badge-info">${p.time_to_complete}</span>
+                        </div>
+                        <p class="text-muted">${p.description}</p>
+                        <p class="mt-2"><strong>Tech Stack:</strong> ${p.tech_stack}</p>
+                        <p class="mt-2"><strong>Skills Proven:</strong> ${(p.skills_demonstrated || []).join(', ')}</p>
+                        <div class="result-fix mt-4">
+                            <strong>Resume Line:</strong> ${p.resume_line || ''}
+                        </div>
+                        <div class="result-fix mt-2">
+                            <strong>Interview Talking Point:</strong> ${p.interview_talking_point || ''}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Certifications
+        if (g.certifications && g.certifications.length) {
+            html += '<div class="result-section"><h3>🏆 Certifications</h3><div class="card-grid">';
+            g.certifications.forEach(cert => {
+                html += `
+                    <div class="card">
+                        <strong>${cert.name}</strong>
+                        <p class="text-muted mt-2">${cert.provider} • ${cert.cost} • ${cert.time_to_complete}</p>
+                        <p class="mt-2">Recruiter Weight: <span class="badge badge-${cert.weight_with_recruiters === 'high' ? 'success' : 'warning'}">${cert.weight_with_recruiters}</span></p>
+                        <div class="result-fix mt-4"><strong>Resume Line:</strong> ${cert.resume_line || ''}</div>
+                        ${cert.url ? `<a href="${cert.url}" target="_blank" class="btn btn-sm btn-secondary mt-4">Enroll →</a>` : ''}
+                    </div>
+                `;
+            });
+            html += '</div></div>';
+        }
+
+        document.getElementById('gap-results').innerHTML = html;
+    }
+</script>
+{% endblock %}

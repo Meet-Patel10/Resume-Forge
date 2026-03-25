@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Dashboard</h2>
+    <p>Your job search command center. Track applications, see patterns, get smarter.</p>
+</div>
+
+<!-- Stats Grid -->
+<div class="card-grid mb-6">
+    <div class="card stat-card">
+        <div class="stat-value">{{ stats.total_applications }}</div>
+        <div class="stat-label">Total Applications</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-value">{{ stats.avg_ats_score }}%</div>
+        <div class="stat-label">Avg ATS Score</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-value">{{ stats.response_rate }}%</div>
+        <div class="stat-label">Response Rate</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-value">{{ stats.by_status.get('interview', 0) }}</div>
+        <div class="stat-label">Interviews</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-value">{{ stats.total_tokens }}</div>
+        <div class="stat-label">API Tokens Used</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-value">{{ stats.total_requests }}</div>
+        <div class="stat-label">API Requests Made</div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="card mb-6">
+    <div class="card-header">
+        <h3 class="card-title">Quick Actions</h3>
+    </div>
+    <div class="flex gap-4">
+        {% if not resume %}
+            <a href="{{ url_for('master_resume.master_resume_page') }}" class="btn btn-primary">
+                📄 Set Up Master Resume First
+            </a>
+        {% else %}
+            <a href="{{ url_for('analyze.analyze_page') }}" class="btn btn-primary">🔍 Analyze a JD</a>
+            <a href="{{ url_for('tailor.tailor_page') }}" class="btn btn-secondary">✂️ Tailor Resume</a>
+            <a href="{{ url_for('interview.interview_page') }}" class="btn btn-secondary">🎯 Interview Prep</a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent Applications -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Recent Applications</h3>
+        <a href="{{ url_for('applications.applications_page') }}" class="btn btn-sm btn-secondary">View All</a>
+    </div>
+
+    {% if applications %}
+    <table class="app-table">
+        <thead>
+            <tr>
+                <th>Company</th>
+                <th>Role</th>
+                <th>ATS Score</th>
+                <th>Status</th>
+                <th>Applied</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for app in applications[:10] %}
+            <tr>
+                <td><strong>{{ app.company_name }}</strong></td>
+                <td>{{ app.role_title }}</td>
+                <td>
+                    {% if app.ats_score %}
+                        <span class="badge {% if app.ats_score >= 80 %}badge-success{% elif app.ats_score >= 65 %}badge-warning{% else %}badge-danger{% endif %}">
+                            {{ app.ats_score }}%
+                        </span>
+                    {% else %}
+                        <span class="badge badge-muted">N/A</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="badge {% if app.status == 'offer' %}badge-success{% elif app.status == 'interview' %}badge-info{% elif app.status == 'rejected' %}badge-danger{% elif app.status == 'screening' %}badge-warning{% else %}badge-muted{% endif %}">
+                        {{ app.status }}
+                    </span>
+                </td>
+                <td class="text-muted">{{ app.applied_at.strftime('%b %d') if app.applied_at else '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📬</div>
+        <h3>No applications yet</h3>
+        <p>Tailor your first resume to a job and it'll appear here automatically.</p>
+        <a href="{{ url_for('analyze.analyze_page') }}" class="btn btn-primary">Analyze Your First JD</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

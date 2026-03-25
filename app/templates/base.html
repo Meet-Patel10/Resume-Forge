@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ResumeForge{% endblock %} — AI Resume Builder</title>
+    <meta name="description" content="ResumeForge: Brutal honesty. Perfect resumes. Real interviews.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-logo">
+                <h1>⚒ ResumeForge</h1>
+                <span>Brutal honesty. Perfect resumes.</span>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('main.dashboard') }}" class="nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}">
+                    <span class="nav-icon">📊</span> Dashboard
+                </a>
+                <a href="{{ url_for('master_resume.master_resume_page') }}" class="nav-link {% if request.endpoint and 'master_resume' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">📄</span> Master Resume
+                </a>
+                <a href="{{ url_for('analyze.analyze_page') }}" class="nav-link {% if request.endpoint and 'analyze' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">🔍</span> Analyze JD
+                </a>
+                <a href="{{ url_for('tailor.tailor_page') }}" class="nav-link {% if request.endpoint and 'tailor' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">✂️</span> Tailor Resume
+                </a>
+                <a href="{{ url_for('interview.interview_page') }}" class="nav-link {% if request.endpoint and 'interview' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">🎯</span> Interview Prep
+                </a>
+                <a href="{{ url_for('applications.applications_page') }}" class="nav-link {% if request.endpoint and 'applications' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">📬</span> Applications
+                </a>
+            </nav>
+            <div style="padding: 0 var(--space-4); margin-top: auto;">
+                <div class="card" style="padding: var(--space-3); text-align: center;">
+                    <span class="text-mono text-muted" style="font-size: var(--text-xs);" id="cost-tracker">
+                        API Cost: $<span id="total-cost">0.00</span>
+                    </span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash flash-{{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay hidden" id="loading-overlay">
+        <div style="text-align: center;">
+            <div class="spinner"></div>
+            <p class="loading-text" id="loading-text">Analyzing with Claude AI...</p>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

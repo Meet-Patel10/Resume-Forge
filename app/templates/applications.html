@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Applications{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Application Tracker</h2>
+    <p>Every tailored resume gets logged automatically. Track status and measure your success rate.</p>
+</div>
+
+{% if applications %}
+<div class="card">
+    <table class="app-table">
+        <thead>
+            <tr>
+                <th>Company</th>
+                <th>Role</th>
+                <th>ATS Score</th>
+                <th>Status</th>
+                <th>Applied</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for app in applications %}
+            <tr id="app-row-{{ app.id }}">
+                <td><strong>{{ app.company_name }}</strong></td>
+                <td>{{ app.role_title }}</td>
+                <td>
+                    {% if app.ats_score %}
+                    <span class="badge {% if app.ats_score >= 80 %}badge-success{% elif app.ats_score >= 65 %}badge-warning{% else %}badge-danger{% endif %}">
+                        {{ app.ats_score }}%
+                    </span>
+                    {% else %}
+                    <span class="badge badge-muted">N/A</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <select class="status-select" onchange="updateStatus({{ app.id }}, this.value)">
+                        {% for s in ['applied','screening','interview','offer','rejected','ghosted'] %}
+                        <option value="{{ s }}" {% if app.status == s %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td class="text-muted">{{ app.applied_at.strftime('%b %d, %Y') if app.applied_at else '' }}</td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="deleteApp({{ app.id }})">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">📬</div>
+        <h3>No applications tracked yet</h3>
+        <p>When you tailor a resume and provide a company name, it gets logged here automatically.</p>
+        <a href="{{ url_for('tailor.tailor_page') }}" class="btn btn-primary">Tailor Your First Resume</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function updateStatus(id, status) {
+    try {
+        const res = await fetch('/applications/api/update-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, status })
+        });
+        const data = await res.json();
+        if (data.error) showToast(data.error, 'error');
+        else showToast('Status updated to ' + status, 'success');
+    } catch (e) { showToast('Error updating status', 'error'); }
+}
+
+async function deleteApp(id) {
+    if (!confirm('Delete this application record?')) return;
+    try {
+        const res = await fetch('/applications/api/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+        });
+        const data = await res.json();
+        if (data.success) {
+            document.getElementById('app-row-' + id).remove();
+            showToast('Application deleted', 'success');
+        }
+    } catch (e) { showToast('Error deleting application', 'error'); }
+}
+</script>
+{% endblock %}

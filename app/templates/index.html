@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ResumeForge — Brutal Honesty. Perfect Resumes. Real Interviews.</title>
+    <meta name="description" content="AI-powered resume builder that tells you the truth. No sugarcoating.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .landing-page {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-8);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .landing-page::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 40%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 60%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
+            animation: float 20s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0); }
+            33% { transform: translate(-20px, 20px); }
+            66% { transform: translate(20px, -20px); }
+        }
+
+        .landing-content {
+            text-align: center;
+            position: relative;
+            z-index: 1;
+            max-width: 700px;
+        }
+
+        .landing-logo {
+            font-size: 4rem;
+            margin-bottom: var(--space-6);
+        }
+
+        .landing-content h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+            margin-bottom: var(--space-6);
+        }
+
+        .landing-content h1 span {
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .landing-subtitle {
+            font-size: var(--text-xl);
+            color: var(--text-secondary);
+            margin-bottom: var(--space-10);
+            line-height: 1.6;
+        }
+
+        .landing-features {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: var(--space-6);
+            margin-top: var(--space-12);
+            text-align: left;
+        }
+
+        .landing-feature {
+            padding: var(--space-6);
+        }
+
+        .landing-feature-icon {
+            font-size: 1.5rem;
+            margin-bottom: var(--space-3);
+        }
+
+        .landing-feature h3 {
+            font-size: var(--text-base);
+            font-weight: 600;
+            margin-bottom: var(--space-2);
+        }
+
+        .landing-feature p {
+            font-size: var(--text-sm);
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .cta-group {
+            display: flex;
+            gap: var(--space-4);
+            justify-content: center;
+        }
+
+        @media (max-width: 768px) {
+            .landing-content h1 { font-size: 2.5rem; }
+            .landing-features { grid-template-columns: 1fr; }
+            .cta-group { flex-direction: column; align-items: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="landing-page">
+        <div class="landing-content">
+            <div class="landing-logo">⚒</div>
+            <h1>Stop Guessing.<br><span>Start Getting Interviews.</span></h1>
+            <p class="landing-subtitle">
+                ResumeForge brutally analyzes your resume against any job description,
+                rewrites your bullets, and outputs Overleaf-ready LaTeX — tailored for ATS and human recruiters.
+            </p>
+            <div class="cta-group">
+                <a href="{{ url_for('master_resume.master_resume_page') }}" class="btn btn-primary btn-lg">
+                    Set Up My Resume →
+                </a>
+                <a href="{{ url_for('main.dashboard') }}" class="btn btn-secondary btn-lg">
+                    Go to Dashboard
+                </a>
+            </div>
+
+            <div class="landing-features">
+                <div class="card landing-feature">
+                    <div class="landing-feature-icon">🔍</div>
+                    <h3>Brutal JD Critique</h3>
+                    <p>See exactly how a hiring manager would reject your resume in 10 seconds — then fix it.</p>
+                </div>
+                <div class="card landing-feature">
+                    <div class="landing-feature-icon">🎯</div>
+                    <h3>ATS Keyword Mapping</h3>
+                    <p>Extract the real skills employers want. See where you match, where you're weak, what phrases to add.</p>
+                </div>
+                <div class="card landing-feature">
+                    <div class="landing-feature-icon">📝</div>
+                    <h3>LaTeX Output</h3>
+                    <p>Get a perfectly tailored resume as copy-paste LaTeX code — ready for Overleaf in seconds.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

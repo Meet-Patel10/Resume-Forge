@@ -1,0 +1,666 @@
+{% extends "base.html" %}
+{% block title %}Master Resume{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Master Resume</h2>
+    <p>This is your complete resume bank. Every experience, project, and skill goes here. The app selects the most relevant items when tailoring.</p>
+</div>
+
+<!-- Resume Upload Section -->
+<div class="card mb-6" id="upload-section">
+    <div class="card-header">
+        <h3 class="card-title">📤 Upload Existing Resume</h3>
+        <span class="badge badge-info">PDF, DOCX, or TXT</span>
+    </div>
+    <div id="upload-dropzone" style="border: 2px dashed var(--border-medium); border-radius: var(--radius-lg); padding: var(--space-10) var(--space-8); text-align: center; cursor: pointer; transition: all var(--transition-fast); margin-top: var(--space-4);">
+        <div style="font-size: 2.5rem; margin-bottom: var(--space-3);">📄</div>
+        <p style="font-size: var(--text-lg); font-weight: 600; margin-bottom: var(--space-2);">Drag & drop your resume here</p>
+        <p class="text-muted" style="margin-bottom: var(--space-4);">or click to browse files</p>
+        <input type="file" id="resume-file-input" accept=".pdf,.docx,.doc,.txt" style="display: none;">
+        <button type="button" class="btn btn-secondary" id="choose-file-btn">
+            Choose File
+        </button>
+    </div>
+    <div id="upload-status" class="hidden mt-4" style="padding: var(--space-4); background: rgba(99, 102, 241, 0.06); border-radius: var(--radius-md);">
+        <div class="flex-between">
+            <span id="upload-filename" style="font-weight: 600;"></span>
+            <span class="badge badge-success">✓ Parsed</span>
+        </div>
+    </div>
+    <div id="upload-preview" class="hidden mt-4">
+        <label class="form-label">Extracted Resume Text</label>
+        <textarea id="uploaded-resume-text" class="form-textarea tall" readonly style="font-family: var(--font-mono); font-size: var(--text-sm);"></textarea>
+        <span class="form-hint">This extracted text will be used directly for AI analysis. Fill in the structured form below for tailoring.</span>
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('master_resume.save_master_resume') }}" id="master-resume-form">
+    <!-- Basic Info -->
+    <div class="card mb-6">
+        <h3 class="card-title mb-4">Personal Information</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Full Name</label>
+                <input type="text" name="full_name" class="form-input" value="{{ resume.full_name if resume else '' }}" required placeholder="Meet Patel">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email</label>
+                <input type="email" name="email" class="form-input" value="{{ resume.email if resume else '' }}" placeholder="your@email.com">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Phone</label>
+                <input type="text" name="phone" class="form-input" value="{{ resume.phone if resume else '' }}" placeholder="(902) 322-3808">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Location</label>
+                <input type="text" name="location" class="form-input" value="{{ resume.location if resume else '' }}" placeholder="Halifax, NS">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">LinkedIn URL</label>
+                <input type="text" name="linkedin_url" class="form-input" value="{{ resume.linkedin_url if resume else '' }}" placeholder="linkedin.com/in/yourprofile">
+            </div>
+            <div class="form-group">
+                <label class="form-label">GitHub URL</label>
+                <input type="text" name="github_url" class="form-input" value="{{ resume.github_url if resume else '' }}" placeholder="github.com/yourusername">
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Tagline</label>
+            <input type="text" name="tagline" class="form-input" value="{{ resume.tagline if resume else '' }}" placeholder="PGWP-eligible | Available for full-time roles across Canada">
+            <span class="form-hint">Appears below your name on the resume</span>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="card mb-6">
+        <h3 class="card-title mb-4">Professional Summary</h3>
+        <div class="form-group">
+            <label class="form-label">Summary</label>
+            <textarea name="summary" class="form-textarea" placeholder="Write your most comprehensive summary here. It will be tailored for each job.">{{ resume.summary if resume else '' }}</textarea>
+            <span class="form-hint">This will be rewritten for each JD. Make it comprehensive — include all your strengths.</span>
+        </div>
+    </div>
+
+    <!-- Skills -->
+    <div class="card mb-6">
+        <div class="card-header">
+            <h3 class="card-title">Skills</h3>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="addSkillGroup()">+ Add Category</button>
+        </div>
+        <div id="skills-container">
+            <!-- Skill groups populated by JS -->
+        </div>
+        <input type="hidden" name="skills_json" id="skills-json">
+    </div>
+
+    <!-- Experience & Projects (Bullet Bank) -->
+    <div class="card mb-6">
+        <div class="card-header">
+            <h3 class="card-title">Experience & Projects</h3>
+            <div class="flex gap-2">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="addBulletEntry('experience')">+ Experience</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="addBulletEntry('project')">+ Project</button>
+            </div>
+        </div>
+        <div id="bullets-container">
+            <!-- Bullet entries populated by JS -->
+        </div>
+        <input type="hidden" name="bullets_json" id="bullets-json">
+    </div>
+
+    <!-- Education -->
+    <div class="card mb-6">
+        <div class="card-header">
+            <h3 class="card-title">Education</h3>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="addEducation()">+ Add Education</button>
+        </div>
+        <div id="education-container">
+            <!-- Education entries populated by JS -->
+        </div>
+        <input type="hidden" name="education_json" id="education-json">
+    </div>
+
+    <!-- Languages -->
+    <div class="card mb-6">
+        <h3 class="card-title mb-4">Languages</h3>
+        <div class="form-group">
+            <input type="text" id="languages-input" class="form-input" value="{{ resume.languages|join(', ') if resume and resume.languages else '' }}" placeholder="English (Advanced), Hindi (Advanced), Gujarati (Native)">
+            <span class="form-hint">Comma-separated list</span>
+        </div>
+        <input type="hidden" name="languages_json" id="languages-json">
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-lg btn-block">💾 Save Master Resume</button>
+</form>
+
+<!-- General Resume Health Score (No JD Required) -->
+<div class="card mt-6">
+    <h3 class="card-title mb-4">🏥 General Resume Health Score</h3>
+    <p class="text-muted mb-4">Instant health check for IT roles — no job description needed. Evaluates parsability, structure, action verbs, metrics, and IT skills coverage.</p>
+    <button type="button" class="btn btn-primary" onclick="runHealthCheck()" id="btn-health-check">🩺 Run Health Check</button>
+
+    <div id="health-result" class="hidden mt-6">
+        <div style="display: grid; grid-template-columns: 180px 1fr; gap: var(--space-6); align-items: start;">
+            <!-- Score Gauge -->
+            <div style="text-align: center;">
+                <svg viewBox="0 0 100 100" width="140" height="140">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="var(--border-subtle)" stroke-width="8"></circle>
+                    <circle id="health-gauge" cx="50" cy="50" r="42" fill="none" stroke="var(--accent-primary)" stroke-width="8"
+                            stroke-dasharray="264" stroke-dashoffset="264" stroke-linecap="round"
+                            transform="rotate(-90 50 50)" style="transition: stroke-dashoffset 1s ease, stroke 0.5s ease;"></circle>
+                    <text x="50" y="48" text-anchor="middle" fill="var(--text-primary)" font-size="22" font-weight="700" id="health-score">--</text>
+                    <text x="50" y="64" text-anchor="middle" fill="var(--text-secondary)" font-size="9" id="health-grade">--</text>
+                </svg>
+                <p style="margin-top:var(--space-2);font-size:0.8rem;color:var(--text-muted)" id="health-role"></p>
+            </div>
+            <!-- Breakdown -->
+            <div>
+                <p class="mb-4" id="health-verdict" style="font-weight: 600;"></p>
+                <div id="health-breakdown"></div>
+                <div id="health-issues" class="mt-4"></div>
+                <div id="health-skills-detail" class="mt-4"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ATS Quick Check (JD Required) -->
+<div class="card mt-6">
+    <h3 class="card-title mb-4">📊 ATS Score vs Job Description</h3>
+    <p class="text-muted mb-4">Paste a job description below to see how your master resume matches a specific role.</p>
+    <div class="form-group">
+        <textarea id="ats-jd-input" class="form-textarea" rows="6" placeholder="Paste the job description here..."></textarea>
+    </div>
+    <button type="button" class="btn btn-secondary" onclick="runATSCheck()" id="btn-ats-check">🔍 Check ATS Score</button>
+
+    <div id="ats-result" class="hidden mt-6">
+        <div style="display: grid; grid-template-columns: 180px 1fr; gap: var(--space-6); align-items: start;">
+            <!-- Score Gauge -->
+            <div style="text-align: center;">
+                <svg viewBox="0 0 100 100" width="140" height="140">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="var(--border-subtle)" stroke-width="8"></circle>
+                    <circle id="mr-ats-gauge" cx="50" cy="50" r="42" fill="none" stroke="var(--accent-primary)" stroke-width="8"
+                            stroke-dasharray="264" stroke-dashoffset="264" stroke-linecap="round"
+                            transform="rotate(-90 50 50)" style="transition: stroke-dashoffset 1s ease, stroke 0.5s ease;"></circle>
+                    <text x="50" y="48" text-anchor="middle" fill="var(--text-primary)" font-size="22" font-weight="700" id="mr-ats-score">--</text>
+                    <text x="50" y="64" text-anchor="middle" fill="var(--text-secondary)" font-size="9" id="mr-ats-grade">--</text>
+                </svg>
+            </div>
+            <!-- Breakdown -->
+            <div>
+                <p class="mb-4" id="mr-ats-verdict" style="font-weight: 600;"></p>
+                <div id="mr-ats-breakdown"></div>
+                <div id="mr-ats-issues" class="mt-4"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initialize data from server
+    const existingSkills = {{ resume.skills|tojson if resume else '[]' }};
+    const existingBullets = {{ bullets_list|tojson }};
+    const existingEducation = {{ resume.education|tojson if resume else '[]' }};
+
+    // ===== Skills Management =====
+    function addSkillGroup(data = null) {
+        const container = document.getElementById('skills-container');
+        const id = Date.now();
+        const html = `
+            <div class="result-item" id="skill-${id}">
+                <div class="flex-between mb-4">
+                    <input type="text" class="form-input" style="width: 200px" placeholder="Category (e.g., Languages)"
+                           value="${data ? data.category : ''}" onchange="updateSkillsJSON()" data-skill-category="${id}">
+                    <button type="button" class="btn btn-sm btn-danger" onclick="document.getElementById('skill-${id}').remove(); updateSkillsJSON();">Remove</button>
+                </div>
+                <input type="text" class="form-input" placeholder="Skills (comma-separated): Java, Python, C++"
+                       value="${data ? data.items.join(', ') : ''}" onchange="updateSkillsJSON()" data-skill-items="${id}">
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', html);
+    }
+
+    function updateSkillsJSON() {
+        const groups = [];
+        document.querySelectorAll('[data-skill-category]').forEach(el => {
+            const id = el.dataset.skillCategory;
+            const category = el.value.trim();
+            const itemsEl = document.querySelector(`[data-skill-items="${id}"]`);
+            const items = itemsEl ? itemsEl.value.split(',').map(s => s.trim()).filter(Boolean) : [];
+            if (category) groups.push({ category, items });
+        });
+        document.getElementById('skills-json').value = JSON.stringify(groups);
+    }
+
+    // ===== Bullet Bank Management =====
+    function addBulletEntry(type, data = null) {
+        const container = document.getElementById('bullets-container');
+        const id = Date.now();
+        const isProject = type === 'project';
+        const html = `
+            <div class="result-item" id="bullet-${id}" data-bullet-id="${id}">
+                <div class="flex-between mb-4">
+                    <span class="badge ${isProject ? 'badge-info' : 'badge-primary'}">${isProject ? 'Project' : 'Experience'}</span>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="document.getElementById('bullet-${id}').remove(); updateBulletsJSON();">Remove</button>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">${isProject ? 'Project Name' : 'Company'}</label>
+                        <input type="text" class="form-input" data-field="company" value="${data ? data.company : ''}" onchange="updateBulletsJSON()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">${isProject ? 'Tech Stack' : 'Role/Title'}</label>
+                        <input type="text" class="form-input" data-field="role" value="${data ? data.role : ''}" onchange="updateBulletsJSON()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Dates</label>
+                        <input type="text" class="form-input" data-field="dates" value="${data ? (data.dates || '') : ''}" onchange="updateBulletsJSON()">
+                    </div>
+                </div>
+                ${isProject ? `
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Tech Stack</label>
+                        <input type="text" class="form-input" data-field="tech_stack" value="${data ? (data.tech_stack || '') : ''}" onchange="updateBulletsJSON()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Repo URL</label>
+                        <input type="text" class="form-input" data-field="repo_url" value="${data ? (data.repo_url || '') : ''}" onchange="updateBulletsJSON()">
+                    </div>
+                </div>
+                ` : ''}
+                <div class="form-group">
+                    <label class="form-label">Bullet Point</label>
+                    <textarea class="form-textarea" data-field="original_text" onchange="updateBulletsJSON()" style="min-height: 60px">${data ? data.original_text : ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Skill Tags</label>
+                    <input type="text" class="form-input" data-field="skill_tags" value="${data ? (data.skill_tags || []).join(', ') : ''}" onchange="updateBulletsJSON()" placeholder="java, spring-boot, microservices">
+                </div>
+                <input type="hidden" data-field="section_type" value="${type}">
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', html);
+    }
+
+    function updateBulletsJSON() {
+        const bullets = [];
+        document.querySelectorAll('[data-bullet-id]').forEach(el => {
+            const bullet = {};
+            el.querySelectorAll('[data-field]').forEach(field => {
+                const key = field.dataset.field;
+                let val = field.value;
+                if (key === 'skill_tags') {
+                    val = val.split(',').map(s => s.trim()).filter(Boolean);
+                }
+                bullet[key] = val;
+            });
+            bullets.push(bullet);
+        });
+        document.getElementById('bullets-json').value = JSON.stringify(bullets);
+    }
+
+    // ===== Education Management =====
+    function addEducation(data = null) {
+        const container = document.getElementById('education-container');
+        const id = Date.now();
+        const html = `
+            <div class="result-item" id="edu-${id}" data-edu-id="${id}">
+                <div class="flex-between mb-4">
+                    <span class="badge badge-primary">Education</span>
+                    <button type="button" class="btn btn-sm btn-danger" onclick="document.getElementById('edu-${id}').remove(); updateEducationJSON();">Remove</button>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Degree</label>
+                        <input type="text" class="form-input" data-edu-field="degree" value="${data ? data.degree : ''}" onchange="updateEducationJSON()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">School</label>
+                        <input type="text" class="form-input" data-edu-field="school" value="${data ? data.school : ''}" onchange="updateEducationJSON()">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Location</label>
+                        <input type="text" class="form-input" data-edu-field="location" value="${data ? (data.location || '') : ''}" onchange="updateEducationJSON()">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Dates</label>
+                        <input type="text" class="form-input" data-edu-field="dates" value="${data ? (data.dates || '') : ''}" onchange="updateEducationJSON()">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Details (GPA, Coursework, Focus)</label>
+                    <input type="text" class="form-input" data-edu-field="details" value="${data ? (data.details || '') : ''}" onchange="updateEducationJSON()">
+                </div>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', html);
+    }
+
+    function updateEducationJSON() {
+        const edu = [];
+        document.querySelectorAll('[data-edu-id]').forEach(el => {
+            const entry = {};
+            el.querySelectorAll('[data-edu-field]').forEach(field => {
+                entry[field.dataset.eduField] = field.value;
+            });
+            edu.push(entry);
+        });
+        document.getElementById('education-json').value = JSON.stringify(edu);
+    }
+
+    // ===== Form Submission =====
+    document.getElementById('master-resume-form').addEventListener('submit', function() {
+        updateSkillsJSON();
+        updateBulletsJSON();
+        updateEducationJSON();
+
+        // Languages
+        const langInput = document.getElementById('languages-input').value;
+        const langs = langInput.split(',').map(s => s.trim()).filter(Boolean);
+        document.getElementById('languages-json').value = JSON.stringify(langs);
+    });
+
+    // ===== Initialize from existing data =====
+    existingSkills.forEach(s => addSkillGroup(s));
+    if (existingSkills.length === 0) addSkillGroup();
+
+    existingBullets.forEach(b => addBulletEntry(b.section_type || 'experience', b));
+
+    existingEducation.forEach(e => addEducation(e));
+    if (existingEducation.length === 0) addEducation();
+
+    // Set initial JSON values
+    updateSkillsJSON();
+    updateBulletsJSON();
+    updateEducationJSON();
+
+    // ===== File Upload =====
+    const dropzone = document.getElementById('upload-dropzone');
+    const fileInput = document.getElementById('resume-file-input');
+
+    if (dropzone) {
+        // Only trigger file dialog when clicking the dropzone itself — not the button
+        dropzone.addEventListener('click', (e) => {
+            if (e.target.id !== 'choose-file-btn') fileInput.click();
+        });
+
+        // Button click — open file dialog (stop propagation to prevent dropzone handler)
+        const chooseBtn = document.getElementById('choose-file-btn');
+        if (chooseBtn) {
+            chooseBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+        }
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = 'var(--accent-primary)';
+            dropzone.style.background = 'rgba(99, 102, 241, 0.05)';
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.style.borderColor = 'var(--border-medium)';
+            dropzone.style.background = 'transparent';
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = 'var(--border-medium)';
+            dropzone.style.background = 'transparent';
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                uploadFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) uploadFile(fileInput.files[0]);
+        });
+    }
+
+    async function uploadFile(file) {
+        const formData = new FormData();
+        formData.append('resume_file', file);
+
+        showLoading('Parsing your resume...');
+        try {
+            const res = await fetch('/master-resume/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+
+            // Show success
+            document.getElementById('upload-status').classList.remove('hidden');
+            document.getElementById('upload-filename').textContent = data.filename;
+            document.getElementById('upload-preview').classList.remove('hidden');
+            document.getElementById('uploaded-resume-text').value = data.text;
+
+            // Collapse the dropzone
+            dropzone.style.padding = 'var(--space-4)';
+            dropzone.innerHTML = `<span class="text-muted">✓ ${data.filename} uploaded — drag another file to replace</span>`;
+
+            // Auto-fill the form seamlessly
+            if (data.parsed_data) {
+                const p = data.parsed_data;
+                const setVal = (name, val) => {
+                    const el = document.querySelector(`[name="${name}"]`);
+                    if (el && val) el.value = val;
+                };
+
+                setVal('full_name', p.full_name);
+                setVal('email', p.email);
+                setVal('phone', p.phone);
+                setVal('location', p.location);
+                setVal('linkedin_url', p.linkedin_url);
+                setVal('github_url', p.github_url);
+                setVal('portfolio_url', p.portfolio_url);
+                setVal('tagline', p.tagline);
+                setVal('summary', p.summary);
+
+                if (p.languages && p.languages.length) {
+                    document.getElementById('languages-input').value = p.languages.join(', ');
+                }
+
+                if (p.skills && p.skills.length) {
+                    document.getElementById('skills-container').innerHTML = '';
+                    p.skills.forEach(s => addSkillGroup(s));
+                }
+
+                if (p.education && p.education.length) {
+                    document.getElementById('education-container').innerHTML = '';
+                    p.education.forEach(e => addEducation(e));
+                }
+
+                if (p.bullets && p.bullets.length) {
+                    document.getElementById('bullets-container').innerHTML = '';
+                    p.bullets.forEach(b => addBulletEntry(b.section_type || 'experience', b));
+                }
+
+                updateSkillsJSON();
+                updateBulletsJSON();
+                updateEducationJSON();
+            }
+
+            if (data.cost_usd) updateCost(data.cost_usd);
+
+            showToast('Resume parsed and form auto-filled successfully!', 'success');
+        } catch (e) {
+            hideLoading();
+            showToast('Upload failed: ' + e.message, 'error');
+        }
+    }
+    // ===== ATS Quick Check =====
+    async function runATSCheck() {
+        const jd = document.getElementById('ats-jd-input').value.trim();
+        if (!jd) return showToast('Please paste a job description first.', 'error');
+
+        showLoading('Checking ATS compatibility...');
+        try {
+            const res = await fetch('/master-resume/ats-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jd_text: jd }),
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+
+            // Show result section
+            document.getElementById('ats-result').classList.remove('hidden');
+
+            const score = data.total_score || 0;
+            const circumference = 264;
+            const offset = circumference - (score / 100) * circumference;
+
+            // Animate gauge
+            const gauge = document.getElementById('mr-ats-gauge');
+            gauge.style.strokeDashoffset = offset;
+            gauge.style.stroke = score >= 80 ? 'var(--accent-success)' :
+                                 score >= 65 ? 'var(--accent-warning)' : 'var(--accent-danger)';
+
+            document.getElementById('mr-ats-score').textContent = score;
+            document.getElementById('mr-ats-grade').textContent = 'Grade: ' + (data.grade || '--');
+            document.getElementById('mr-ats-verdict').textContent = data.verdict || '';
+
+            // Breakdown bars
+            if (data.breakdown) {
+                const b = data.breakdown;
+                const barHTML = (label, value, weight, color) => `
+                    <div class="result-item mb-4">
+                        <div class="flex-between"><span>${label} <small style="color:var(--text-muted)">(${weight})</small></span><strong>${value}%</strong></div>
+                        <div style="height:6px;background:var(--border-subtle);border-radius:3px;margin-top:var(--space-2)">
+                            <div style="height:100%;width:${value}%;background:${color};border-radius:3px;transition:width 1s ease"></div>
+                        </div>
+                    </div>`;
+                document.getElementById('mr-ats-breakdown').innerHTML =
+                    barHTML('Hard Skills', b.hard_skills, '35%', 'var(--accent-primary)') +
+                    barHTML('Job Title Match', b.job_title, '15%', 'var(--accent-info)') +
+                    barHTML('Soft Skills', b.soft_skills, '10%', '#8b5cf6') +
+                    barHTML('Measurable Results', b.measurable_results, '10%', 'var(--accent-success)') +
+                    barHTML('Keyword Frequency', b.keyword_frequency, '10%', '#f59e0b') +
+                    barHTML('Section Completeness', b.section_completeness, '10%', '#06b6d4') +
+                    barHTML('Format Compliance', b.format_compliance, '10%', '#64748b');
+            }
+
+            // Format issues
+            if (data.format_issues && data.format_issues.length) {
+                document.getElementById('mr-ats-issues').innerHTML =
+                    '<p style="font-weight:600;margin-bottom:var(--space-2)">⚠️ Issues:</p><ul style="list-style:disc;padding-left:var(--space-6);color:var(--text-secondary)">' +
+                    data.format_issues.map(i => `<li>${i}</li>`).join('') + '</ul>';
+            } else {
+                document.getElementById('mr-ats-issues').innerHTML = '';
+            }
+
+            showToast(`ATS Score: ${score}/100 (${data.grade})`, score >= 80 ? 'success' : score >= 65 ? 'info' : 'error');
+        } catch (e) {
+            hideLoading();
+            showToast('Check failed: ' + e.message, 'error');
+        }
+    }
+
+
+    // ===== General Health Check (No JD) =====
+    async function runHealthCheck() {
+        showLoading('Running resume health check...');
+        try {
+            const res = await fetch('/master-resume/health-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+
+            const score = data.total_score;
+            document.getElementById('health-result').classList.remove('hidden');
+
+            // Gauge
+            const gauge = document.getElementById('health-gauge');
+            const offset = 264 - (264 * score / 100);
+            gauge.style.strokeDashoffset = offset;
+            gauge.style.stroke = score >= 80 ? 'var(--accent-success)' : score >= 65 ? 'var(--accent-info)' : score >= 50 ? '#f59e0b' : 'var(--accent-danger)';
+
+            document.getElementById('health-score').textContent = score;
+            document.getElementById('health-grade').textContent = 'Grade: ' + (data.grade || '--');
+            document.getElementById('health-verdict').textContent = data.verdict || '';
+            document.getElementById('health-role').textContent = '🎯 Detected: ' + (data.detected_role || 'Unknown');
+
+            // Breakdown bars
+            if (data.breakdown) {
+                const b = data.breakdown;
+                const bar = (label, value, weight, color) => `
+                    <div class="result-item mb-4">
+                        <div class="flex-between"><span>${label} <small style="color:var(--text-muted)">(${weight})</small></span><strong>${value}%</strong></div>
+                        <div style="height:6px;background:var(--border-subtle);border-radius:3px;margin-top:var(--space-2)">
+                            <div style="height:100%;width:${value}%;background:${color};border-radius:3px;transition:width 1s ease"></div>
+                        </div>
+                    </div>`;
+                document.getElementById('health-breakdown').innerHTML =
+                    bar('IT Skills Coverage', b.it_skills, '20%', 'var(--accent-primary)') +
+                    bar('Parsability', b.parsability, '15%', '#06b6d4') +
+                    bar('Structure', b.structure, '15%', 'var(--accent-info)') +
+                    bar('Action Verbs', b.action_verbs, '15%', '#8b5cf6') +
+                    bar('Measurable Impact', b.measurable_impact, '15%', 'var(--accent-success)') +
+                    bar('Length & Mechanics', b.length_mechanics, '10%', '#f59e0b') +
+                    bar('Contact Info', b.contact_info, '10%', '#64748b');
+            }
+
+            // Issues
+            if (data.format_issues && data.format_issues.length) {
+                document.getElementById('health-issues').innerHTML =
+                    '<p style="font-weight:600;margin-bottom:var(--space-2)">⚠️ Issues to Fix:</p><ul style="list-style:disc;padding-left:var(--space-6);color:var(--text-secondary)">' +
+                    data.format_issues.map(i => `<li>${i}</li>`).join('') + '</ul>';
+            } else {
+                document.getElementById('health-issues').innerHTML = '<p style="color:var(--accent-success)">✅ No issues found!</p>';
+            }
+
+            // IT Skills detail
+            const skills = data.details && data.details.it_skills;
+            if (skills) {
+                let html = `<p style="font-weight:600;margin-bottom:var(--space-2)">🔧 IT Skills (${skills.detected_role}): ${skills.must_have_found}/${skills.must_have_total} core skills found</p>`;
+                if (skills.top_missing && skills.top_missing.length) {
+                    html += '<p style="margin-top:var(--space-2);color:var(--text-muted)">Missing: <strong>' + skills.top_missing.join(', ') + '</strong></p>';
+                }
+                // Role breakdown
+                if (skills.role_breakdown) {
+                    html += '<div style="margin-top:var(--space-4);display:flex;gap:var(--space-4);flex-wrap:wrap">';
+                    for (const [key, rd] of Object.entries(skills.role_breakdown)) {
+                        const pct = rd.percentage;
+                        html += `<div style="flex:1;min-width:150px;padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:8px;text-align:center">
+                            <div style="font-size:0.75rem;color:var(--text-muted)">${rd.label}</div>
+                            <div style="font-size:1.2rem;font-weight:700;color:${pct >= 50 ? 'var(--accent-success)' : pct >= 30 ? '#f59e0b' : 'var(--accent-danger)'}">${pct}%</div>
+                            <div style="font-size:0.7rem;color:var(--text-muted)">${rd.match} skills</div>
+                        </div>`;
+                    }
+                    html += '</div>';
+                }
+                document.getElementById('health-skills-detail').innerHTML = html;
+            }
+
+            showToast(`Health Score: ${score}/100 (${data.grade})`, score >= 80 ? 'success' : score >= 65 ? 'info' : 'error');
+        } catch (e) {
+            hideLoading();
+            showToast('Health check failed: ' + e.message, 'error');
+        }
+    }
+
+</script>
+{% endblock %}

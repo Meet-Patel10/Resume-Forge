@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+{% block title %}Tailor Resume{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Tailor Resume</h2>
+    <p>Paste a JD, get a fully tailored resume with LaTeX output ready for Overleaf. One click.</p>
+</div>
+
+{% if not resume %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">📄</div>
+        <h3>Set up your Master Resume first</h3>
+        <a href="{{ url_for('master_resume.master_resume_page') }}" class="btn btn-primary">Set Up Master Resume</a>
+    </div>
+</div>
+{% else %}
+
+<!-- Input -->
+<div class="card mb-6">
+    <h3 class="card-title mb-4">Job Details</h3>
+    <div class="form-row">
+        <div class="form-group">
+            <label class="form-label">Company Name</label>
+            <input type="text" id="company-name" class="form-input" placeholder="Google, Amazon, etc.">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Role Title</label>
+            <input type="text" id="role-title" class="form-input" placeholder="Software Engineer">
+        </div>
+    </div>
+    <div class="form-group">
+        <label class="form-label">Job Description</label>
+        <textarea id="jd-input" class="form-textarea tall" placeholder="Paste the full job description here..."></textarea>
+    </div>
+    <div class="flex gap-4">
+        <button class="btn btn-primary btn-lg" onclick="runTailor()" id="btn-tailor">
+            ✂️ Tailor My Resume
+        </button>
+        <button class="btn btn-secondary" onclick="runCoverLetter()" id="btn-cover" style="display:none">
+            💌 Generate Cover Letter
+        </button>
+    </div>
+</div>
+
+<!-- Results -->
+<div id="tailor-results" style="display: none;">
+
+    <!-- ATS Score -->
+    <div class="card-grid mb-6">
+        <div class="card" style="text-align: center">
+            <h3 class="card-title">ATS Score</h3>
+            <div class="ats-gauge mt-4">
+                <svg viewBox="0 0 100 100">
+                    <circle class="ats-gauge-bg" cx="50" cy="50" r="42"></circle>
+                    <circle class="ats-gauge-fill" cx="50" cy="50" r="42"
+                            stroke-dasharray="264" stroke-dashoffset="264" id="ats-gauge-circle"></circle>
+                </svg>
+                <div class="ats-gauge-text">
+                    <div class="ats-score-number" id="ats-score-value">--</div>
+                    <div class="ats-score-label" id="ats-grade">--</div>
+                </div>
+            </div>
+            <p class="text-muted mt-4" id="ats-verdict"></p>
+        </div>
+        <div class="card">
+            <h3 class="card-title">Score Breakdown</h3>
+            <div id="ats-breakdown" class="mt-4"></div>
+        </div>
+        <div class="card">
+            <h3 class="card-title">Tailoring Notes</h3>
+            <div id="tailoring-notes" class="mt-4" style="font-size: var(--text-sm); color: var(--text-secondary)"></div>
+        </div>
+    </div>
+
+    <!-- Tabs: LaTeX / Cover Letter -->
+    <div class="tabs">
+        <button class="tab active" data-tailor-tab="latex">📝 LaTeX Output</button>
+        <button class="tab" data-tailor-tab="cover">💌 Cover Letter</button>
+    </div>
+
+    <!-- LaTeX Output -->
+    <div class="tailor-tab-content active" id="ttab-latex">
+        <div class="card">
+            <div class="flex-between mb-4">
+                <h3 class="card-title">Copy this into Overleaf</h3>
+                <div class="flex gap-4">
+                    <button class="btn btn-sm btn-secondary" onclick="selectAllLatex()">🔘 Select All</button>
+                    <button class="btn btn-sm btn-primary" onclick="copyLatex()">📋 Copy to Clipboard</button>
+                </div>
+            </div>
+            <textarea id="latex-output" class="form-textarea" readonly
+                      style="font-family: var(--font-mono); font-size: var(--text-sm); min-height: 500px; line-height: 1.5; background: var(--bg-tertiary); color: var(--text-primary); white-space: pre; overflow-x: auto;"></textarea>
+        </div>
+    </div>
+
+    <!-- Cover Letter -->
+    <div class="tailor-tab-content" id="ttab-cover" style="display: none;">
+        <div class="card" id="cover-letter-output">
+            <div class="empty-state">
+                <p>Click "Generate Cover Letter" above to create a matching cover letter.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const resumeText = {{ resume.to_resume_text()|tojson if resume else '""' }};
+    let currentLatex = '';
+    let currentAppId = null;
+
+    // Tab switching
+    document.querySelectorAll('[data-tailor-tab]').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('[data-tailor-tab]').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tailor-tab-content').forEach(c => c.style.display = 'none');
+            tab.classList.add('active');
+            document.getElementById('ttab-' + tab.dataset.tailorTab).style.display = 'block';
+        });
+    });
+
+    async function runTailor() {
+        const jd = document.getElementById('jd-input').value.trim();
+        if (!jd) return showToast('Please paste a job description first.', 'error');
+
+        const company = document.getElementById('company-name').value.trim();
+        const role = document.getElementById('role-title').value.trim();
+
+        showLoading('Running 3-step pipeline: ① Brutal Critique → ② Keyword Extraction → ③ Tailoring... This takes 30-60 seconds.');
+        try {
+            const res = await fetch('/tailor/api/tailor', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jd_text: jd,
+                    resume_text: resumeText,
+                    company_name: company,
+                    role_title: role,
+                })
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+            updateCost(data.cost_usd);
+
+            currentLatex = data.latex || '';
+            currentAppId = data.application_id;
+
+            document.getElementById('tailor-results').style.display = 'block';
+            document.getElementById('btn-cover').style.display = 'inline-flex';
+
+            // Render LaTeX
+            document.getElementById('latex-output').value = currentLatex;
+
+            // Render ATS Score
+            renderATSScore(data.ats_score);
+
+            // Render tailoring notes
+            if (data.tailored_resume && data.tailored_resume.tailoring_notes) {
+                renderNotes(data.tailored_resume.tailoring_notes);
+            }
+
+            showToast('Resume tailored successfully! Copy the LaTeX code to Overleaf.', 'success');
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function renderATSScore(ats) {
+        if (!ats) return;
+
+        const score = ats.total_score || 0;
+        const circumference = 264;
+        const offset = circumference - (score / 100) * circumference;
+        const circle = document.getElementById('ats-gauge-circle');
+
+        // Animate the gauge
+        circle.style.strokeDashoffset = offset;
+        circle.style.stroke = score >= 80 ? 'var(--accent-success)' :
+                              score >= 65 ? 'var(--accent-warning)' : 'var(--accent-danger)';
+
+        document.getElementById('ats-score-value').textContent = score;
+        document.getElementById('ats-grade').textContent = 'Grade: ' + (ats.grade || '--');
+        document.getElementById('ats-verdict').textContent = ats.verdict || '';
+
+        // Breakdown
+        if (ats.breakdown) {
+            const b = ats.breakdown;
+            const bar = (label, value, weight, color) => `
+                <div class="result-item mb-4">
+                    <div class="flex-between">
+                        <span>${label} <small style="color:var(--text-muted)">(${weight})</small></span>
+                        <strong>${value}%</strong>
+                    </div>
+                    <div style="height:6px;background:var(--border-subtle);border-radius:3px;margin-top:var(--space-2)">
+                        <div style="height:100%;width:${value}%;background:${color};border-radius:3px;transition:width 1s ease"></div>
+                    </div>
+                </div>`;
+            document.getElementById('ats-breakdown').innerHTML =
+                bar('Hard Skills', b.hard_skills, '35%', 'var(--accent-primary)') +
+                bar('Job Title Match', b.job_title, '15%', 'var(--accent-info)') +
+                bar('Soft Skills', b.soft_skills, '10%', '#8b5cf6') +
+                bar('Measurable Results', b.measurable_results, '10%', 'var(--accent-success)') +
+                bar('Keyword Frequency', b.keyword_frequency, '10%', '#f59e0b') +
+                bar('Section Completeness', b.section_completeness, '10%', '#06b6d4') +
+                bar('Format Compliance', b.format_compliance, '10%', '#64748b');
+        }
+    }
+
+    function renderNotes(notes) {
+        let html = '';
+        if (notes.changes_made && notes.changes_made.length) {
+            html += '<p class="mb-4"><strong>Changes Made:</strong></p><ul style="list-style: disc; padding-left: var(--space-6)">';
+            notes.changes_made.forEach(c => html += `<li>${c}</li>`);
+            html += '</ul>';
+        }
+        if (notes.keywords_incorporated && notes.keywords_incorporated.length) {
+            html += `<p class="mt-4"><strong>Keywords Added:</strong> ${notes.keywords_incorporated.join(', ')}</p>`;
+        }
+        document.getElementById('tailoring-notes').innerHTML = html;
+    }
+
+    function copyLatex() {
+        // Try modern clipboard API first, fallback for HTTP contexts
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(currentLatex).then(() => {
+                showToast('LaTeX copied to clipboard! Paste it into Overleaf.', 'success');
+            }).catch(() => fallbackCopy());
+        } else {
+            fallbackCopy();
+        }
+    }
+
+    function fallbackCopy() {
+        const textarea = document.getElementById('latex-output');
+        textarea.select();
+        textarea.setSelectionRange(0, 99999);
+        document.execCommand('copy');
+        showToast('LaTeX copied to clipboard! Paste it into Overleaf.', 'success');
+    }
+
+    function selectAllLatex() {
+        const textarea = document.getElementById('latex-output');
+        textarea.select();
+        textarea.setSelectionRange(0, 99999);
+        showToast('All text selected — press Ctrl+C / Cmd+C to copy.', 'info');
+    }
+
+    async function runCoverLetter() {
+        const jd = document.getElementById('jd-input').value.trim();
+        const company = document.getElementById('company-name').value.trim();
+        const role = document.getElementById('role-title').value.trim();
+
+        showLoading('Generating cover letter...');
+        try {
+            const res = await fetch('/tailor/api/cover-letter', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jd_text: jd,
+                    resume_text: resumeText,
+                    company_name: company,
+                    role_title: role,
+                    application_id: currentAppId,
+                })
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+            updateCost(data.cost_usd);
+
+            // Switch to cover letter tab
+            document.querySelectorAll('[data-tailor-tab]').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tailor-tab-content').forEach(c => c.style.display = 'none');
+            document.querySelector('[data-tailor-tab="cover"]').classList.add('active');
+            document.getElementById('ttab-cover').style.display = 'block';
+
+            const cl = data.cover_letter;
+            const text = typeof cl === 'string' ? cl : cl.cover_letter_text || JSON.stringify(cl, null, 2);
+
+            document.getElementById('cover-letter-output').innerHTML = `
+                <div class="flex-between mb-4">
+                    <h3 class="card-title">Cover Letter</h3>
+                    <button class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('cl-text').innerText); showToast('Copied!', 'success');">📋 Copy</button>
+                </div>
+                <div id="cl-text" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary)">${text}</div>
+            `;
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+</script>
+{% endblock %}

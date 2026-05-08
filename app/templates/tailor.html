@@ -50,7 +50,7 @@
     <!-- ATS Score -->
     <div class="card-grid mb-6">
         <div class="card" style="text-align: center">
-            <h3 class="card-title">ATS Score</h3>
+            <h3 class="card-title">Resume Match Score</h3>
             <div class="ats-gauge mt-4">
                 <svg viewBox="0 0 100 100">
                     <circle class="ats-gauge-bg" cx="50" cy="50" r="42"></circle>
@@ -63,6 +63,7 @@
                 </div>
             </div>
             <p class="text-muted mt-4" id="ats-verdict"></p>
+            <p class="text-muted mt-2" style="font-size: var(--text-xs); font-style: italic;" id="ats-disclaimer"></p>
         </div>
         <div class="card">
             <h3 class="card-title">Score Breakdown</h3>
@@ -85,13 +86,26 @@
         <div class="card">
             <div class="flex-between mb-4">
                 <h3 class="card-title">Copy this into Overleaf</h3>
-                <div class="flex gap-4">
+                <div class="flex gap-4" style="flex-wrap: wrap;">
                     <button class="btn btn-sm btn-secondary" onclick="selectAllLatex()">🔘 Select All</button>
                     <button class="btn btn-sm btn-primary" onclick="copyLatex()">📋 Copy to Clipboard</button>
+                    <button class="btn btn-sm btn-secondary" onclick="downloadPDF()" id="btn-download-pdf">📥 Download PDF</button>
+                    <button class="btn btn-sm btn-secondary" onclick="downloadDOCX()" id="btn-download-docx">📄 Download DOCX</button>
                 </div>
             </div>
             <textarea id="latex-output" class="form-textarea" readonly
                       style="font-family: var(--font-mono); font-size: var(--text-sm); min-height: 500px; line-height: 1.5; background: var(--bg-tertiary); color: var(--text-primary); white-space: pre; overflow-x: auto;"></textarea>
+        </div>
+
+        <!-- Instant Re-Score (No AI Call) -->
+        <div class="card mt-4" id="rescore-section" style="display: none;">
+            <h3 class="card-title mb-4">✏️ Edit & Re-Score (Instant — No AI Call)</h3>
+            <p class="text-muted mb-4">Edit the plain text below and click Re-Score to instantly recalculate your match score without an AI API call.</p>
+            <textarea id="rescore-resume-text" class="form-textarea" style="min-height: 200px; font-family: var(--font-mono); font-size: var(--text-sm);"></textarea>
+            <div class="flex gap-4 mt-4">
+                <button class="btn btn-primary" onclick="instantRescore()">⚡ Re-Score Now</button>
+                <span class="text-muted" style="align-self: center; font-size: var(--text-xs);">This uses the pure-Python scorer — returns in milliseconds.</span>
+            </div>
         </div>
     </div>
 
@@ -166,6 +180,10 @@
                 renderNotes(data.tailored_resume.tailoring_notes);
             }
 
+            // Enable the instant re-score section (Analysis Issue #4)
+            const plainText = data.resume_plain_text || resumeText;
+            showRescoreSection(plainText, jd, data.tailored_resume || {});
+
             showToast('Resume tailored successfully! Copy the LaTeX code to Overleaf.', 'success');
         } catch (e) {
             hideLoading();
@@ -189,6 +207,7 @@
         document.getElementById('ats-score-value').textContent = score;
         document.getElementById('ats-grade').textContent = 'Grade: ' + (ats.grade || '--');
         document.getElementById('ats-verdict').textContent = ats.verdict || '';
+        document.getElementById('ats-disclaimer').textContent = ats.disclaimer || '';
 
         // Breakdown
         if (ats.breakdown) {
@@ -296,6 +315,105 @@
         } catch (e) {
             hideLoading();
             showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    // ===== Instant Re-Score (No AI) =====
+    let lastJDText = '';
+    let lastTailoredJSON = null;
+
+    function showRescoreSection(resumePlainText, jdText, tailoredJSON) {
+        lastJDText = jdText;
+        lastTailoredJSON = tailoredJSON;
+        document.getElementById('rescore-resume-text').value = resumePlainText;
+        document.getElementById('rescore-section').style.display = 'block';
+    }
+
+    async function instantRescore() {
+        const resumeText = document.getElementById('rescore-resume-text').value.trim();
+        if (!resumeText || !lastJDText) return showToast('Missing resume text or JD.', 'error');
+
+        try {
+            const res = await fetch('/tailor/api/ats-score', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ resume_text: resumeText, jd_text: lastJDText }),
+            });
+            const ats = await res.json();
+            if (ats.error) return showToast(ats.error, 'error');
+            renderATSScore(ats);
+            showToast(`Re-scored: ${ats.total_score}/100 (${ats.grade})`, ats.total_score >= 80 ? 'success' : 'info');
+        } catch (e) { showToast('Re-score failed: ' + e.message, 'error'); }
+    }
+
+    // ===== PDF Download =====
+    async function downloadPDF() {
+        const latex = document.getElementById('latex-output').value;
+        if (!latex) return showToast('No LaTeX output to compile.', 'error');
+
+        showLoading('Compiling PDF...');
+        try {
+            const res = await fetch('/tailor/api/download-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ latex_code: latex }),
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'tailored_resume.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                showToast('PDF downloaded!', 'success');
+            } else {
+                const data = await res.json();
+                hideLoading();
+                showToast(data.error || 'PDF compilation failed.', 'error');
+            }
+        } catch (e) {
+            hideLoading();
+            showToast('PDF download failed: ' + e.message, 'error');
+        }
+    }
+
+    // ===== DOCX Download =====
+    async function downloadDOCX() {
+        if (!lastTailoredJSON) return showToast('No tailored resume data available.', 'error');
+
+        showLoading('Generating DOCX...');
+        try {
+            const res = await fetch('/tailor/api/download-docx', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ resume_json: lastTailoredJSON }),
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('wordprocessingml')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'tailored_resume.docx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                showToast('DOCX downloaded!', 'success');
+            } else {
+                const data = await res.json();
+                hideLoading();
+                showToast(data.error || 'DOCX generation failed.', 'error');
+            }
+        } catch (e) {
+            hideLoading();
+            showToast('DOCX download failed: ' + e.message, 'error');
         }
     }
 </script>

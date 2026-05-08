@@ -9,6 +9,10 @@ class Config:
     SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///resumeforge.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,       # reconnect on stale connections (Neon serverless)
+        'pool_recycle': 300,         # recycle connections every 5 min
+    }
     ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY', '')
     GOOGLE_GEMINI_API_KEY = os.getenv('GOOGLE_GEMINI_API_KEY', '')
     # Amazon Bedrock

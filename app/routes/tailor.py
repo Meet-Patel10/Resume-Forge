@@ -1,14 +1,17 @@
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, session
+from app.routes.auth import login_required
 from app import db
 from app.models.master_resume import MasterResume
 from app.models.application import Application
 from app.models.analysis import AnalysisHistory
+from app.models.resume_version import ResumeVersion
 from app.services.claude_client import claude
 from app.services.prompts.resume_tailor import RESUME_TAILOR_SYSTEM, build_tailor_message
 from app.services.prompts.bullet_rewriter import BULLET_REWRITER_SYSTEM, build_bullet_message
 from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, build_cover_letter_message
 from app.services.prompts.brutal_critic import BRUTAL_CRITIC_SYSTEM, build_critique_message
 from app.services.prompts.keyword_extractor import KEYWORD_EXTRACTOR_SYSTEM, build_keyword_message
+from app.services.prompts.jd_analyzer import JD_ANALYZER_SYSTEM, build_jd_analysis_message
 from app.services.latex_engine import render_latex
 from app.services.ats_scorer import calculate_ats_score
 import json as json_mod
@@ -17,15 +20,17 @@ tailor_bp = Blueprint('tailor', __name__)
 
 
 @tailor_bp.route('/')
+@login_required
 def tailor_page():
-    """Render the tailoring page."""
-    resume = MasterResume.query.first()
-    return render_template('tailor.html', resume=resume)
+    """Tailoring lives on the analyze page now, just redirect."""
+    from flask import redirect, url_for
+    return redirect(url_for('analyze.analyze_page'))
 
 
 @tailor_bp.route('/api/rewrite-bullets', methods=['POST'])
+@login_required
 def api_rewrite_bullets():
-    """Rewrite bullet points using X-Y-Z formula."""
+    """Rewrite bullets in X-Y-Z format."""
     data = request.get_json()
     bullets = data.get('bullets', [])
     jd_text = data.get('jd_text', '')
@@ -48,8 +53,9 @@ def api_rewrite_bullets():
 
 
 @tailor_bp.route('/api/tailor', methods=['POST'])
+@login_required
 def api_tailor():
-    """Full resume tailoring pipeline — 3-step: Critique → Keywords → Tailor."""
+    """Main tailoring pipeline: analyze JD, critique, extract keywords, then tailor."""
     data = request.get_json()
     jd_text = data.get('jd_text', '')
     resume_text = data.get('resume_text', '')
@@ -64,14 +70,42 @@ def api_tailor():
     total_cost = 0.0
     pipeline_steps = []
 
-    # ── STEP 1: Brutal Critique (JD vs Master Resume) ────
+    # step 0: parse the JD for skills, requirements, etc.
+    jd_analysis = None
+    try:
+        jd_msg = build_jd_analysis_message(resume_text, jd_text)
+        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000)
+        if not jd_result.get('error'):
+            jd_analysis = jd_result['response']
+            if isinstance(jd_analysis, str):
+                try:
+                    cleaned = jd_analysis.strip()
+                    if cleaned.startswith('```json'):
+                        cleaned = cleaned[7:]
+                    if cleaned.startswith('```'):
+                        cleaned = cleaned[3:]
+                    if cleaned.endswith('```'):
+                        cleaned = cleaned[:-3]
+                    jd_analysis = json_mod.loads(cleaned.strip())
+                except Exception:
+                    jd_analysis = None
+            total_tokens += jd_result.get('tokens_used', 0)
+            total_cost += jd_result.get('cost_usd', 0)
+            pipeline_steps.append('jd_analysis')
+            print(f"[tailor] jd analysis done")
+        else:
+            print(f"[tailor] jd analysis skipped: {jd_result['error']}")
+    except Exception as e:
+        print(f"[tailor] jd analysis error: {e}")
+
+    # step 1: run brutal critique
     critique_data = None
     try:
         critique_msg = build_critique_message(resume_text, jd_text)
         critique_result = claude.analyze(BRUTAL_CRITIC_SYSTEM, critique_msg, max_tokens=3000)
         if not critique_result.get('error'):
             critique_data = critique_result['response']
-            # Parse string response if needed
+            # try to parse string response
             if isinstance(critique_data, str):
                 try:
                     cleaned = critique_data.strip()
@@ -87,20 +121,20 @@ def api_tailor():
             total_tokens += critique_result.get('tokens_used', 0)
             total_cost += critique_result.get('cost_usd', 0)
             pipeline_steps.append('critique')
-            print(f"[TAILOR] Step 1 done: Brutal Critique completed")
+            print("[tailor] critique done")
         else:
-            print(f"[TAILOR] Step 1 skipped: {critique_result['error']}")
+            print(f"[tailor] critique skipped: {critique_result['error']}")
     except Exception as e:
-        print(f"[TAILOR] Step 1 error: {e}")
+        print(f"[tailor] critique error: {e}")
 
-    # ── STEP 2: Keyword Extraction (JD vs Master Resume) ──
+    # step 2: extract keywords
     keyword_data = None
     try:
         kw_msg = build_keyword_message(resume_text, jd_text)
         kw_result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, kw_msg, max_tokens=3000)
         if not kw_result.get('error'):
             keyword_data = kw_result['response']
-            # Parse string response if needed
+            # parse if string
             if isinstance(keyword_data, str):
                 try:
                     cleaned = keyword_data.strip()
@@ -116,18 +150,19 @@ def api_tailor():
             total_tokens += kw_result.get('tokens_used', 0)
             total_cost += kw_result.get('cost_usd', 0)
             pipeline_steps.append('keywords')
-            print(f"[TAILOR] Step 2 done: Keyword extraction completed")
+            print("[tailor] keywords done")
         else:
-            print(f"[TAILOR] Step 2 skipped: {kw_result['error']}")
+            print(f"[tailor] keywords skipped: {kw_result['error']}")
     except Exception as e:
-        print(f"[TAILOR] Step 2 error: {e}")
+        print(f"[tailor] keyword error: {e}")
 
-    # ── STEP 3: Tailor the resume (with critique + keyword insights) ──
+    # step 3: actually tailor the resume using all the context we gathered
     user_message = build_tailor_message(
         resume_text, jd_text,
         keyword_analysis=keyword_analysis,
         critique_data=critique_data,
         keyword_data=keyword_data,
+        jd_analysis=jd_analysis,
     )
     result = claude.analyze(RESUME_TAILOR_SYSTEM, user_message, max_tokens=16000)
 
@@ -137,23 +172,23 @@ def api_tailor():
     total_tokens += result.get('tokens_used', 0)
     total_cost += result.get('cost_usd', 0)
     pipeline_steps.append('tailor')
-    print(f"[TAILOR] Step 3 done: Resume tailored (pipeline: {pipeline_steps})")
+    print(f"[tailor] done ({pipeline_steps})")
 
     tailored_data = result['response']
 
-    # ── Robust JSON extraction (handle various AI response formats) ──
+    # try to parse AI response into JSON (it sometimes wraps it in markdown fences etc.)
     if isinstance(tailored_data, str):
         import re as re_mod2
         raw_str = tailored_data.strip()
         parsed = None
 
-        # Strategy 1: Direct JSON parse
+        # try 1: direct parse
         try:
             parsed = json_mod.loads(raw_str)
         except Exception:
             pass
 
-        # Strategy 2: Strip markdown code fences
+        # try 2: strip ```json fences
         if parsed is None:
             cleaned = raw_str
             if cleaned.startswith('```json'):
@@ -167,7 +202,7 @@ def api_tailor():
             except Exception:
                 pass
 
-        # Strategy 3: Extract first JSON object {...} from the string
+        # try 3: find the first { ... } blob
         if parsed is None:
             brace_start = raw_str.find('{')
             brace_end = raw_str.rfind('}')
@@ -177,7 +212,7 @@ def api_tailor():
                 except Exception:
                     pass
 
-        # Strategy 4: Repair truncated JSON (add missing closing brackets)
+        # try 4: fix truncated JSON by closing brackets
         if parsed is None:
             json_str = raw_str
             brace_start = json_str.find('{')
@@ -197,38 +232,131 @@ def api_tailor():
                 json_str += '}' * max(open_braces, 0)
                 try:
                     parsed = json_mod.loads(json_str)
-                    print(f"[TAILOR] JSON repaired (added {open_braces} braces, {open_brackets} brackets)")
+                    print(f"[tailor] patched JSON (added {open_braces}b, {open_brackets}br)")
                 except Exception as repair_err:
-                    print(f"[TAILOR] JSON repair failed: {repair_err}")
+                    print(f"[tailor] json repair failed: {repair_err}")
 
         if parsed and isinstance(parsed, dict):
             tailored_data = parsed
-            print(f"[TAILOR] JSON extracted successfully ({len(str(parsed))} chars)")
+            print(f"[tailor] json parsed ok ({len(str(parsed))} chars)")
         else:
-            print(f"[TAILOR] Warning: All JSON extraction strategies failed ({len(raw_str)} chars)")
-            print(f"[TAILOR] Raw response preview: {raw_str[:500]}...")
+            print(f"[tailor] json parse failed ({len(raw_str)} chars)")
 
-    # Step 2: Generate LaTeX
+    # overwrite experience/projects/education with master resume data
+    # this guarantees bullets are exactly what the user uploaded
+    if isinstance(tailored_data, dict):
+        try:
+            master = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
+            if master:
+
+                # header straight from DB
+                tailored_data['header'] = {
+                    'name': master.full_name or '',
+                    'location': master.location or '',
+                    'phone': master.phone or '',
+                    'email': master.email or '',
+                    'linkedin': master.linkedin_url or '',
+                    'github': master.github_url or '',
+                    'tagline': master.tagline or '',
+                }
+
+                # education from DB
+                tailored_data['education'] = master.education or []
+
+                # languages
+                lang = master.languages
+                if lang:
+                    lang_str = ', '.join(lang) if isinstance(lang, list) else str(lang)
+                    if 'other' not in tailored_data or not isinstance(tailored_data.get('other'), dict):
+                        tailored_data['other'] = {}
+                    tailored_data['other']['languages'] = lang_str
+
+                # rebuild experience and project bullets from the bullet bank
+                if master.bullets:
+                    exp_bullets = [b for b in master.bullets if (b.section_type or 'experience') == 'experience' and b.is_active]
+                    proj_bullets = [b for b in master.bullets if (b.section_type or '') == 'project' and b.is_active]
+
+                    # group experience bullets by role
+                    if exp_bullets:
+                        exp_by_role = {}
+                        for b in sorted(exp_bullets, key=lambda x: x.sort_order or 0):
+                            key = f"{b.role}|||{b.company}"
+                            if key not in exp_by_role:
+                                exp_by_role[key] = {
+                                    'title': b.role,
+                                    'company': b.company,
+                                    'dates': b.dates or '',
+                                    'location': '',
+                                    'bullets': [],
+                                }
+                            exp_by_role[key]['bullets'].append(b.original_text)
+
+                        # grab location from AI output since we don't store it
+                        ai_exp = tailored_data.get('experience', [])
+                        for ai_entry in ai_exp:
+                            for key, master_entry in exp_by_role.items():
+                                if (ai_entry.get('title', '').strip().lower() == master_entry['title'].strip().lower() and
+                                    ai_entry.get('company', '').strip().lower() == master_entry['company'].strip().lower()):
+                                    master_entry['location'] = ai_entry.get('location', '')
+                                    break
+
+                        tailored_data['experience'] = list(exp_by_role.values())
+
+                    # group project bullets by project name
+                    if proj_bullets:
+                        proj_by_name = {}
+                        for b in sorted(proj_bullets, key=lambda x: x.sort_order or 0):
+                            key = b.company  # project name stored in company field
+                            if key not in proj_by_name:
+                                proj_by_name[key] = {
+                                    'name': b.company,
+                                    'tech_stack': b.tech_stack or '',
+                                    'dates': b.dates or '',
+                                    'bullets': [],
+                                }
+                            proj_by_name[key]['bullets'].append(b.original_text)
+
+                        tailored_data['projects'] = list(proj_by_name.values())
+
+                print("[tailor] master resume data applied")
+            else:
+                print("[tailor] no master resume in db, skipping")
+        except Exception as e:
+            print(f"[tailor] enforcement error (non-fatal): {e}")
+
+    # run the summary through the external humanizer if we have a key
+    if isinstance(tailored_data, dict) and tailored_data.get('summary'):
+        try:
+            from app.services.humanize_client import humanize_text
+            original_summary = tailored_data['summary']
+            humanized_summary = humanize_text(original_summary, model="humanoidx", tone="formal")
+            if humanized_summary and humanized_summary != original_summary:
+                tailored_data['summary'] = humanized_summary
+                print(f"[tailor] summary humanized")
+            else:
+                print("[tailor] humanizer skipped or returned same text")
+        except Exception as e:
+            print(f"[tailor] humanizer error: {e}")
+
+    # generate the latex
     latex_output = ''
     if isinstance(tailored_data, dict):
         try:
             latex_output = render_latex(tailored_data)
         except Exception as e:
             latex_output = f'% LaTeX generation error: {str(e)}\n% The AI response was received but LaTeX rendering failed.\n% Try again or check the server logs.'
-            print(f"[TAILOR] LaTeX render error: {e}")
+            print(f"[tailor] latex error: {e}")
     else:
         raw_preview = str(tailored_data)[:2000]
         latex_output = '% ERROR: AI returned unstructured text. JSON parsing failed.\n% Please try again — the AI sometimes returns raw text.\n'
         for line in raw_preview.split('\n')[:50]:
             latex_output += f'% {line}\n'
-        print(f"[TAILOR] tailored_data is not a dict, type={type(tailored_data)}")
+        print(f"[tailor] not a dict, type={type(tailored_data)}")
 
-    # Step 3: Calculate ATS score using AI's reported keyword usage
-    resume_plain = resume_text  # Use the original for comparison
-    keyword_matches = None
+    # score it
+    resume_plain = resume_text
     if isinstance(tailored_data, dict):
-        # Build comprehensive plain text from tailored data for scoring
-        # Include section headers so ATS section detection works
+        # build plain text from the tailored JSON for scoring
         header = tailored_data.get('header', {})
         parts = []
 
@@ -241,9 +369,13 @@ def api_tailor():
             parts.append(header['phone'])
         if header.get('location'):
             parts.append(header['location'])
+        if header.get('linkedin'):
+            parts.append(header['linkedin'])
+        if header.get('github'):
+            parts.append(header['github'])
 
         # Summary section
-        parts.append('SUMMARY')
+        parts.append('PROFESSIONAL SUMMARY')
         parts.append(tailored_data.get('summary', ''))
 
         # Skills section
@@ -257,6 +389,8 @@ def api_tailor():
             parts.append('PROJECTS')
             for proj in tailored_data.get('projects', []):
                 parts.append(proj.get('name', ''))
+                if proj.get('tech_stack'):
+                    parts.append(proj['tech_stack'])
                 parts.extend(proj.get('bullets', []))
 
         # Experience section
@@ -280,22 +414,21 @@ def api_tailor():
                 parts.append(oexp.get('title', ''))
                 parts.extend(oexp.get('bullets', []))
 
-        resume_plain = ' '.join(parts)
+        # Languages
+        other = tailored_data.get('other', {})
+        if other and other.get('languages'):
+            parts.append('LANGUAGES')
+            parts.append(other['languages'])
 
-        # Use AI's keyword list for accurate scoring
-        kw_used = tailored_data.get('keywords_used', [])
-        if kw_used:
-            keyword_matches = []
-            for kw in kw_used:
-                status = 'strong_match' if kw.lower() in resume_plain.lower() else 'weak_match'
-                keyword_matches.append({'keyword': kw, 'resume_status': status})
+        resume_plain = '\n'.join(p for p in parts if p)
 
-    ats = calculate_ats_score(resume_plain, jd_text, keyword_matches)
+    ats = calculate_ats_score(resume_plain, jd_text, jd_analysis=jd_analysis)
 
-    # Step 4: Save application if company name provided
+    # save to db if company name was given
     app_record = None
     if company_name:
         app_record = Application(
+            user_id=session.get('user_id'),
             company_name=company_name,
             role_title=role_title or 'Untitled Role',
             jd_text=jd_text,
@@ -319,6 +452,25 @@ def api_tailor():
         db.session.add(history)
         db.session.commit()
 
+        # Save resume version for version tracking
+        existing_count = ResumeVersion.query.filter_by(application_id=app_record.id).count()
+        version = ResumeVersion(
+            application_id=app_record.id,
+            version_number=existing_count + 1,
+            resume_plain_text=resume_plain or '',
+            ats_score=ats.get('total_score', 0),
+            tokens_used=total_tokens,
+            cost_usd=total_cost,
+        )
+        if isinstance(tailored_data, dict):
+            version.resume_json = tailored_data
+        version.resume_latex = latex_output
+        version.score_breakdown = ats
+        version.pipeline_steps = pipeline_steps
+        db.session.add(version)
+        db.session.commit()
+        print(f"[tailor] Resume version {version.version_number} saved for application {app_record.id}")
+
     return jsonify({
         'tailored_resume': tailored_data,
         'latex': latex_output,
@@ -331,6 +483,7 @@ def api_tailor():
 
 
 @tailor_bp.route('/api/cover-letter', methods=['POST'])
+@login_required
 def api_cover_letter():
     """Generate a matching cover letter."""
     data = request.get_json()
@@ -364,6 +517,7 @@ def api_cover_letter():
 
 
 @tailor_bp.route('/api/ats-score', methods=['POST'])
+@login_required
 def api_ats_score():
     """Calculate ATS proxy score for a resume against a JD."""
     data = request.get_json()
@@ -376,3 +530,70 @@ def api_ats_score():
 
     score = calculate_ats_score(resume_text, jd_text, keyword_matches)
     return jsonify(score)
+
+
+@tailor_bp.route('/api/download-pdf', methods=['POST'])
+@login_required
+def api_download_pdf():
+    """Compile LaTeX to PDF using latex.ytotech.com API and return the PDF."""
+    import requests as http_requests
+    from flask import Response
+
+    data = request.get_json()
+    latex_code = data.get('latex_code', '')
+
+    if not latex_code:
+        return jsonify({'error': 'No LaTeX code provided'}), 400
+
+    try:
+        # Use YtoTech LaTeX Online API (free, no API key required)
+        api_url = 'https://latex.ytotech.com/builds/sync'
+        payload = {
+            'compiler': 'pdflatex',
+            'resources': [
+                {
+                    'main': True,
+                    'content': latex_code,
+                }
+            ],
+        }
+        resp = http_requests.post(api_url, json=payload, timeout=60)
+
+        if resp.status_code == 200 and resp.headers.get('Content-Type', '').startswith('application/pdf'):
+            return Response(
+                resp.content,
+                mimetype='application/pdf',
+                headers={'Content-Disposition': 'attachment; filename=tailored_resume.pdf'}
+            )
+        else:
+            error_msg = resp.text[:500] if resp.text else 'Unknown compilation error'
+            return jsonify({'error': f'LaTeX compilation failed: {error_msg}'}), 500
+
+    except http_requests.RequestException as e:
+        return jsonify({'error': f'PDF compilation service unavailable: {str(e)}'}), 503
+
+
+@tailor_bp.route('/api/download-docx', methods=['POST'])
+@login_required
+def api_download_docx():
+    """Generate a .docx file from the tailored resume JSON."""
+    from flask import Response
+
+    data = request.get_json()
+    resume_json = data.get('resume_json', {})
+
+    if not resume_json:
+        return jsonify({'error': 'No resume data provided'}), 400
+
+    try:
+        from app.services.docx_engine import render_docx
+        docx_bytes = render_docx(resume_json)
+        return Response(
+            docx_bytes,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            headers={'Content-Disposition': 'attachment; filename=tailored_resume.docx'}
+        )
+    except ImportError:
+        return jsonify({'error': 'python-docx is not installed. Run: pip install python-docx'}), 500
+    except Exception as e:
+        return jsonify({'error': f'DOCX generation failed: {str(e)}'}), 500

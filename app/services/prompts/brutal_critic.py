@@ -50,6 +50,13 @@ Respond ONLY with valid JSON in this exact structure:
 - Be specific. "Weak bullet" is not feedback. "This bullet uses passive voice and mentions no measurable outcome" IS feedback.
 - Judge the resume ONLY against the specific JD provided, not general best practices.
 - Consider both ATS screening AND human recruiter perspectives.
+
+## QUANTIFIABLE ACHIEVEMENTS — CRITICAL CHECK
+- Scan EVERY experience bullet for quantifiable metrics (%, $, numbers, timeframes, team sizes)
+- Flag EVERY bullet that lacks a measurable result — this is a top-3 reason for rejection
+- For each flagged bullet, suggest a specific metric the candidate could add based on the context
+- Examples of good metrics: "Reduced latency by 40%", "Served 500+ users", "Managed 3 direct reports"
+- Rate bullets without metrics as HIGH severity (7+) — hiring managers skip vague bullets
 """
 
 

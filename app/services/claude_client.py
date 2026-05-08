@@ -4,12 +4,7 @@ from flask import current_app
 
 
 class BedrockClient:
-    """Wrapper around Amazon Bedrock for structured resume analysis.
-
-    Supports two models based on APP_ENV:
-      - production: anthropic.claude-3-5-haiku-20241022-v1:0
-      - testing:    amazon.nova-lite-v1:0
-    """
+    """Talks to AWS Bedrock for AI analysis (Claude or Nova depending on env)."""
 
     # Model configs
     MODELS = {
@@ -57,27 +52,18 @@ class BedrockClient:
         """Get model config based on APP_ENV."""
         env = current_app.config.get('APP_ENV', 'testing').lower()
         if env not in self.MODELS:
-            print(f"[BEDROCK] Unknown APP_ENV '{env}', defaulting to 'testing'")
+            print(f"[bedrock] Unknown APP_ENV '{env}', defaulting to 'testing'")
             env = 'testing'
         return self.MODELS[env], env
 
     def analyze(self, system_prompt, user_message, max_tokens=4096):
-        """Send a message to Bedrock and return the parsed JSON response.
-
-        Args:
-            system_prompt: The system prompt defining the AI's persona/task
-            user_message: The user's input (JD + resume text)
-            max_tokens: Maximum response tokens
-
-        Returns:
-            dict with 'response' (parsed JSON or raw text), 'tokens_used', 'cost_usd'
-        """
+        """Send a prompt to Bedrock, return parsed response + token/cost info."""
         try:
             model_cfg, env_name = self._get_model_config()
             model_id = model_cfg['model_id']
             provider = model_cfg['provider']
 
-            print(f"[BEDROCK] Using {model_id} (env={env_name})")
+            print(f"[bedrock] Using {model_id} (env={env_name})")
 
             # Build request body based on provider
             if provider == 'anthropic':
@@ -102,7 +88,7 @@ class BedrockClient:
                 return self._parse_amazon_response(response_body, model_cfg)
 
         except Exception as e:
-            print(f"[BEDROCK] Error: {e}")
+            print(f"[bedrock] Error: {e}")
             return {
                 'error': str(e),
                 'response': None,

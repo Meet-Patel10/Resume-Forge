@@ -2,15 +2,10 @@ import re
 
 
 def sanitize_latex(text):
-    """Escape special LaTeX characters to prevent compilation errors.
-
-    This is CRITICAL — raw text from the AI will contain characters
-    that break LaTeX compilation (& % $ # _ { } ~ ^).
-    """
+    """Escape chars that break LaTeX (& % $ # _ { } ~ ^)."""
     if not text:
         return ''
 
-    # Order matters — backslash must be first
     replacements = [
         ('\\', r'\textbackslash{}'),
         ('&', r'\&'),
@@ -31,114 +26,91 @@ def sanitize_latex(text):
 
 
 def render_latex(resume_data):
-    """Convert a structured resume JSON object into a complete LaTeX document.
+    """Build a .tex file from structured resume JSON.
 
-    Matches the ATS_Resume_Jordan_Carter.docx format exactly:
-    - Centered header with large bold name + bullet-separated contact
-    - Blue uppercase section headers with horizontal rule
-    - Experience: Title | Company | Location • Dates
-    - Skills: Bold Category: items
-    - Education: Degree — University
-
-    Args:
-        resume_data: dict matching the TailoredResume schema from resume_tailor.py
-
-    Returns:
-        Complete .tex file content as a string
+    Layout matches Meet_Patel_Resume.pdf exactly:
+    - cmss (Computer Modern Sans Serif) throughout
+    - 9pt body, 17pt name, 12pt section headers
+    - All black, no color accents
+    - Two-line experience blocks: Title...Dates / Company...Location
     """
     header = resume_data.get('header', {})
-    s = sanitize_latex  # shorthand
+    s = sanitize_latex
 
-    # ── PREAMBLE ──
-    latex = r"""\documentclass[11pt,a4paper]{article}
+    # Preamble -- cmss fonts, tight margins
+    latex = r"""\documentclass[9pt,a4paper]{article}
 
-% --- Packages ---
 \usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{enumitem}
 \usepackage{titlesec}
-\usepackage{xcolor}
 
-% --- Margin Setup ---
-\geometry{left=0.6in, top=0.5in, right=0.6in, bottom=0.5in}
+% use sans-serif font to match the template
+\renewcommand{\familydefault}{\sfdefault}
 
-% --- Color Definitions ---
-\definecolor{sectionblue}{RGB}{47, 84, 117}
+\geometry{left=0.5in, top=0.4in, right=0.5in, bottom=0.4in}
 
-% --- Custom Styles ---
 \pagestyle{empty}
 \urlstyle{same}
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{2pt}
+\setlength{\parskip}{0pt}
 
-% Section formatting: blue, uppercase, with rule
-\titleformat{\section}{\large\bfseries\color{sectionblue}\uppercase}{}{0pt}{}[\color{sectionblue}\titlerule]
-\titlespacing{\section}{0pt}{12pt}{6pt}
+% section headers: bold uppercase with rule, all black
+\titleformat{\section}{\normalsize\bfseries\uppercase}{}{0pt}{}[\titlerule]
+\titlespacing{\section}{0pt}{8pt}{4pt}
 
-% Bullet point styling
-\setlist[itemize]{noitemsep, topsep=3pt, leftmargin=1.5em, label=\textbullet}
+\setlist[itemize]{noitemsep, topsep=2pt, leftmargin=1.2em, label=\textbullet, parsep=0pt, partopsep=0pt}
 
-% Link colors
 \hypersetup{
     colorlinks=true,
-    linkcolor=sectionblue,
-    urlcolor=sectionblue,
+    linkcolor=black,
+    urlcolor=black,
 }
 
 \begin{document}
 """
 
-    # ── HEADER ──
+    # Header
     name = s(header.get('name', 'Name'))
     location = header.get('location', '')
     phone = header.get('phone', '')
     email = header.get('email', '')
     linkedin = header.get('linkedin', '')
     github = header.get('github', '')
-    tagline = header.get('tagline', '')
 
-    # Build contact info line with bullet separators (matching sample)
     contact_parts = []
+    if location:
+        contact_parts.append(s(location))
     if phone:
         contact_parts.append(s(phone))
     if email:
         contact_parts.append(r'\href{mailto:' + s(email) + '}{' + s(email) + '}')
     if linkedin:
-        linkedin_clean = linkedin.replace('https://', '').replace('http://', '')
-        contact_parts.append(r'\href{' + s(linkedin) + '}{' + s(linkedin_clean) + '}')
+        linkedin_display = linkedin.replace('https://', '').replace('http://', '')
+        contact_parts.append(r'\href{' + s(linkedin) + '}{' + s(linkedin_display) + '}')
     if github:
-        github_clean = github.replace('https://', '').replace('http://', '')
-        contact_parts.append(r'\href{' + s(github) + '}{' + s(github_clean) + '}')
-    if location:
-        contact_parts.append(s(location))
+        github_display = github.replace('https://', '').replace('http://', '')
+        contact_parts.append(r'\href{' + s(github) + '}{' + s(github_display) + '}')
 
-    contact_line = r'  \textbullet\hspace{4pt}  '.join(contact_parts)
+    contact_line = r' $|$ '.join(contact_parts)
 
     latex += r"""
-% --- Header ---
 \begin{center}
-    {\fontsize{22pt}{26pt}\selectfont \textbf{""" + name + r"""}} \\[6pt]
+    {\fontsize{17.28pt}{20pt}\selectfont \textbf{""" + name + r"""}} \\[4pt]
     \small """ + contact_line + r"""
 \end{center}
 """
 
-    # Add tagline if present (italic, centered, below header)
-    if tagline:
-        latex += r"""\begin{center}
-\small\textit{""" + s(tagline) + r"""}
-\end{center}
-"""
-
-    # ── PROFESSIONAL SUMMARY ──
+    # Summary
     summary = resume_data.get('summary', '')
     if summary:
         latex += r"""
-\section*{PROFESSIONAL SUMMARY}
+\section*{SUMMARY}
 """ + s(summary) + "\n"
 
-    # ── TECHNICAL SKILLS ──
+    # Skills
     skills = resume_data.get('skills', [])
     if skills:
         latex += r"""
@@ -151,7 +123,7 @@ def render_latex(resume_data):
             skill_lines.append(rf"\textbf{{{category}:}} {items}")
         latex += ' \\\\\n'.join(skill_lines) + "\n"
 
-    # ── ACADEMIC PROJECTS ──
+    # Projects
     projects = resume_data.get('projects', [])
     if projects:
         latex += r"""
@@ -160,36 +132,60 @@ def render_latex(resume_data):
         for proj in projects:
             proj_name = s(proj.get('name', ''))
             tech = s(proj.get('tech_stack', ''))
-            # Match sample: Bold title | tech_stack on right
+            dates = s(proj.get('dates', ''))
+
             latex += rf"""
-\textbf{{{proj_name}}} \hfill \textit{{{tech}}}
-\begin{{itemize}}
+\textbf{{{proj_name}}} \hfill \textit{{{dates}}}
+"""
+            if tech:
+                latex += rf"""\textit{{{tech}}}
+"""
+            latex += r"""\begin{itemize}
 """
             for bullet in proj.get('bullets', []):
                 latex += f"\\item {s(bullet)}\n"
             latex += r"\end{itemize}" + "\n"
 
-    # ── PROFESSIONAL EXPERIENCE ──
+    # Experience
     experience = resume_data.get('experience', [])
     if experience:
         latex += r"""
-\section*{PROFESSIONAL EXPERIENCE}
+\section*{EXPERIENCE}
 """
         for exp in experience:
             title = s(exp.get('title', ''))
             company = s(exp.get('company', ''))
             exp_location = s(exp.get('location', ''))
             dates = s(exp.get('dates', ''))
-            # Match sample format: Bold Title | Bold Company (blue) | Location • Dates
+
             latex += rf"""
-\textbf{{{title}}} \hspace{{3pt}}$|$\hspace{{3pt}} \textbf{{\textcolor{{sectionblue}}{{{company}}}}} \hspace{{3pt}}$|$\hspace{{3pt}} {exp_location} \textbullet\hspace{{4pt}} {dates}
-\begin{{itemize}}
+\textbf{{{title}}} \hfill \textit{{{dates}}}
+"""
+            latex += rf"""\textit{{{company}}} \hfill \textit{{{exp_location}}}
+"""
+            latex += r"""\begin{itemize}
 """
             for bullet in exp.get('bullets', []):
                 latex += f"\\item {s(bullet)}\n"
             latex += r"\end{itemize}" + "\n"
 
-    # ── EDUCATION ──
+    # Certifications
+    certifications = resume_data.get('certifications', [])
+    if certifications:
+        latex += r"""
+\section*{CERTIFICATIONS}
+"""
+        for cert in certifications:
+            if isinstance(cert, dict):
+                cert_name = s(cert.get('name', ''))
+                cert_dates = s(cert.get('dates', ''))
+                latex += rf"""\textbf{{{cert_name}}} \hfill \textit{{{cert_dates}}}
+"""
+            elif isinstance(cert, str):
+                latex += rf"""\textbf{{{s(cert)}}}
+"""
+
+    # Education
     education = resume_data.get('education', [])
     if education:
         latex += r"""
@@ -202,21 +198,19 @@ def render_latex(resume_data):
             dates = s(edu.get('dates', ''))
             details = edu.get('details', '')
 
-            # Match sample: Bold Degree — Bold University (blue)
             latex += rf"""
-\textbf{{{degree}}} \hspace{{3pt}}---\hspace{{3pt}} \textbf{{\textcolor{{sectionblue}}{{{school}}}}}"""
-            if edu_location:
-                latex += rf", {edu_location}"
-            if dates:
-                latex += rf" \hfill {dates}"
-            latex += "\n"
+\textbf{{{degree}}} \hfill \textit{{{dates}}}
+"""
+            latex += rf"""\textit{{{school}}} \hfill \textit{{{edu_location}}}
+"""
             if details:
-                latex += f"\\\\\n{s(details)}\n"
+                latex += r"""\begin{itemize}
+"""
+                latex += f"\\item {s(details)}\n"
+                latex += r"\end{itemize}" + "\n"
 
-    # ── OTHER EXPERIENCE ──
-    other = resume_data.get('other', {})
+    # Other experience (if any)
     other_experience = resume_data.get('other_experience', [])
-
     if other_experience:
         latex += r"""
 \section*{OTHER EXPERIENCE}
@@ -227,14 +221,18 @@ def render_latex(resume_data):
             exp_location = s(exp.get('location', ''))
             dates = s(exp.get('dates', ''))
             latex += rf"""
-\textbf{{{title}}} \hspace{{3pt}}$|$\hspace{{3pt}} \textbf{{\textcolor{{sectionblue}}{{{company}}}}} \hspace{{3pt}}$|$\hspace{{3pt}} {exp_location} \textbullet\hspace{{4pt}} {dates}
-\begin{{itemize}}
+\textbf{{{title}}} \hfill \textit{{{dates}}}
+"""
+            latex += rf"""\textit{{{company}}} \hfill \textit{{{exp_location}}}
+"""
+            latex += r"""\begin{itemize}
 """
             for bullet in exp.get('bullets', []):
                 latex += f"\\item {s(bullet)}\n"
             latex += r"\end{itemize}" + "\n"
 
-    # ── LANGUAGES ──
+    # Languages
+    other = resume_data.get('other', {})
     languages = ''
     if other and other.get('languages'):
         languages = s(other['languages'])
@@ -246,7 +244,7 @@ def render_latex(resume_data):
 \section*{LANGUAGES}
 """ + languages + "\n"
 
-    # ── OTHER / ADDITIONAL ──
+    # Additional info
     if other and other.get('additional'):
         latex += r"""
 \section*{ADDITIONAL}

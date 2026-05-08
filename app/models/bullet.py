@@ -3,8 +3,7 @@ from app import db
 
 
 class Bullet(db.Model):
-    """Individual bullet points from experience/projects,
-    stored in the bullet bank for reuse across tailored resumes."""
+    """Individual bullet point from experience or projects."""
     __tablename__ = 'bullet_bank'
 
     id = db.Column(db.Integer, primary_key=True)

@@ -14,7 +14,7 @@
             <tr>
                 <th>Company</th>
                 <th>Role</th>
-                <th>ATS Score</th>
+                <th>Match Score</th>
                 <th>Status</th>
                 <th>Applied</th>
                 <th>Actions</th>
@@ -42,8 +42,16 @@
                     </select>
                 </td>
                 <td class="text-muted">{{ app.applied_at.strftime('%b %d, %Y') if app.applied_at else '' }}</td>
-                <td>
+                <td style="display: flex; gap: var(--space-2);">
+                    <button class="btn btn-sm btn-secondary" onclick="toggleVersions({{ app.id }})" title="Version History">📊 Versions</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteApp({{ app.id }})">Delete</button>
+                </td>
+            </tr>
+            <tr id="versions-row-{{ app.id }}" style="display: none;">
+                <td colspan="6" style="padding: 0;">
+                    <div id="versions-content-{{ app.id }}" class="p-4" style="background: var(--bg-secondary); border-top: 1px solid var(--border-subtle);">
+                        <p class="text-muted">Loading versions...</p>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
@@ -88,9 +96,60 @@ async function deleteApp(id) {
         const data = await res.json();
         if (data.success) {
             document.getElementById('app-row-' + id).remove();
+            const vRow = document.getElementById('versions-row-' + id);
+            if (vRow) vRow.remove();
             showToast('Application deleted', 'success');
         }
     } catch (e) { showToast('Error deleting application', 'error'); }
+}
+
+async function toggleVersions(appId) {
+    const row = document.getElementById('versions-row-' + appId);
+    if (!row) return;
+
+    if (row.style.display === 'none') {
+        row.style.display = 'table-row';
+        const container = document.getElementById('versions-content-' + appId);
+
+        try {
+            const res = await fetch(`/applications/api/versions/${appId}`);
+            const data = await res.json();
+
+            if (data.error) {
+                container.innerHTML = `<p style="color:var(--accent-danger)">${data.error}</p>`;
+                return;
+            }
+
+            if (!data.versions || data.versions.length === 0) {
+                container.innerHTML = '<p class="text-muted">No version history available for this application.</p>';
+                return;
+            }
+
+            let html = `<div style="margin-bottom: var(--space-3);"><strong>📊 Version History — ${data.application.company} / ${data.application.role}</strong></div>`;
+            html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3);">';
+
+            data.versions.forEach(v => {
+                const scoreColor = v.ats_score >= 80 ? 'var(--accent-success)' : v.ats_score >= 65 ? 'var(--accent-warning)' : 'var(--accent-danger)';
+                const deltaHtml = v.score_delta !== null
+                    ? `<span style="color: ${v.score_delta >= 0 ? 'var(--accent-success)' : 'var(--accent-danger)'}; font-weight: 600;">${v.score_delta >= 0 ? '+' : ''}${v.score_delta}</span>`
+                    : '<span class="text-muted">—</span>';
+
+                html += `<div style="background: var(--bg-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-4); text-align: center;">
+                    <div style="font-size: var(--text-sm); color: var(--text-muted); margin-bottom: var(--space-2);">Version ${v.version_number}</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: ${scoreColor};">${v.ats_score || 'N/A'}</div>
+                    <div style="font-size: var(--text-sm); margin-top: var(--space-1);">Delta: ${deltaHtml}</div>
+                    <div style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);">${v.created_at ? new Date(v.created_at).toLocaleDateString() : ''}</div>
+                </div>`;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        } catch (e) {
+            container.innerHTML = `<p style="color:var(--accent-danger)">Error loading versions: ${e.message}</p>`;
+        }
+    } else {
+        row.style.display = 'none';
+    }
 }
 </script>
 {% endblock %}

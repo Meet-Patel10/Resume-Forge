@@ -1,21 +1,9 @@
-"""
-Resume file parser — extracts text from PDF, DOCX, and TXT uploads.
-"""
+"""Extract text from uploaded resume files (PDF, DOCX, TXT)."""
 import os
 
 
 def parse_resume_file(file_storage):
-    """Parse an uploaded resume file and return its text content.
-
-    Args:
-        file_storage: werkzeug FileStorage object from Flask upload
-
-    Returns:
-        dict with 'text' (extracted content) and 'filename'
-
-    Raises:
-        ValueError: if file type is not supported
-    """
+    """Parse an uploaded file and pull out the text. Raises ValueError for bad formats."""
     filename = file_storage.filename or ''
     ext = os.path.splitext(filename)[1].lower()
 

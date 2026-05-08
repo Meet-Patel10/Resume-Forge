@@ -1,23 +1,70 @@
-"""
-Industry-grade ATS (Applicant Tracking System) Resume Scorer.
-
-Scoring methodology modeled after Jobscan, Teal HQ, and Cultivated Culture:
-  - Hard Skills Match   (35%)  — exact phrase matching of technical skills
-  - Soft Skills Match   (10%)  — interpersonal & leadership keywords
-  - Job Title Match     (15%)  — role title alignment
-  - Section Completeness(10%)  — presence of standard resume sections
-  - Measurable Results  (10%)  — numbers, percentages, dollar amounts in bullets
-  - Keyword Frequency   (10%)  — repeated JD terms appearing in resume
-  - Resume Length/Format(10%)  — length, contact info, ATS-safe formatting
-"""
+"""ATS resume scorer -- scores resumes against job descriptions on keyword match, sections, metrics, etc."""
 
 import re
 from collections import Counter
 
 
-# ──────────────────────────────────────────────────────────
+#
+#  Word-boundary matching for accurate skill detection
+#
+
+# Skills with special characters that need exact (escaped) regex
+_SPECIAL_SKILLS = {'c++', 'c#', '.net', 'ci/cd', 'node.js', 'vue.js', 'react.js',
+                   'express.js', 'next.js', 'nuxt.js', 'three.js', 'd3.js',
+                   'asp.net', 'ado.net', 'vb.net'}
+
+
+def _word_match(term: str, text: str) -> bool:
+    """Check if `term` appears in `text` as a whole word.
+
+    Prevents false positives like:
+      - 'java' matching 'javascript'
+      - 'go' matching 'google'
+      - 'r' matching every word containing 'r'
+      - 'c' matching 'cloud'
+
+    Special handling for terms with non-alphanumeric chars (c++, c#, .net, ci/cd).
+    """
+    term = term.strip().lower()
+    text = text.lower()
+
+    if not term:
+        return False
+
+    # Special-character skills: use escaped literal match
+    if term in _SPECIAL_SKILLS:
+        pattern = r'(?:^|[\s,;|/\(])' + re.escape(term) + r'(?:$|[\s,;|/\)])'
+        return bool(re.search(pattern, text))
+
+    # Multi-word terms (e.g., 'machine learning'): match as exact phrase with boundaries
+    if ' ' in term:
+        pattern = r'\b' + re.escape(term) + r'\b'
+        return bool(re.search(pattern, text))
+
+    # Standard single-word terms: word-boundary match
+    pattern = r'\b' + re.escape(term) + r'\b'
+    return bool(re.search(pattern, text))
+
+
+def _word_count(term: str, text: str) -> int:
+    """Count how many times `term` appears in `text` as whole words."""
+    term = term.strip().lower()
+    text = text.lower()
+
+    if not term:
+        return 0
+
+    if term in _SPECIAL_SKILLS:
+        pattern = r'(?:^|[\s,;|/\(])' + re.escape(term) + r'(?:$|[\s,;|/\)])'
+        return len(re.findall(pattern, text))
+
+    pattern = r'\b' + re.escape(term) + r'\b'
+    return len(re.findall(pattern, text))
+
+
+#
 #  Common word lists for filtering
-# ──────────────────────────────────────────────────────────
+#
 STOP_WORDS = {
     'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had',
     'her', 'was', 'one', 'our', 'out', 'has', 'have', 'from', 'with', 'they',
@@ -65,9 +112,9 @@ JD_FILLER = {
 }
 
 
-# ──────────────────────────────────────────────────────────
+#
 #  Keyword extraction helpers
-# ──────────────────────────────────────────────────────────
+#
 def _normalize(text):
     """Lowercase and collapse whitespace."""
     return re.sub(r'\s+', ' ', text.lower().strip())
@@ -103,7 +150,7 @@ def _extract_hard_skills(jd_text):
     """
     text = _normalize(jd_text)
 
-    # ── Curated bank of known tech skills ──
+    # Curated bank of known tech skills
     KNOWN_TECH_SKILLS = {
         # Languages
         'python', 'java', 'javascript', 'typescript', 'c++', 'c#', 'ruby', 'go',
@@ -284,35 +331,15 @@ def _extract_job_titles(jd_text):
     return titles
 
 
-# ──────────────────────────────────────────────────────────
+#
 #  Main scoring function
-# ──────────────────────────────────────────────────────────
-def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
-    """Calculate an industry-grade ATS proxy score.
-
-    Modeled after Jobscan, Teal HQ, and Cultivated Culture methodologies.
-
-    Scoring weights:
-      - Hard Skills Match    35%
-      - Soft Skills Match    10%
-      - Job Title Match      15%
-      - Section Completeness 10%
-      - Measurable Results   10%
-      - Keyword Frequency    10%
-      - Resume Length/Format  10%
-
-    Args:
-        resume_text: Plain text of the resume
-        jd_text: Plain text of the job description
-        keyword_matches: Optional pre-computed keyword matches from AI
-
-    Returns:
-        dict with detailed score breakdown
-    """
+#
+def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=None):
+    """Score a resume against a JD. Returns breakdown dict with total_score."""
     resume_lower = _normalize(resume_text)
     jd_lower = _normalize(jd_text)
 
-    # ── 1. HARD SKILLS MATCH (35%) ────────────────────────
+    # 1. HARD SKILLS MATCH (35%)
     if keyword_matches:
         # Use AI-provided keyword list
         total_kw = len(keyword_matches)
@@ -325,19 +352,16 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
             'weak_matches': weak,
             'missing': total_kw - strong - weak,
         }
-    else:
-        # Extract hard skills from JD using curated tech keyword bank
-        jd_skills = _extract_hard_skills(jd_text)
-
-        # Match against resume
+    elif jd_analysis and jd_analysis.get('hard_skills'):
+        # DYNAMIC PATH: Use AI-extracted hard skills from this specific JD
+        jd_skills = set(s.lower() for s in jd_analysis['hard_skills'])
         matched = []
         missing = []
         for term in sorted(jd_skills):
-            if term in resume_lower:
+            if _word_match(term, resume_lower):
                 matched.append(term)
             else:
                 missing.append(term)
-
         total = len(jd_skills)
         hard_skill_score = (len(matched) / max(total, 1)) * 100
         hard_skill_detail = {
@@ -346,62 +370,194 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
             'missing_count': len(missing),
             'top_missing': missing[:15],
             'top_matched': matched[:15],
+            'source': 'dynamic_jd_analysis',
+        }
+    else:
+        # STATIC FALLBACK: Extract hard skills from JD using curated tech keyword bank
+        jd_skills = _extract_hard_skills(jd_text)
+        matched = []
+        missing = []
+        for term in sorted(jd_skills):
+            if _word_match(term, resume_lower):
+                matched.append(term)
+            else:
+                missing.append(term)
+        total = len(jd_skills)
+        hard_skill_score = (len(matched) / max(total, 1)) * 100
+        hard_skill_detail = {
+            'total_keywords': total,
+            'matched': len(matched),
+            'missing_count': len(missing),
+            'top_missing': missing[:15],
+            'top_matched': matched[:15],
+            'source': 'static_bank',
         }
 
-    # ── 2. SOFT SKILLS MATCH (10%) ────────────────────────
-    jd_soft = _extract_soft_skills_from_text(jd_text)
-    resume_soft = _extract_soft_skills_from_text(resume_text)
+    # 2. SOFT SKILLS MATCH (10%)
+    if jd_analysis and jd_analysis.get('soft_skills'):
+        # DYNAMIC PATH: Use AI-extracted soft skills from this specific JD
+        # Uses stem-based matching to catch verb/adjective forms
+        # e.g., "collaboration" matches "collaborated", "collaborative", "collaborating"
+        jd_soft_list = set(s.lower().strip() for s in jd_analysis['soft_skills'])
+        soft_matched = set()
+        soft_missing = set()
 
-    if jd_soft:
-        soft_matched = jd_soft & resume_soft
-        soft_score = (len(soft_matched) / len(jd_soft)) * 100
+        def _soft_skill_found(skill, text):
+            """Check if a soft skill or any of its common forms appear in text."""
+            # Direct match (word boundary)
+            if _word_match(skill, text):
+                return True
+            # Stem-based matching: extract the root and check common suffixes
+            # This catches: collaboration → collaborat(ed/ing/ive/ion)
+            stem_map = {
+                'collaboration': ['collaborat', 'collabor'],
+                'communication': ['communicat', 'communic'],
+                'leadership': ['leader', 'lead', 'led'],
+                'teamwork': ['team', 'teamwork'],
+                'problem-solving': ['problem', 'solving', 'troubleshoot'],
+                'problem solving': ['problem', 'solving', 'troubleshoot'],
+                'analytical': ['analyz', 'analyt', 'analysis'],
+                'adaptability': ['adapt'],
+                'innovation': ['innovat'],
+                'creativity': ['creat', 'innovat'],
+                'mentoring': ['mentor'],
+                'coaching': ['coach'],
+                'negotiation': ['negotiat'],
+                'presentation': ['present'],
+                'organizational': ['organiz'],
+                'time management': ['prioritiz', 'time manage', 'deadline'],
+                'cross-functional': ['cross-functional', 'cross functional', 'cross-team'],
+                'detail-oriented': ['detail', 'attention to detail', 'meticulous'],
+                'self-starter': ['self-starter', 'self starter', 'independently', 'proactiv'],
+                'motivated': ['motivat', 'driven', 'passion'],
+                'proactive': ['proactiv', 'initiative'],
+                'independently': ['independen', 'autonomous', 'self-direct'],
+                'willingness': ['willing', 'eager'],
+                'aptitude': ['aptitude', 'proficien', 'adept'],
+                'fast learner': ['fast learn', 'quick learn', 'rapid learn'],
+                'results-driven': ['results-driven', 'result-driven', 'results driven'],
+            }
+            # Check predefined stems with word-boundary awareness
+            if skill in stem_map:
+                for stem in stem_map[skill]:
+                    # Require the stem to appear at a word boundary, not inside unrelated words
+                    if re.search(r'\b' + re.escape(stem), text):
+                        return True
+                return False
+            # Generic stem matching: require 5+ char stems with word boundary
+            words = skill.replace('-', ' ').split()
+            for word in words:
+                if len(word) >= 5:
+                    stem = word[:min(len(word) - 1, 7)]
+                    if re.search(r'\b' + re.escape(stem), text):
+                        return True
+                elif len(word) >= 4 and _word_match(word, text):
+                    return True
+            return False
+
+        for skill in jd_soft_list:
+            if _soft_skill_found(skill, resume_lower):
+                soft_matched.add(skill)
+            else:
+                soft_missing.add(skill)
+        soft_score = (len(soft_matched) / max(len(jd_soft_list), 1)) * 100
         soft_detail = {
-            'jd_soft_skills': sorted(jd_soft),
+            'jd_soft_skills': sorted(jd_soft_list),
             'matched': sorted(soft_matched),
-            'missing': sorted(jd_soft - resume_soft),
+            'missing': sorted(soft_missing),
+            'source': 'dynamic_jd_analysis',
         }
     else:
-        soft_score = 100  # No soft skills in JD = full marks
-        soft_detail = {'jd_soft_skills': [], 'matched': [], 'missing': []}
+        # STATIC FALLBACK: Use hardcoded soft skills bank
+        jd_soft = _extract_soft_skills_from_text(jd_text)
+        resume_soft = _extract_soft_skills_from_text(resume_text)
+        if jd_soft:
+            soft_matched_set = jd_soft & resume_soft
+            soft_score = (len(soft_matched_set) / len(jd_soft)) * 100
+            soft_detail = {
+                'jd_soft_skills': sorted(jd_soft),
+                'matched': sorted(soft_matched_set),
+                'missing': sorted(jd_soft - resume_soft),
+                'source': 'static_bank',
+            }
+        else:
+            soft_score = 100
+            soft_detail = {'jd_soft_skills': [], 'matched': [], 'missing': []}
 
-    # ── 3. JOB TITLE MATCH (15%) ──────────────────────────
-    jd_titles = _extract_job_titles(jd_text)
-    title_score = 0
-    title_detail = {'jd_titles': jd_titles, 'match_found': False}
+    # 3. JOB TITLE MATCH (15%)
+    # Strategy: exact phrase match → high score, individual word overlap → capped lower score
+    def _score_title(title_text, resume):
+        """Score a title: exact phrase = 100, close match = 85, word overlap capped at 70."""
+        title_norm = _normalize(title_text)
+        # Check exact phrase first — this is what real ATS systems do
+        if title_norm in resume:
+            return 100
+        # Check if all meaningful words present (close match)
+        title_words = [w for w in title_norm.split() if w not in STOP_WORDS and len(w) >= 2]
+        if not title_words:
+            return 0
+        matched_words = sum(1 for w in title_words if _word_match(w, resume))
+        if matched_words == len(title_words):
+            return 90  # All words present but not as exact phrase
+        if matched_words >= len(title_words) - 1 and len(title_words) > 2:
+            return 75  # Off by one word in a multi-word title
+        # Partial word match — cap at 70 to prevent "developer" in any resume from inflating
+        return min((matched_words / len(title_words)) * 100, 70)
 
-    if jd_titles:
-        for title in jd_titles:
-            title_words = set(title.split()) - STOP_WORDS
-            if title_words:
-                # Partial match: score based on how many words match
-                resume_title_words = sum(1 for w in title_words if w in resume_lower)
-                match_pct = (resume_title_words / len(title_words)) * 100
-                # Boost: if majority of words match, give partial credit above 80
-                if resume_title_words >= len(title_words) - 1 and len(title_words) > 1:
-                    match_pct = max(match_pct, 85)  # At least 85% for near-full match
-                if match_pct > title_score:
-                    title_score = match_pct
-                    title_detail['match_found'] = match_pct >= 60
-        # Floor: always give minimum credit for having a title in the resume
-        title_score = max(title_score, 20)
+    if jd_analysis and jd_analysis.get('job_title'):
+        ai_title = jd_analysis['job_title']
+        title_score = _score_title(ai_title, resume_lower)
+        title_detail = {'jd_titles': [ai_title], 'match_found': title_score >= 60, 'source': 'dynamic_jd_analysis'}
+
+        # Also check variants if provided
+        for variant in jd_analysis.get('job_title_variants', []):
+            v_score = _score_title(variant, resume_lower)
+            if v_score > title_score:
+                title_score = v_score
+                title_detail['match_found'] = v_score >= 60
+
+        title_score = max(title_score, 15)  # Minimum floor
     else:
-        # Can't extract title from patterns — try matching key JD words in resume
-        jd_words = set(re.findall(r'[a-z]+', jd_lower)) - STOP_WORDS - JD_FILLER
-        resume_words_set = set(re.findall(r'[a-z]+', resume_lower))
-        overlap = jd_words & resume_words_set
-        title_score = min((len(overlap) / max(len(jd_words), 1)) * 130, 90)  # Cap at 90
-        title_detail['note'] = 'Inferred from JD word overlap'
+        # STATIC FALLBACK
+        jd_titles = _extract_job_titles(jd_text)
+        title_score = 0
+        title_detail = {'jd_titles': jd_titles, 'match_found': False, 'source': 'static_regex'}
 
-    # ── 4. SECTION COMPLETENESS (10%) ─────────────────────
+        if jd_titles:
+            for title in jd_titles:
+                t_score = _score_title(title, resume_lower)
+                if t_score > title_score:
+                    title_score = t_score
+                    title_detail['match_found'] = t_score >= 60
+            title_score = max(title_score, 15)
+        else:
+            jd_words = set(re.findall(r'[a-z]+', jd_lower)) - STOP_WORDS - JD_FILLER
+            resume_words_set = set(re.findall(r'[a-z]+', resume_lower))
+            overlap = jd_words & resume_words_set
+            title_score = min((len(overlap) / max(len(jd_words), 1)) * 100, 70)
+            title_detail['note'] = 'Inferred from JD word overlap'
+
+    # 4. SECTION COMPLETENESS (10%)
     required_sections = {
-        'summary': ['summary', 'objective', 'profile', 'professional summary'],
-        'experience': ['experience', 'work history', 'employment', 'professional experience'],
-        'education': ['education', 'academic', 'degree'],
-        'skills': ['skills', 'technical skills', 'competencies', 'technologies'],
+        'summary': ['summary', 'objective', 'profile', 'professional summary',
+                     'career summary', 'career objective', 'about me',
+                     'personal statement', 'career profile', 'executive summary'],
+        'experience': ['experience', 'work history', 'employment',
+                       'professional experience', 'work experience',
+                       'career history', 'relevant experience', 'employment history'],
+        'education': ['education', 'academic', 'degree', 'university',
+                      'academic background', 'academic qualifications'],
+        'skills': ['skills', 'technical skills', 'competencies', 'technologies',
+                   'core competencies', 'areas of expertise', 'proficiencies',
+                   'technical proficiencies', 'technical competencies', 'tools'],
     }
     optional_sections = {
-        'projects': ['projects', 'portfolio'],
-        'certifications': ['certifications', 'certificates', 'licenses'],
+        'projects': ['projects', 'portfolio', 'personal projects',
+                     'academic projects', 'side projects', 'key projects'],
+        'certifications': ['certifications', 'certificates', 'licenses',
+                           'professional certifications', 'training',
+                           'professional development'],
+        'languages': ['languages', 'language proficiency'],
     }
 
     sections_found = {}
@@ -411,7 +567,7 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
     required_count = sum(1 for v in sections_found.values() if v)
     section_score = (required_count / len(required_sections)) * 100
 
-    # Bonus for optional sections (up to 10% extra, capped at 100)
+    # Bonus for optional sections (up to 15% extra, capped at 100)
     optional_found = sum(1 for variants in optional_sections.values()
                          if any(v in resume_lower for v in variants))
     section_score = min(section_score + (optional_found * 5), 100)
@@ -422,7 +578,7 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
         'optional_found': optional_found,
     }
 
-    # ── 5. MEASURABLE RESULTS (10%) ───────────────────────
+    # 5. MEASURABLE RESULTS (10%)
     # Look for quantified achievements (numbers, percentages, dollar amounts)
     metrics_patterns = [
         r'\d+%',                          # percentages
@@ -454,35 +610,68 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
                           if metric_count < 5 else 'Good use of metrics'
     }
 
-    # ── 6. KEYWORD FREQUENCY (10%) ────────────────────────
-    # Check if important JD terms appear in the resume
-    jd_words = re.findall(r'[a-z][a-z+#./\-]+', jd_lower)
-    jd_word_counts = Counter(w for w in jd_words
-                             if w not in STOP_WORDS and w not in JD_FILLER and len(w) >= 4)
+    # 6. KEYWORD FREQUENCY (10%)
+    if jd_analysis and jd_analysis.get('top_keywords'):
+        # DYNAMIC PATH: Use AI-identified top keywords
+        # Use full-text substring matching for both single and multi-word terms
+        top_jd_terms = [k.lower().strip() for k in jd_analysis['top_keywords']]
 
-    # Get top 8 most frequent JD terms — smaller set = higher match rate
-    top_jd_terms = [term for term, _ in jd_word_counts.most_common(8)]
+        freq_matched = 0
+        freq_details = []
+        for term in top_jd_terms:
+            # Primary: full word-boundary match in resume text
+            found_count = _word_count(term, resume_lower)
+            # Secondary: for multi-word terms, check if all words appear
+            if found_count == 0 and ' ' in term:
+                term_words = term.split()
+                if all(_word_match(w, resume_lower) for w in term_words if len(w) >= 3):
+                    found_count = 1  # credit for having all component words
+            # Tertiary: for hyphenated or slash terms, check variants
+            if found_count == 0:
+                variants = [term.replace('-', ' '), term.replace('/', ' '), term.replace('.', '')]
+                for v in variants:
+                    if v != term and _word_match(v, resume_lower):
+                        found_count = 1
+                        break
+            if found_count > 0:
+                freq_matched += 1
+                freq_details.append({'term': term, 'resume_count': found_count})
 
-    resume_words_list = re.findall(r'[a-z][a-z+#./\-]+', resume_lower)
-    resume_word_counts = Counter(resume_words_list)
+        frequency_score = (freq_matched / max(len(top_jd_terms), 1)) * 100
+        frequency_detail = {
+            'top_jd_terms_checked': len(top_jd_terms),
+            'terms_found_in_resume': freq_matched,
+            'details': freq_details[:10],
+            'source': 'dynamic_jd_analysis',
+        }
+    else:
+        # STATIC FALLBACK: Top-8 unigram frequency
+        jd_words = re.findall(r'[a-z][a-z+#./\-]+', jd_lower)
+        jd_word_counts = Counter(w for w in jd_words
+                                 if w not in STOP_WORDS and w not in JD_FILLER and len(w) >= 4)
+        top_jd_terms = [term for term, _ in jd_word_counts.most_common(8)]
 
-    freq_matched = 0
-    freq_details = []
-    for term in top_jd_terms:
-        jd_count = jd_word_counts[term]
-        resume_count = resume_word_counts.get(term, 0)
-        if resume_count > 0:
-            freq_matched += 1
-            freq_details.append({'term': term, 'jd_count': jd_count, 'resume_count': resume_count})
+        resume_words_list = re.findall(r'[a-z][a-z+#./\-]+', resume_lower)
+        resume_word_counts = Counter(resume_words_list)
 
-    frequency_score = (freq_matched / max(len(top_jd_terms), 1)) * 100
-    frequency_detail = {
-        'top_jd_terms_checked': len(top_jd_terms),
-        'terms_found_in_resume': freq_matched,
-        'details': freq_details[:10],
-    }
+        freq_matched = 0
+        freq_details = []
+        for term in top_jd_terms:
+            jd_count = jd_word_counts[term]
+            resume_count = resume_word_counts.get(term, 0)
+            if resume_count > 0:
+                freq_matched += 1
+                freq_details.append({'term': term, 'jd_count': jd_count, 'resume_count': resume_count})
 
-    # ── 7. RESUME LENGTH & FORMAT (10%) ───────────────────
+        frequency_score = (freq_matched / max(len(top_jd_terms), 1)) * 100
+        frequency_detail = {
+            'top_jd_terms_checked': len(top_jd_terms),
+            'terms_found_in_resume': freq_matched,
+            'details': freq_details[:10],
+            'source': 'static_counter',
+        }
+
+    # 7. RESUME LENGTH & FORMAT (10%)
     format_score = 100
     format_issues = []
 
@@ -521,9 +710,9 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
         'issues': format_issues,
     }
 
-    # ──────────────────────────────────────────────────────
+    #
     #  WEIGHTED TOTAL
-    # ──────────────────────────────────────────────────────
+    #
     total_score = int(
         hard_skill_score * 0.35 +
         soft_score * 0.10 +
@@ -538,19 +727,19 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
     # Grade (aligned with Jobscan/Teal thresholds)
     if total_score >= 85:
         grade = 'A+'
-        verdict = 'Excellent match — very high chance of passing ATS and reaching a recruiter'
+        verdict = 'Excellent match — resume strongly aligns with the job description'
     elif total_score >= 75:
         grade = 'A'
-        verdict = 'Strong match — likely to pass most ATS filters'
+        verdict = 'Strong match — resume aligns well with most job requirements'
     elif total_score >= 65:
         grade = 'B'
-        verdict = 'Good match — should pass many ATS systems but has room for improvement'
+        verdict = 'Good match — resume covers many requirements but has room for improvement'
     elif total_score >= 50:
         grade = 'C'
-        verdict = 'Fair match — may pass some ATS systems but needs keyword optimization'
+        verdict = 'Fair match — resume needs keyword optimization to better align'
     elif total_score >= 35:
         grade = 'D'
-        verdict = 'Weak match — high risk of ATS rejection, significant keyword gaps'
+        verdict = 'Weak match — significant keyword gaps between resume and job description'
     else:
         grade = 'F'
         verdict = 'Poor match — resume needs major rework to align with this job description'
@@ -559,6 +748,7 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
         'total_score': total_score,
         'grade': grade,
         'verdict': verdict,
+        'disclaimer': 'This Resume Match Score estimates keyword alignment between your resume and the job description. It is not a simulation of any specific ATS platform. For actual ATS compatibility testing, cross-check with tools like Jobscan.',
         'breakdown': {
             'hard_skills': round(hard_skill_score, 1),
             'soft_skills': round(soft_score, 1),
@@ -603,7 +793,7 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None):
 #   - Contact Info         10%
 # ══════════════════════════════════════════════════════════
 
-# ── IT Role-Specific Keyword Banks ──
+# IT Role-Specific Keyword Banks
 IT_ROLE_KEYWORDS = {
     'software_developer': {
         'label': 'Software Developer / Engineer',
@@ -668,19 +858,141 @@ IT_ROLE_KEYWORDS = {
             'infrastructure as code', 'cloudformation',
         ],
     },
+    'product_manager': {
+        'label': 'Product Management',
+        'must_have': [
+            'product management', 'roadmap', 'product strategy', 'user stories',
+            'agile', 'scrum', 'kanban', 'jira', 'confluence',
+            'stakeholder management', 'requirements', 'prioritization',
+            'a/b testing', 'analytics', 'kpi', 'okr',
+            'user research', 'customer discovery', 'market analysis',
+            'wireframe', 'prototype', 'figma', 'miro',
+            'cross-functional', 'go-to-market', 'mvp',
+        ],
+        'nice_to_have': [
+            'sql', 'python', 'data analysis', 'tableau', 'amplitude',
+            'mixpanel', 'segment', 'product-led growth', 'saas',
+            'api', 'technical product management', 'platform',
+            'pricing', 'monetization', 'competitive analysis',
+        ],
+    },
+    'marketing': {
+        'label': 'Marketing / Digital Marketing',
+        'must_have': [
+            'marketing strategy', 'digital marketing', 'content marketing',
+            'seo', 'sem', 'ppc', 'google ads', 'facebook ads',
+            'social media', 'email marketing', 'campaign management',
+            'analytics', 'google analytics', 'kpi', 'roi',
+            'brand management', 'content creation', 'copywriting',
+            'crm', 'hubspot', 'salesforce', 'mailchimp',
+            'a/b testing', 'conversion optimization',
+        ],
+        'nice_to_have': [
+            'marketing automation', 'lead generation', 'funnel',
+            'influencer marketing', 'pr', 'video marketing',
+            'adobe creative suite', 'canva', 'figma',
+            'sql', 'python', 'tableau', 'data visualization',
+        ],
+    },
+    'finance_analyst': {
+        'label': 'Finance / Financial Analysis',
+        'must_have': [
+            'financial analysis', 'financial modeling', 'excel',
+            'sql', 'python', 'tableau', 'power bi',
+            'budgeting', 'forecasting', 'variance analysis',
+            'accounting', 'gaap', 'ifrs', 'financial reporting',
+            'valuation', 'dcf', 'cash flow', 'p&l',
+            'risk management', 'compliance', 'audit',
+            'erp', 'sap', 'oracle',
+        ],
+        'nice_to_have': [
+            'cfa', 'cpa', 'fpa', 'treasury',
+            'bloomberg', 'capital iq', 'factset',
+            'mergers', 'acquisitions', 'due diligence',
+            'derivatives', 'fixed income', 'portfolio management',
+        ],
+    },
+    'cybersecurity': {
+        'label': 'Cybersecurity / Information Security',
+        'must_have': [
+            'security', 'cybersecurity', 'information security',
+            'vulnerability assessment', 'penetration testing', 'incident response',
+            'siem', 'splunk', 'ids', 'ips', 'firewall',
+            'encryption', 'ssl/tls', 'pki', 'authentication',
+            'compliance', 'soc 2', 'iso 27001', 'nist', 'gdpr',
+            'network security', 'endpoint security', 'cloud security',
+            'linux', 'windows', 'tcp/ip', 'dns',
+            'python', 'bash', 'scripting', 'automation',
+        ],
+        'nice_to_have': [
+            'oscp', 'cissp', 'ceh', 'security+',
+            'threat intelligence', 'malware analysis', 'forensics',
+            'devsecops', 'container security', 'zero trust',
+            'aws security', 'azure security', 'gcp security',
+            'owasp', 'burp suite', 'nmap', 'wireshark',
+        ],
+    },
 }
 
 # Strong action verbs (Resume Worded / VMock methodology)
+# Expanded set: includes past tense, present tense, and gerund forms
 STRONG_ACTION_VERBS = {
-    'developed', 'implemented', 'designed', 'built', 'created', 'engineered',
-    'architected', 'optimized', 'automated', 'deployed', 'integrated',
-    'led', 'managed', 'directed', 'spearheaded', 'orchestrated', 'drove',
-    'reduced', 'increased', 'improved', 'accelerated', 'streamlined',
-    'analyzed', 'researched', 'evaluated', 'identified', 'diagnosed',
-    'migrated', 'refactored', 'scaled', 'configured', 'provisioned',
-    'launched', 'delivered', 'shipped', 'released', 'published',
-    'mentored', 'trained', 'collaborated', 'coordinated', 'facilitated',
-    'established', 'pioneered', 'transformed', 'revamped', 'modernized',
+    # Core development
+    'developed', 'develop', 'developing', 'implemented', 'implement', 'implementing',
+    'designed', 'design', 'designing', 'built', 'build', 'building',
+    'created', 'create', 'creating', 'engineered', 'engineer', 'engineering',
+    'architected', 'architect', 'architecting',
+    # Optimization
+    'optimized', 'optimize', 'optimizing', 'automated', 'automate', 'automating',
+    'deployed', 'deploy', 'deploying', 'integrated', 'integrate', 'integrating',
+    # Leadership
+    'led', 'lead', 'leading', 'managed', 'manage', 'managing',
+    'directed', 'direct', 'directing', 'spearheaded', 'spearhead', 'spearheading',
+    'orchestrated', 'orchestrate', 'orchestrating', 'drove', 'drive', 'driving',
+    # Impact
+    'reduced', 'reduce', 'reducing', 'increased', 'increase', 'increasing',
+    'improved', 'improve', 'improving', 'accelerated', 'accelerate', 'accelerating',
+    'streamlined', 'streamline', 'streamlining',
+    # Analysis
+    'analyzed', 'analyze', 'analyzing', 'researched', 'research', 'researching',
+    'evaluated', 'evaluate', 'evaluating', 'identified', 'identify', 'identifying',
+    'diagnosed', 'diagnose', 'diagnosing',
+    # Infrastructure
+    'migrated', 'migrate', 'migrating', 'refactored', 'refactor', 'refactoring',
+    'scaled', 'scale', 'scaling', 'configured', 'configure', 'configuring',
+    'provisioned', 'provision', 'provisioning',
+    # Delivery
+    'launched', 'launch', 'launching', 'delivered', 'deliver', 'delivering',
+    'shipped', 'ship', 'shipping', 'released', 'release', 'releasing',
+    'published', 'publish', 'publishing',
+    # Collaboration
+    'mentored', 'mentor', 'mentoring', 'trained', 'train', 'training',
+    'collaborated', 'collaborate', 'collaborating',
+    'coordinated', 'coordinate', 'coordinating',
+    'facilitated', 'facilitate', 'facilitating',
+    # Transformation
+    'established', 'establish', 'establishing',
+    'pioneered', 'pioneer', 'pioneering',
+    'transformed', 'transform', 'transforming',
+    'revamped', 'revamp', 'revamping',
+    'modernized', 'modernize', 'modernizing',
+    # Additional strong verbs commonly used in resumes
+    'achieved', 'achieve', 'achieving', 'executed', 'execute', 'executing',
+    'resolved', 'resolve', 'resolving', 'eliminated', 'eliminate', 'eliminating',
+    'generated', 'generate', 'generating', 'consolidated', 'consolidate',
+    'negotiated', 'negotiate', 'negotiating', 'secured', 'secure', 'securing',
+    'constructed', 'construct', 'constructing', 'devised', 'devise', 'devising',
+    'formulated', 'formulate', 'formulating', 'initiated', 'initiate', 'initiating',
+    'maintained', 'maintain', 'maintaining', 'translated', 'translate',
+    'communicated', 'communicate', 'communicating',
+    'presented', 'present', 'presenting',
+    'programmed', 'program', 'programming',
+    'tested', 'test', 'testing', 'debugged', 'debug', 'debugging',
+    'documented', 'document', 'documenting',
+    'monitored', 'monitor', 'monitoring',
+    'authored', 'author', 'authoring',
+    'overhauled', 'overhaul', 'overhauling',
+    'standardized', 'standardize', 'standardizing',
 }
 
 # Weak verbs/phrases to flag
@@ -694,11 +1006,15 @@ WEAK_PHRASES = [
 
 
 def _detect_role(resume_text):
-    """Auto-detect the most likely IT role family from resume content."""
-    text = resume_text.lower()
+    """Auto-detect the most likely IT role family from resume content.
+
+    Uses word-boundary matching (_word_match) to prevent false positives
+    like 'react' matching 'reactive' or 'go' matching 'google'.
+    """
+    text_lower = resume_text.lower()
     scores = {}
     for role_key, role_data in IT_ROLE_KEYWORDS.items():
-        score = sum(1 for kw in role_data['must_have'] if kw in text)
+        score = sum(1 for kw in role_data['must_have'] if _word_match(kw, text_lower))
         scores[role_key] = score
 
     best = max(scores, key=scores.get)
@@ -706,17 +1022,7 @@ def _detect_role(resume_text):
 
 
 def calculate_general_health_score(resume_text):
-    """Calculate a general resume health score without a JD.
-
-    Evaluates parsability, structure, action verbs, measurable impact,
-    IT skills coverage, length/mechanics, and contact info.
-
-    Args:
-        resume_text: Plain text of the resume
-
-    Returns:
-        dict with detailed score breakdown
-    """
+    """Score a resume without a JD -- checks structure, verbs, metrics, skills, etc."""
     text = resume_text
     text_lower = text.lower()
     lines = text.strip().split('\n')
@@ -727,7 +1033,7 @@ def calculate_general_health_score(resume_text):
     detected_role, role_scores = _detect_role(text)
     role_data = IT_ROLE_KEYWORDS[detected_role]
 
-    # ── 1. PARSABILITY (15%) ───────────────────────────────
+    # 1. PARSABILITY (15%)
     parse_score = 100
     parse_issues = []
 
@@ -753,7 +1059,65 @@ def calculate_general_health_score(resume_text):
 
     parse_score = max(parse_score, 0)
 
-    # ── 2. STRUCTURE & SECTIONS (15%) ─────────────────────
+    # 1b. DATE FORMAT CONSISTENCY
+    # Detect mixed date formats and flag as issue
+    date_formats = {
+        'month_year_long': len(re.findall(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', text)),
+        'month_year_short': len(re.findall(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}\b', text)),
+        'mm_slash_yyyy': len(re.findall(r'\b\d{1,2}/\d{4}\b', text)),
+        'yyyy_mm_dash': len(re.findall(r'\b\d{4}-\d{2}\b', text)),
+        'mm_dash_yyyy': len(re.findall(r'\b\d{2}-\d{4}\b', text)),
+    }
+    formats_used = {k: v for k, v in date_formats.items() if v > 0}
+
+    if len(formats_used) > 1:
+        format_names = {
+            'month_year_long': 'January 2024',
+            'month_year_short': 'Jan 2024',
+            'mm_slash_yyyy': '01/2024',
+            'yyyy_mm_dash': '2024-01',
+            'mm_dash_yyyy': '01-2024',
+        }
+        examples = [f'{format_names[k]} (×{v})' for k, v in formats_used.items()]
+        parse_issues.append(f'Mixed date formats detected: {", ".join(examples)} — use one consistent format')
+        parse_score = max(parse_score - 10, 0)
+
+    # 1c. CHRONOLOGICAL ORDER CHECK
+    # Extract date ranges associated with experience entries and check for reverse-chronological order
+    month_map = {
+        'jan': 1, 'january': 1, 'feb': 2, 'february': 2, 'mar': 3, 'march': 3,
+        'apr': 4, 'april': 4, 'may': 5, 'jun': 6, 'june': 6,
+        'jul': 7, 'july': 7, 'aug': 8, 'august': 8, 'sep': 9, 'september': 9,
+        'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
+    }
+    # Match patterns like "Jan 2023", "January 2023", "01/2023"
+    date_entries = re.findall(
+        r'(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4}))',
+        text
+    )
+    # Also capture "MM/YYYY" format
+    date_entries_numeric = re.findall(r'\b(\d{1,2})/(\d{4})\b', text)
+
+    # Build a list of years from experience dates (approximate check)
+    experience_years = [int(y) for y in date_entries]
+    experience_years.extend([int(y) for _, y in date_entries_numeric])
+
+    if len(experience_years) >= 4:
+        # Check pairs: in reverse-chronological, years should generally decrease
+        # We check start dates of entries (every other date is typically a start date)
+        start_years = experience_years[::2]  # Approximate: even indices
+        if len(start_years) >= 2:
+            inversions = sum(1 for i in range(len(start_years) - 1)
+                             if start_years[i] < start_years[i + 1])
+            if inversions > 0:
+                parse_issues.append(
+                    'Experience entries may not be in reverse-chronological order — '
+                    'most recent role should appear first'
+                )
+                parse_score = max(parse_score - 10, 0)
+
+
+    # 2. STRUCTURE & SECTIONS (15%)
     required_sections = {
         'contact': ['email', 'phone', '@', 'linkedin'],
         'summary': ['summary', 'objective', 'profile', 'professional summary', 'about'],
@@ -789,10 +1153,20 @@ def calculate_general_health_score(resume_text):
             structure_issues.append(f'Non-standard heading "{ns}" — use standard ATS headings')
             structure_score = max(structure_score - 10, 0)
 
-    # ── 3. ACTION VERBS (15%) ─────────────────────────────
+    # 3. ACTION VERBS (15%)
+    # Detect bullet lines: explicit markers, indented lines, or short capitalized lines
     bullet_lines = [l.strip() for l in lines if l.strip().startswith(('•', '-', '–', '*', '▪'))]
+    # Also catch indented lines (common in parsed resumes: "  Built REST APIs...")
+    for l in lines:
+        stripped = l.strip()
+        cleaned = stripped.lstrip('•-–*▪ \t')
+        if (stripped not in bullet_lines
+                and len(cleaned) > 20 and len(cleaned) < 250
+                and cleaned and cleaned[0].isupper()
+                and (l.startswith('  ') or l.startswith('\t'))):
+            bullet_lines.append(stripped)
+    # Fallback: lines that look like accomplishment bullets (20-200 chars, start upper)
     if not bullet_lines:
-        # Look for lines that look like bullets (short, capitalised start)
         bullet_lines = [l.strip() for l in lines
                         if len(l.strip()) > 20 and len(l.strip()) < 200
                         and l.strip()[0].isupper()]
@@ -803,9 +1177,19 @@ def calculate_general_health_score(resume_text):
     weak_found = []
 
     for bullet in bullet_lines:
-        bullet_lower = bullet.lower().lstrip('•-–*▪ ')
-        first_word = bullet_lower.split()[0] if bullet_lower.split() else ''
-        if first_word in STRONG_ACTION_VERBS:
+        bullet_lower = bullet.lower().lstrip('•-–*▪ \t')
+        words = bullet_lower.split()
+        if not words:
+            continue
+        # Check the first word AND the second word (handles "Successfully deployed...")
+        found_strong = False
+        for word in words[:2]:
+            # Strip trailing punctuation/commas
+            clean_word = word.rstrip('.,;:')
+            if clean_word in STRONG_ACTION_VERBS:
+                found_strong = True
+                break
+        if found_strong:
             strong_verb_count += 1
 
         for wp in WEAK_PHRASES:
@@ -826,7 +1210,7 @@ def calculate_general_health_score(resume_text):
         'weak_phrases_found': weak_found[:5],
     }
 
-    # ── 4. MEASURABLE IMPACT (15%) ────────────────────────
+    # 4. MEASURABLE IMPACT (15%)
     metrics_patterns = [
         r'\d+%',
         r'\$[\d,]+',
@@ -858,10 +1242,10 @@ def calculate_general_health_score(resume_text):
                           if metric_count < 5 else 'Good use of metrics',
     }
 
-    # ── 5. IT SKILLS COVERAGE (20%) ───────────────────────
-    must_found = [kw for kw in role_data['must_have'] if kw in text_lower]
-    nice_found = [kw for kw in role_data['nice_to_have'] if kw in text_lower]
-    must_missing = [kw for kw in role_data['must_have'] if kw not in text_lower]
+    # 5. IT SKILLS COVERAGE (20%)
+    must_found = [kw for kw in role_data['must_have'] if _word_match(kw, text_lower)]
+    nice_found = [kw for kw in role_data['nice_to_have'] if _word_match(kw, text_lower)]
+    must_missing = [kw for kw in role_data['must_have'] if not _word_match(kw, text_lower)]
 
     must_ratio = len(must_found) / max(len(role_data['must_have']), 1)
     nice_ratio = len(nice_found) / max(len(role_data['nice_to_have']), 1)
@@ -873,7 +1257,7 @@ def calculate_general_health_score(resume_text):
     # Also check across all role families
     all_roles_detail = {}
     for rk, rd in IT_ROLE_KEYWORDS.items():
-        found = sum(1 for kw in rd['must_have'] if kw in text_lower)
+        found = sum(1 for kw in rd['must_have'] if _word_match(kw, text_lower))
         total = len(rd['must_have'])
         all_roles_detail[rk] = {
             'label': rd['label'],
@@ -890,7 +1274,7 @@ def calculate_general_health_score(resume_text):
         'role_breakdown': all_roles_detail,
     }
 
-    # ── 6. LENGTH & MECHANICS (10%) ───────────────────────
+    # 6. LENGTH & MECHANICS (10%)
     length_score = 100
     length_issues = []
 
@@ -914,7 +1298,7 @@ def calculate_general_health_score(resume_text):
 
     length_score = max(length_score, 0)
 
-    # ── 7. CONTACT INFO (10%) ─────────────────────────────
+    # 7. CONTACT INFO (10%)
     contact_score = 100
     contact_detail = {}
 
@@ -973,6 +1357,8 @@ def calculate_general_health_score(resume_text):
         grade = 'F'
         verdict = 'Needs complete rework — parsability, structure, and content all need attention'
 
+    disclaimer = 'This Health Score evaluates general resume quality for IT roles. It does not simulate any specific ATS platform.'
+
     # Collect all issues
     all_issues = parse_issues + structure_issues + length_issues
     if weak_found:
@@ -988,6 +1374,7 @@ def calculate_general_health_score(resume_text):
 
     return {
         'total_score': total_score,
+        'disclaimer': disclaimer,
         'grade': grade,
         'verdict': verdict,
         'detected_role': role_data['label'],

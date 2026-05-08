@@ -27,10 +27,7 @@
                     <span class="nav-icon">📄</span> Master Resume
                 </a>
                 <a href="{{ url_for('analyze.analyze_page') }}" class="nav-link {% if request.endpoint and 'analyze' in request.endpoint %}active{% endif %}">
-                    <span class="nav-icon">🔍</span> Analyze JD
-                </a>
-                <a href="{{ url_for('tailor.tailor_page') }}" class="nav-link {% if request.endpoint and 'tailor' in request.endpoint %}active{% endif %}">
-                    <span class="nav-icon">✂️</span> Tailor Resume
+                    <span class="nav-icon">🔍</span> Analyze & Tailor
                 </a>
                 <a href="{{ url_for('interview.interview_page') }}" class="nav-link {% if request.endpoint and 'interview' in request.endpoint %}active{% endif %}">
                     <span class="nav-icon">🎯</span> Interview Prep
@@ -39,12 +36,30 @@
                     <span class="nav-icon">📬</span> Applications
                 </a>
             </nav>
-            <div style="padding: 0 var(--space-4); margin-top: auto;">
+            <div style="padding: 0 var(--space-4); margin-top: auto; display: flex; flex-direction: column; gap: var(--space-3);">
+                <!-- Cost Tracker -->
                 <div class="card" style="padding: var(--space-3); text-align: center;">
                     <span class="text-mono text-muted" style="font-size: var(--text-xs);" id="cost-tracker">
                         API Cost: $<span id="total-cost">0.00</span>
                     </span>
                 </div>
+                <!-- User Info -->
+                {% if session.get('user_id') %}
+                <div class="card" style="padding: var(--space-3);">
+                    <div style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2);">
+                        <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--gradient-primary); display: flex; align-items: center; justify-content: center; font-size: var(--text-sm); font-weight: 700; color: white; flex-shrink: 0;">
+                            {{ session.get('full_name', 'U')[0].upper() }}
+                        </div>
+                        <div style="overflow: hidden;">
+                            <div style="font-size: var(--text-xs); font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ session.get('full_name', session.get('username', 'User')) }}</div>
+                            <div style="font-size: var(--text-xs); color: var(--text-muted);">@{{ session.get('username', '') }}</div>
+                        </div>
+                    </div>
+                    <a href="{{ url_for('auth.logout') }}" style="display: block; text-align: center; font-size: var(--text-xs); color: var(--text-muted); padding: var(--space-2); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); transition: all 0.15s ease;" onmouseover="this.style.color='var(--accent-danger)';this.style.borderColor='rgba(239,68,68,0.4)'" onmouseout="this.style.color='var(--text-muted)';this.style.borderColor='var(--border-subtle)'">
+                        🚪 Sign Out
+                    </a>
+                </div>
+                {% endif %}
             </div>
         </aside>
 

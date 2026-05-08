@@ -1,4 +1,5 @@
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, session
+from app.routes.auth import login_required
 from app import db
 from app.models.master_resume import MasterResume
 from app.models.application import Application
@@ -12,13 +13,15 @@ analyze_bp = Blueprint('analyze', __name__)
 
 
 @analyze_bp.route('/')
+@login_required
 def analyze_page():
     """Render the analysis page."""
-    resume = MasterResume.query.first()
+    resume = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
     return render_template('analyze.html', resume=resume)
 
 
 @analyze_bp.route('/api/critique', methods=['POST'])
+@login_required
 def api_critique():
     """Run brutal critique analysis on resume vs JD."""
     data = request.get_json()
@@ -57,6 +60,7 @@ def api_critique():
 
 
 @analyze_bp.route('/api/keywords', methods=['POST'])
+@login_required
 def api_keywords():
     """Extract top keywords and map against resume."""
     data = request.get_json()
@@ -94,6 +98,7 @@ def api_keywords():
 
 
 @analyze_bp.route('/api/gap-fill', methods=['POST'])
+@login_required
 def api_gap_fill():
     """Generate gap-filling micro-projects and certifications."""
     data = request.get_json()

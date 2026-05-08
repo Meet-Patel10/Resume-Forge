@@ -169,14 +169,27 @@
     </div>
 </div>
 
+<!-- Spell & Grammar Check -->
+<div class="card mt-6">
+    <h3 class="card-title mb-4">📝 Spelling & Grammar Check</h3>
+    <p class="text-muted mb-4">Checks your resume text for spelling errors, grammar issues, and typos using LanguageTool.</p>
+    <button type="button" class="btn btn-secondary" onclick="runSpellCheck()" id="btn-spell-check">📝 Run Spell Check</button>
+
+    <div id="spell-result" class="hidden mt-6">
+        <p id="spell-summary" style="font-weight: 600; margin-bottom: var(--space-4);"></p>
+        <div id="spell-errors"></div>
+    </div>
+</div>
+
 <!-- ATS Quick Check (JD Required) -->
 <div class="card mt-6">
-    <h3 class="card-title mb-4">📊 ATS Score vs Job Description</h3>
+    <h3 class="card-title mb-4">📊 Resume Match Score vs Job Description</h3>
     <p class="text-muted mb-4">Paste a job description below to see how your master resume matches a specific role.</p>
+    <p class="text-muted mb-2" style="font-size: var(--text-xs); font-style: italic;">⚠️ This score estimates keyword alignment — it does not simulate any specific ATS platform.</p>
     <div class="form-group">
         <textarea id="ats-jd-input" class="form-textarea" rows="6" placeholder="Paste the job description here..."></textarea>
     </div>
-    <button type="button" class="btn btn-secondary" onclick="runATSCheck()" id="btn-ats-check">🔍 Check ATS Score</button>
+    <button type="button" class="btn btn-secondary" onclick="runATSCheck()" id="btn-ats-check">🔍 Check Match Score</button>
 
     <div id="ats-result" class="hidden mt-6">
         <div style="display: grid; grid-template-columns: 180px 1fr; gap: var(--space-6); align-items: start;">
@@ -198,6 +211,22 @@
                 <div id="mr-ats-issues" class="mt-4"></div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- ATS Platform Simulator -->
+<div class="card mt-6">
+    <h3 class="card-title mb-4">🏢 ATS Platform Simulator</h3>
+    <p class="text-muted mb-4">See how your resume scores across the 4 most popular ATS platforms used by tech companies. Paste a JD below.</p>
+    <p class="text-muted mb-2" style="font-size: var(--text-xs); font-style: italic;">⚠️ Scores approximate each platform's known behavior — actual algorithms are proprietary.</p>
+    <div class="form-group">
+        <textarea id="sim-jd-input" class="form-textarea" rows="4" placeholder="Paste the job description here..."></textarea>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="runATSSimulator()" id="btn-ats-sim">🏢 Simulate All Platforms</button>
+
+    <div id="sim-results" class="hidden mt-6">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-4);" id="sim-cards"></div>
+        <div class="card mt-4" id="sim-summary"></div>
     </div>
 </div>
 {% endblock %}
@@ -277,8 +306,9 @@
                 </div>
                 ` : ''}
                 <div class="form-group">
-                    <label class="form-label">Bullet Point</label>
-                    <textarea class="form-textarea" data-field="original_text" onchange="updateBulletsJSON()" style="min-height: 60px">${data ? data.original_text : ''}</textarea>
+                    <label class="form-label">Bullet Points</label>
+                    <textarea class="form-textarea" data-field="original_text" onchange="updateBulletsJSON()" style="min-height: 120px" placeholder="One bullet point per line">${data ? data.original_text : ''}</textarea>
+                    <span class="form-hint">Enter one bullet point per line. All bullets here belong to this ${isProject ? 'project' : 'experience'}.</span>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Skill Tags</label>
@@ -293,16 +323,25 @@
     function updateBulletsJSON() {
         const bullets = [];
         document.querySelectorAll('[data-bullet-id]').forEach(el => {
-            const bullet = {};
+            // Read shared fields (company, role, dates, etc.)
+            const shared = {};
             el.querySelectorAll('[data-field]').forEach(field => {
                 const key = field.dataset.field;
-                let val = field.value;
-                if (key === 'skill_tags') {
-                    val = val.split(',').map(s => s.trim()).filter(Boolean);
-                }
-                bullet[key] = val;
+                if (key === 'original_text' || key === 'skill_tags') return;
+                shared[key] = field.value;
             });
-            bullets.push(bullet);
+
+            // Get skill tags
+            const tagsEl = el.querySelector('[data-field="skill_tags"]');
+            const skill_tags = tagsEl ? tagsEl.value.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+            // Split multiline bullet text into individual bullet entries
+            const textEl = el.querySelector('[data-field="original_text"]');
+            const lines = textEl ? textEl.value.split('\n').map(l => l.trim()).filter(Boolean) : [''];
+
+            lines.forEach(line => {
+                bullets.push({ ...shared, original_text: line, skill_tags });
+            });
         });
         document.getElementById('bullets-json').value = JSON.stringify(bullets);
     }
@@ -374,7 +413,42 @@
     existingSkills.forEach(s => addSkillGroup(s));
     if (existingSkills.length === 0) addSkillGroup();
 
-    existingBullets.forEach(b => addBulletEntry(b.section_type || 'experience', b));
+    // Group existing bullets by experience/project before rendering
+    (function() {
+        const grouped = {};
+        existingBullets.forEach(b => {
+            const type = b.section_type || 'experience';
+            const key = `${type}|||${(b.company || '')}|||${(b.role || '')}|||${(b.dates || '')}`;
+            if (!grouped[key]) {
+                grouped[key] = {
+                    section_type: type,
+                    company: b.company || '',
+                    role: b.role || '',
+                    dates: b.dates || '',
+                    tech_stack: b.tech_stack || '',
+                    repo_url: b.repo_url || '',
+                    original_text: [],
+                    skill_tags: new Set(),
+                };
+            }
+            if (b.original_text) grouped[key].original_text.push(b.original_text.trim());
+            const tags = typeof b.skill_tags === 'string'
+                ? b.skill_tags.split(',').map(s => s.trim()).filter(Boolean)
+                : (b.skill_tags || []);
+            tags.forEach(t => grouped[key].skill_tags.add(t));
+        });
+        Object.values(grouped).forEach(g => {
+            addBulletEntry(g.section_type, {
+                company: g.company,
+                role: g.role,
+                dates: g.dates,
+                tech_stack: g.tech_stack,
+                repo_url: g.repo_url,
+                original_text: g.original_text.join('\n'),
+                skill_tags: Array.from(g.skill_tags),
+            });
+        });
+    })();
 
     existingEducation.forEach(e => addEducation(e));
     if (existingEducation.length === 0) addEducation();
@@ -488,7 +562,41 @@
 
                 if (p.bullets && p.bullets.length) {
                     document.getElementById('bullets-container').innerHTML = '';
-                    p.bullets.forEach(b => addBulletEntry(b.section_type || 'experience', b));
+
+                    // Group bullets by (company + role + dates + section_type) so that
+                    // multiple bullet points for the same experience appear in ONE card
+                    const grouped = {};
+                    p.bullets.forEach(b => {
+                        const key = `${(b.section_type || 'experience')}|||${(b.company || '')}|||${(b.role || '')}|||${(b.dates || '')}`;
+                        if (!grouped[key]) {
+                            grouped[key] = {
+                                section_type: b.section_type || 'experience',
+                                company: b.company || '',
+                                role: b.role || '',
+                                dates: b.dates || '',
+                                tech_stack: b.tech_stack || '',
+                                repo_url: b.repo_url || '',
+                                original_text: [],
+                                skill_tags: new Set(),
+                            };
+                        }
+                        if (b.original_text) grouped[key].original_text.push(b.original_text.trim());
+                        if (b.skill_tags && Array.isArray(b.skill_tags)) {
+                            b.skill_tags.forEach(t => grouped[key].skill_tags.add(t));
+                        }
+                    });
+
+                    Object.values(grouped).forEach(g => {
+                        addBulletEntry(g.section_type, {
+                            company: g.company,
+                            role: g.role,
+                            dates: g.dates,
+                            tech_stack: g.tech_stack,
+                            repo_url: g.repo_url,
+                            original_text: g.original_text.join('\n'),
+                            skill_tags: Array.from(g.skill_tags),
+                        });
+                    });
                 }
 
                 updateSkillsJSON();
@@ -567,7 +675,7 @@
                 document.getElementById('mr-ats-issues').innerHTML = '';
             }
 
-            showToast(`ATS Score: ${score}/100 (${data.grade})`, score >= 80 ? 'success' : score >= 65 ? 'info' : 'error');
+            showToast(`Match Score: ${score}/100 (${data.grade})`, score >= 80 ? 'success' : score >= 65 ? 'info' : 'error');
         } catch (e) {
             hideLoading();
             showToast('Check failed: ' + e.message, 'error');
@@ -659,6 +767,156 @@
         } catch (e) {
             hideLoading();
             showToast('Health check failed: ' + e.message, 'error');
+        }
+    }
+
+    // ===== Spell & Grammar Check =====
+    async function runSpellCheck() {
+        showLoading('Checking spelling and grammar...');
+        try {
+            const res = await fetch('/master-resume/spell-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+            if (data.api_error) return showToast(data.summary, 'error');
+
+            document.getElementById('spell-result').classList.remove('hidden');
+            document.getElementById('spell-summary').textContent = data.summary;
+
+            if (data.errors && data.errors.length) {
+                let html = '';
+                data.errors.forEach((err, i) => {
+                    const typeColor = err.type === 'spelling' ? 'var(--accent-danger)' : 'var(--accent-warning)';
+                    const typeBadge = err.type === 'spelling' ? '🔤 Spelling' : '📝 Grammar';
+                    html += `<div class="result-item mb-4" style="border-left: 3px solid ${typeColor}; padding-left: var(--space-4);">
+                        <div class="flex-between mb-2">
+                            <span style="font-weight: 600; color: ${typeColor};">${typeBadge}</span>
+                            <span class="badge badge-muted">${err.rule_category}</span>
+                        </div>
+                        <p>${err.message}</p>
+                        <p class="text-muted mt-2" style="font-family: var(--font-mono); font-size: var(--text-sm);">
+                            ...${err.context}...
+                        </p>
+                        ${err.replacements.length ? `<p class="mt-2"><strong>Suggestions:</strong> ${err.replacements.map(r => `<code>${r}</code>`).join(', ')}</p>` : ''}
+                    </div>`;
+                });
+                document.getElementById('spell-errors').innerHTML = html;
+            } else {
+                document.getElementById('spell-errors').innerHTML = '<p style="color:var(--accent-success)">✅ No spelling or grammar errors found!</p>';
+            }
+
+            showToast(data.summary, data.error_count > 0 ? 'info' : 'success');
+        } catch (e) {
+            hideLoading();
+            showToast('Spell check failed: ' + e.message, 'error');
+        }
+    }
+
+    // ===== ATS Platform Simulator =====
+    async function runATSSimulator() {
+        const jd = document.getElementById('sim-jd-input').value.trim();
+        if (!jd) return showToast('Please paste a job description first.', 'error');
+
+        showLoading('Running ATS simulations across Greenhouse, Lever, Ashby, Workday...');
+        try {
+            const res = await fetch('/master-resume/ats-simulate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jd_text: jd })
+            });
+            const data = await res.json();
+            hideLoading();
+
+            if (data.error) return showToast(data.error, 'error');
+
+            document.getElementById('sim-results').classList.remove('hidden');
+
+            // Render platform cards
+            const platformMeta = {
+                greenhouse: { icon: '🌱', color: '#22c55e' },
+                lever: { icon: '⚡', color: '#6366f1' },
+                ashby: { icon: '🔷', color: '#0ea5e9' },
+                workday: { icon: '🏢', color: '#f59e0b' },
+            };
+
+            let cardsHTML = '';
+            for (const [key, result] of Object.entries(data.platforms || {})) {
+                const meta = platformMeta[key] || { icon: '📊', color: 'var(--accent-primary)' };
+                const score = result.total_score;
+                const scoreColor = score >= 80 ? 'var(--accent-success)' :
+                                   score >= 65 ? 'var(--accent-warning)' : 'var(--accent-danger)';
+
+                cardsHTML += `
+                    <div class="card" style="border-top: 3px solid ${meta.color}">
+                        <div class="flex-between mb-4">
+                            <h4 style="margin: 0;">${meta.icon} ${result.platform}</h4>
+                            <span style="font-size: 1.8rem; font-weight: 800; color: ${scoreColor}">${score}</span>
+                        </div>
+                        <div style="margin-bottom: var(--space-4);">`;
+
+                // Breakdown bars
+                for (const [label, value] of Object.entries(result.breakdown || {})) {
+                    const displayLabel = label.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    cardsHTML += `
+                        <div style="margin-bottom: var(--space-2);">
+                            <div class="flex-between" style="font-size: var(--text-xs);">
+                                <span>${displayLabel}</span><strong>${value}%</strong>
+                            </div>
+                            <div style="height:4px;background:var(--border-subtle);border-radius:2px;margin-top:2px">
+                                <div style="height:100%;width:${value}%;background:${meta.color};border-radius:2px;transition:width 0.8s ease"></div>
+                            </div>
+                        </div>`;
+                }
+
+                cardsHTML += `</div>`;
+
+                // Issues
+                if (result.issues && result.issues.length) {
+                    cardsHTML += `<div style="margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-subtle);">`;
+                    result.issues.forEach(issue => {
+                        cardsHTML += `<p style="font-size: var(--text-xs); color: var(--accent-danger); margin-bottom: var(--space-1);">⚠️ ${issue}</p>`;
+                    });
+                    cardsHTML += `</div>`;
+                }
+
+                // Tips
+                if (result.tips && result.tips.length) {
+                    cardsHTML += `<div style="margin-top: var(--space-2);">`;
+                    result.tips.forEach(tip => {
+                        cardsHTML += `<p style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-1);">💡 ${tip}</p>`;
+                    });
+                    cardsHTML += `</div>`;
+                }
+
+                cardsHTML += `</div>`;
+            }
+            document.getElementById('sim-cards').innerHTML = cardsHTML;
+
+            // Summary
+            const avgColor = data.average_score >= 80 ? 'var(--accent-success)' :
+                             data.average_score >= 65 ? 'var(--accent-warning)' : 'var(--accent-danger)';
+            document.getElementById('sim-summary').innerHTML = `
+                <div class="flex-between">
+                    <div>
+                        <h4 style="margin: 0;">Cross-Platform Average</h4>
+                        <p class="text-muted" style="font-size: var(--text-sm); margin-top: var(--space-2);">
+                            Weakest: <strong>${(data.weakest_platform || '').replace(/^\w/, c => c.toUpperCase())}</strong> (${data.weakest_score}/100)
+                        </p>
+                    </div>
+                    <span style="font-size: 2.5rem; font-weight: 800; color: ${avgColor}">${data.average_score}</span>
+                </div>
+                <p style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-3); font-style: italic;">${data.disclaimer || ''}</p>
+            `;
+
+            showToast(`Simulation complete — Average: ${data.average_score}/100`, data.average_score >= 80 ? 'success' : 'info');
+        } catch (e) {
+            hideLoading();
+            showToast('Simulation failed: ' + e.message, 'error');
         }
     }
 

@@ -8,6 +8,7 @@ class Application(db.Model):
     __tablename__ = 'applications'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     company_name = db.Column(db.String(300), nullable=False)
     role_title = db.Column(db.String(300), nullable=False)
     jd_text = db.Column(db.Text, nullable=False)
@@ -30,6 +31,9 @@ class Application(db.Model):
     # Relationships
     analyses = db.relationship('AnalysisHistory', backref='application', lazy=True,
                                cascade='all, delete-orphan')
+    versions = db.relationship('ResumeVersion', backref='application', lazy=True,
+                               cascade='all, delete-orphan',
+                               order_by='ResumeVersion.version_number.desc()')
 
     @property
     def keyword_matches(self):

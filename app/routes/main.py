@@ -1,7 +1,8 @@
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, session
 from app.models.application import Application
 from app.models.master_resume import MasterResume
 from app.models.analysis import AnalysisHistory
+from app.routes.auth import login_required
 from app import db
 from sqlalchemy import func
 
@@ -15,10 +16,11 @@ def index():
 
 
 @main_bp.route('/dashboard')
+@login_required
 def dashboard():
     """Dashboard with application tracker and stats."""
-    resume = MasterResume.query.first()
-    applications = Application.query.order_by(Application.applied_at.desc()).all()
+    resume = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
+    applications = Application.query.filter_by(user_id=session.get('user_id')).order_by(Application.applied_at.desc()).all()
 
     # Calculate token & request usage
     total_tokens = db.session.query(func.sum(AnalysisHistory.tokens_used)).scalar() or 0

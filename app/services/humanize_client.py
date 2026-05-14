@@ -35,7 +35,7 @@ def humanize_text(text, model="humanoidx", tone="formal"):
 
         if resp.status_code == 200:
             data = resp.json()
-            result = data.get('output', '') or data.get('text', '') or data.get('result', '')
+            result = data.get('humanized_text', '') or data.get('output', '') or data.get('text', '') or data.get('result', '')
             if result and result.strip():
                 return result.strip()
 

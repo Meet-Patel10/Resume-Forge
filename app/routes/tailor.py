@@ -391,6 +391,8 @@ def api_tailor():
                 parts.append(proj.get('name', ''))
                 if proj.get('tech_stack'):
                     parts.append(proj['tech_stack'])
+                if proj.get('dates'):
+                    parts.append(proj['dates'])
                 parts.extend(proj.get('bullets', []))
 
         # Experience section
@@ -398,13 +400,32 @@ def api_tailor():
         for exp in tailored_data.get('experience', []):
             parts.append(exp.get('title', ''))
             parts.append(exp.get('company', ''))
+            if exp.get('location'):
+                parts.append(exp['location'])
+            if exp.get('dates'):
+                parts.append(exp['dates'])
             parts.extend(exp.get('bullets', []))
+
+        # Certifications
+        if tailored_data.get('certifications'):
+            parts.append('CERTIFICATIONS')
+            for cert in tailored_data.get('certifications', []):
+                if isinstance(cert, dict):
+                    parts.append(cert.get('name', ''))
+                    if cert.get('dates'):
+                        parts.append(cert['dates'])
+                elif isinstance(cert, str):
+                    parts.append(cert)
 
         # Education section
         parts.append('EDUCATION')
         for edu in tailored_data.get('education', []):
             parts.append(edu.get('degree', ''))
             parts.append(edu.get('school', ''))
+            if edu.get('location'):
+                parts.append(edu['location'])
+            if edu.get('dates'):
+                parts.append(edu['dates'])
             parts.append(edu.get('details', '') or '')
 
         # Other experience
@@ -412,6 +433,8 @@ def api_tailor():
             parts.append('OTHER EXPERIENCE')
             for oexp in tailored_data.get('other_experience', []):
                 parts.append(oexp.get('title', ''))
+                if oexp.get('dates'):
+                    parts.append(oexp['dates'])
                 parts.extend(oexp.get('bullets', []))
 
         # Languages
@@ -559,7 +582,7 @@ def api_download_pdf():
         }
         resp = http_requests.post(api_url, json=payload, timeout=60)
 
-        if resp.status_code == 200 and resp.headers.get('Content-Type', '').startswith('application/pdf'):
+        if resp.status_code in (200, 201) and resp.headers.get('Content-Type', '').startswith('application/pdf'):
             return Response(
                 resp.content,
                 mimetype='application/pdf',

@@ -1,0 +1,124 @@
+\documentclass[10pt, letterpaper]{article}
+
+\usepackage[top=0.45in, bottom=0.45in, left=0.7in, right=0.7in]{geometry}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{titlesec}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+\titleformat{\section}{\large\bfseries\uppercase}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{3pt}{3pt}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\pagestyle{empty}
+
+\newcommand{\resumeItem}[1]{\item\small{#1}}
+\newcommand{\resumeSubheading}[4]{
+  \textbf{#1} \hfill \textit{\small #2} \\
+  \textit{\small #3} \hfill \textit{\small #4}
+}
+
+\begin{document}
+
+%---------- HEADER ----------
+\begin{center}
+  {\LARGE \textbf{Meet Patel}} \\[3pt]
+  \small
+  Antigonish, NS $\vert$
+  (902) 322-3808 $\vert$
+  \href{mailto:meett.patel.2803@gmail.com}{meett.patel.2803@gmail.com} $\vert$
+  %-- \href{https://github.com/Meet-Patel10}{github.com/Meet-Patel10} $\vert$
+  \href{https://linkedin.com/in/meettpatel28}{linkedin.com/in/meettpatel28}
+\end{center}
+
+%---------- SUMMARY ----------
+\section{Summary}
+\small
+
+Applied Computer Science graduate student with over two years of professional experience in managing incidents in microservices for enterprises and developing applications on websites for customers. Hands-on experience in working with full-stack development, deep learning, and embedded systems. Postgraduate education in machine learning, real-time computing, and computational logic. As an engineer, passionate about solving practical technical problems in a systematic manner.
+
+\vspace{1pt}
+
+%---------- TECHNICAL SKILLS ----------
+\section{Technical Skills}
+\small
+\textbf{Languages:} Java, Python, C++, SQL, JavaScript, HTML5, CSS3 \\
+\textbf{Frameworks \& Libraries:} Spring Boot, FastAPI, Vue.js, React, PyTorch, Hugging Face Transformers, RESTful APIs \\
+\textbf{Tools \& Platforms:} Git, Linux, MySQL, AWS, PostgreSQL, Docker, Jira, VS Code, Postman, Overleaf \\
+\textbf{Concepts:} Embedded Systems, Real-Time Systems, Computational Logic, Theory of Computation, REST APIs, CI/CD
+
+\vspace{1pt}
+
+%---------- PROJECTS ----------
+\section{Projects}
+
+\resumeSubheading{ResumeForge — AI-Powered Resume Tailoring \& ATS Optimization Platform}{2026}{Python, Flask, SQLAlchemy, AWS Bedrock (Claude), REST APIs, Jinja2, JavaScript, LaTeX, HTML/CSS}{}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{A 4-stage AI-driven pipeline for optimizing resumes based on analyzing job postings and automatically generating ATS-friendly resumes in LaTeX, PDF, and DOCX formats was devised (Flask, AWS Bedrock, Claude).}
+  \resumeItem{A real-time application tracking system scoring tool in Python was designed with 7 weighted factors, giving immediate feedback on 20+ dimensions without relying on external APIs.}
+  \resumeItem{An efficient multi-user architecture was constructed with session-based authentication and integrated application tracker having version control and score visualization features.}
+\end{itemize}
+
+\vspace{3pt}
+
+\resumeSubheading{Skin Lesion Classification using Deep Learning Ensembles
+}{2026}{Python, PyTorch, Scikit-learn, DeepTune, df-analyze, HuggingFace (PEFT)}{}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{5 deep learning models were benchmarked using 3 fine-tuning methods on a 13K samples dataset of skin lesions (ISIC), obtaining 95.98\% accuracy with Swin Transformer and 95.1\% with BiomedCLIP PEFT.}
+  \resumeItem{A multi-model voting classifier was developed by integrating embedding features from the top models with classical ML classification algorithms to yield an accuracy of 98.3\% and AUROC of 0.999.}
+\end{itemize}
+
+\vspace{3pt}
+
+\resumeSubheading{Automated Parking Assistance System}{2025}{C++, Arduino, Finite State Machine, SimulIDE}{}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{A parking assistance controller using a finite state machine with hysteresis was designed and implemented in SimulIDE to filter out erroneous readings by the ultrasonic sensor.}
+  \resumeItem{Implemented a non-blocking task scheduler in C++ that kept end-to-end sensor-to-output response time consistently under 10~ms.}
+\end{itemize}
+
+\vspace{1pt}
+
+%---------- EXPERIENCE ----------
+\section{Experience}
+
+\resumeSubheading{Senior Software Engineer}{Feb 2022 -- Mar 2024}{Capgemini -- BMW XTECH Connected-Vehicle Platform}{Mumbai, India}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{Led a group of more than 30 engineers in performing L2 operational duties for 3 microservices built using Spring Boot (Provisioning, App Repository, \& SFA) for BMW’s car platform in both the US and Europe, addressing 40+ incidents per month.}
+  \resumeItem{Prepared SOPs for top 10+ incidents that recur, resulting in a reduction in L1-to-L2 escalations by about 50\%.}
+\end{itemize}
+
+\vspace{3pt}
+
+\resumeSubheading{Jr.\ Front-End Developer}{Jan 2021 -- Nov 2021}{Alian Software}{Anand, India}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{Developed the frontend for 5 clients’ web applications using Vue.js, Bootstrap 5, HTML, CSS, and JS.}
+  \resumeItem{Integrated the frontend with backend RESTful APIs in collaboration with the backend developers in order to address any data contract mismatches prior to QA.}
+\end{itemize}
+
+\vspace{1pt}
+
+%---------- CERTIFICATIONS ----------
+\section{Certifications}
+\small
+\textbf{AWS Certified Cloud Practitioner (CLF-C02)} \hfill \textit{In Progress -- Expected Jun 2026}
+
+\vspace{1pt}
+
+%---------- EDUCATION ----------
+\section{Education}
+
+\resumeSubheading{Master of Applied Computer Science $|$ GPA: 3.9/4.0 (88\%)}{Sep 2024 -- May 2026}{St.\ Francis Xavier University}{Antigonish, NS, Canada}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{Relevant Coursework: Theory of Computation, Computational Logic, Embedded Systems, Real-Time Systems, Machine Learning \& Data Mining, Computer Network Security, Big Data}
+\end{itemize}
+
+\vspace{3pt}
+
+\resumeSubheading{Bachelor of Technology, Computer Science and Engineering $|$ CGPA: 8.9/10 (89\%)}{Jul 2017 -- May 2021}{SRM Institute of Science and Technology}{Chennai, TN, India}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{Relevant Coursework: Data Structures \& Algorithms, Operating Systems, Database Management Systems, Artificial Intelligence, Object-Oriented Programming}
+\end{itemize}
+
+\end{document}

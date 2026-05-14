@@ -26,53 +26,37 @@ def sanitize_latex(text):
 
 
 def render_latex(resume_data):
-    """Build a .tex file from structured resume JSON.
-
-    Layout matches Meet_Patel_Resume.pdf exactly:
-    - cmss (Computer Modern Sans Serif) throughout
-    - 9pt body, 17pt name, 12pt section headers
-    - All black, no color accents
-    - Two-line experience blocks: Title...Dates / Company...Location
-    """
+    """Build a .tex file that matches Meet_Patel_Resume.tex format exactly."""
     header = resume_data.get('header', {})
     s = sanitize_latex
 
-    # Preamble -- cmss fonts, tight margins
-    latex = r"""\documentclass[9pt,a4paper]{article}
+    # preamble -- matches the template exactly
+    latex = r"""\documentclass[10pt, letterpaper]{article}
 
-\usepackage[utf8]{inputenc}
-\usepackage[english]{babel}
-\usepackage{geometry}
-\usepackage{hyperref}
+\usepackage[top=0.45in, bottom=0.45in, left=0.7in, right=0.7in]{geometry}
 \usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
 \usepackage{titlesec}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
 
-% use sans-serif font to match the template
-\renewcommand{\familydefault}{\sfdefault}
+\titleformat{\section}{\large\bfseries\uppercase}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{3pt}{3pt}
 
-\geometry{left=0.5in, top=0.4in, right=0.5in, bottom=0.4in}
-
-\pagestyle{empty}
-\urlstyle{same}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0pt}
+\pagestyle{empty}
 
-% section headers: bold uppercase with rule, all black
-\titleformat{\section}{\normalsize\bfseries\uppercase}{}{0pt}{}[\titlerule]
-\titlespacing{\section}{0pt}{8pt}{4pt}
-
-\setlist[itemize]{noitemsep, topsep=2pt, leftmargin=1.2em, label=\textbullet, parsep=0pt, partopsep=0pt}
-
-\hypersetup{
-    colorlinks=true,
-    linkcolor=black,
-    urlcolor=black,
+\newcommand{\resumeItem}[1]{\item\small{#1}}
+\newcommand{\resumeSubheading}[4]{
+  \textbf{#1} \hfill \textit{\small #2} \\
+  \textit{\small #3} \hfill \textit{\small #4}
 }
 
 \begin{document}
 """
 
-    # Header
+    # header
     name = s(header.get('name', 'Name'))
     location = header.get('location', '')
     phone = header.get('phone', '')
@@ -87,34 +71,46 @@ def render_latex(resume_data):
         contact_parts.append(s(phone))
     if email:
         contact_parts.append(r'\href{mailto:' + s(email) + '}{' + s(email) + '}')
-    if linkedin:
-        linkedin_display = linkedin.replace('https://', '').replace('http://', '')
-        contact_parts.append(r'\href{' + s(linkedin) + '}{' + s(linkedin_display) + '}')
     if github:
+        github_url = github if github.startswith('http') else 'https://' + github
         github_display = github.replace('https://', '').replace('http://', '')
-        contact_parts.append(r'\href{' + s(github) + '}{' + s(github_display) + '}')
+        contact_parts.append(r'\href{' + s(github_url) + '}{' + s(github_display) + '}')
+    if linkedin:
+        linkedin_url = linkedin if linkedin.startswith('http') else 'https://' + linkedin
+        linkedin_display = linkedin.replace('https://', '').replace('http://', '')
+        contact_parts.append(r'\href{' + s(linkedin_url) + '}{' + s(linkedin_display) + '}')
 
-    contact_line = r' $|$ '.join(contact_parts)
+    contact_line = r' $\vert$ '.join(contact_parts)
 
     latex += r"""
+%---------- HEADER ----------
 \begin{center}
-    {\fontsize{17.28pt}{20pt}\selectfont \textbf{""" + name + r"""}} \\[4pt]
-    \small """ + contact_line + r"""
+  {\LARGE \textbf{""" + name + r"""}} \\[3pt]
+  \small
+  """ + contact_line + r"""
 \end{center}
 """
 
-    # Summary
+    # summary
     summary = resume_data.get('summary', '')
     if summary:
         latex += r"""
-\section*{SUMMARY}
-""" + s(summary) + "\n"
+%---------- SUMMARY ----------
+\section{Summary}
+\small
 
-    # Skills
+""" + s(summary) + r"""
+
+\vspace{1pt}
+"""
+
+    # skills
     skills = resume_data.get('skills', [])
     if skills:
         latex += r"""
-\section*{TECHNICAL SKILLS}
+%---------- TECHNICAL SKILLS ----------
+\section{Technical Skills}
+\small
 """
         skill_lines = []
         for group in skills:
@@ -122,116 +118,146 @@ def render_latex(resume_data):
             items = ', '.join([s(item) for item in group.get('items', [])])
             skill_lines.append(rf"\textbf{{{category}:}} {items}")
         latex += ' \\\\\n'.join(skill_lines) + "\n"
+        latex += r"""
+\vspace{1pt}
+"""
 
-    # Projects
+    # projects
     projects = resume_data.get('projects', [])
     if projects:
         latex += r"""
-\section*{PROJECTS}
+%---------- PROJECTS ----------
+\section{Projects}
 """
-        for proj in projects:
+        for i, proj in enumerate(projects):
             proj_name = s(proj.get('name', ''))
             tech = s(proj.get('tech_stack', ''))
             dates = s(proj.get('dates', ''))
 
-            latex += rf"""
-\textbf{{{proj_name}}} \hfill \textit{{{dates}}}
-"""
-            if tech:
-                latex += rf"""\textit{{{tech}}}
-"""
-            latex += r"""\begin{itemize}
+            latex += r"""
+\resumeSubheading{""" + proj_name + r"""}{""" + dates + r"""}{""" + tech + r"""}{}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
 """
             for bullet in proj.get('bullets', []):
-                latex += f"\\item {s(bullet)}\n"
+                latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
-    # Experience
+            # spacing between entries
+            if i < len(projects) - 1:
+                latex += r"""
+\vspace{3pt}
+"""
+
+        latex += r"""
+\vspace{1pt}
+"""
+
+    # experience
     experience = resume_data.get('experience', [])
     if experience:
         latex += r"""
-\section*{EXPERIENCE}
+%---------- EXPERIENCE ----------
+\section{Experience}
 """
-        for exp in experience:
+        for i, exp in enumerate(experience):
             title = s(exp.get('title', ''))
             company = s(exp.get('company', ''))
             exp_location = s(exp.get('location', ''))
             dates = s(exp.get('dates', ''))
 
-            latex += rf"""
-\textbf{{{title}}} \hfill \textit{{{dates}}}
-"""
-            latex += rf"""\textit{{{company}}} \hfill \textit{{{exp_location}}}
-"""
-            latex += r"""\begin{itemize}
+            latex += r"""
+\resumeSubheading{""" + title + r"""}{""" + dates + r"""}{""" + company + r"""}{""" + exp_location + r"""}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
 """
             for bullet in exp.get('bullets', []):
-                latex += f"\\item {s(bullet)}\n"
+                latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
-    # Certifications
+            # spacing between entries
+            if i < len(experience) - 1:
+                latex += r"""
+\vspace{3pt}
+"""
+
+        latex += r"""
+\vspace{1pt}
+"""
+
+    # certifications
     certifications = resume_data.get('certifications', [])
     if certifications:
         latex += r"""
-\section*{CERTIFICATIONS}
+%---------- CERTIFICATIONS ----------
+\section{Certifications}
+\small
 """
         for cert in certifications:
             if isinstance(cert, dict):
                 cert_name = s(cert.get('name', ''))
                 cert_dates = s(cert.get('dates', ''))
-                latex += rf"""\textbf{{{cert_name}}} \hfill \textit{{{cert_dates}}}
-"""
+                latex += rf"\textbf{{{cert_name}}} \hfill \textit{{{cert_dates}}}" + "\n"
             elif isinstance(cert, str):
-                latex += rf"""\textbf{{{s(cert)}}}
+                latex += rf"\textbf{{{s(cert)}}}" + "\n"
+
+        latex += r"""
+\vspace{1pt}
 """
 
-    # Education
+    # education
     education = resume_data.get('education', [])
     if education:
         latex += r"""
-\section*{EDUCATION}
+%---------- EDUCATION ----------
+\section{Education}
 """
-        for edu in education:
+        for i, edu in enumerate(education):
             degree = s(edu.get('degree', ''))
             school = s(edu.get('school', ''))
             edu_location = s(edu.get('location', ''))
             dates = s(edu.get('dates', ''))
             details = edu.get('details', '')
 
-            latex += rf"""
-\textbf{{{degree}}} \hfill \textit{{{dates}}}
-"""
-            latex += rf"""\textit{{{school}}} \hfill \textit{{{edu_location}}}
+            latex += r"""
+\resumeSubheading{""" + degree + r"""}{""" + dates + r"""}{""" + school + r"""}{""" + edu_location + r"""}
 """
             if details:
-                latex += r"""\begin{itemize}
+                latex += r"""\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
+  \resumeItem{""" + s(details) + r"""}
+\end{itemize}
 """
-                latex += f"\\item {s(details)}\n"
-                latex += r"\end{itemize}" + "\n"
+            # spacing between entries
+            if i < len(education) - 1:
+                latex += r"""
+\vspace{3pt}
+"""
 
-    # Other experience (if any)
+    # other experience
     other_experience = resume_data.get('other_experience', [])
     if other_experience:
         latex += r"""
-\section*{OTHER EXPERIENCE}
+%---------- OTHER EXPERIENCE ----------
+\section{Other Experience}
 """
-        for exp in other_experience:
+        for i, exp in enumerate(other_experience):
             title = s(exp.get('title', ''))
             company = s(exp.get('company', ''))
             exp_location = s(exp.get('location', ''))
             dates = s(exp.get('dates', ''))
-            latex += rf"""
-\textbf{{{title}}} \hfill \textit{{{dates}}}
-"""
-            latex += rf"""\textit{{{company}}} \hfill \textit{{{exp_location}}}
-"""
-            latex += r"""\begin{itemize}
+
+            latex += r"""
+\resumeSubheading{""" + title + r"""}{""" + dates + r"""}{""" + company + r"""}{""" + exp_location + r"""}
+\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
 """
             for bullet in exp.get('bullets', []):
-                latex += f"\\item {s(bullet)}\n"
+                latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
-    # Languages
+            if i < len(other_experience) - 1:
+                latex += r"""
+\vspace{3pt}
+"""
+
+    # languages
     other = resume_data.get('other', {})
     languages = ''
     if other and other.get('languages'):
@@ -241,14 +267,9 @@ def render_latex(resume_data):
 
     if languages:
         latex += r"""
-\section*{LANGUAGES}
+\section{Languages}
+\small
 """ + languages + "\n"
-
-    # Additional info
-    if other and other.get('additional'):
-        latex += r"""
-\section*{ADDITIONAL}
-""" + s(other['additional']) + "\n"
 
     latex += r"""
 \end{document}

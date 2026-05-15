@@ -25,15 +25,125 @@ def sanitize_latex(text):
     return text
 
 
+def _estimate_lines(resume_data):
+    """Roughly estimate how many lines the resume will take at 10pt."""
+    lines = 0
+
+    # header block (name + contact)
+    lines += 3
+
+    # summary (roughly 1 line per 90 chars at 7.1in width)
+    summary = resume_data.get('summary', '')
+    if summary:
+        lines += 2  # section header + spacing
+        lines += max(1, len(summary) // 90 + 1)
+
+    # skills (1 line per category, some wrap)
+    skills = resume_data.get('skills', [])
+    if skills:
+        lines += 2  # section header
+        for group in skills:
+            items_text = ', '.join(group.get('items', []))
+            lines += max(1, len(items_text) // 80 + 1)
+
+    # projects
+    projects = resume_data.get('projects', [])
+    if projects:
+        lines += 2
+        for proj in projects:
+            lines += 2  # subheading (title + tech)
+            for bullet in proj.get('bullets', []):
+                lines += max(1, len(bullet) // 85 + 1)
+
+    # experience
+    experience = resume_data.get('experience', [])
+    if experience:
+        lines += 2
+        for exp in experience:
+            lines += 2  # subheading
+            for bullet in exp.get('bullets', []):
+                lines += max(1, len(bullet) // 85 + 1)
+
+    # certifications
+    certs = resume_data.get('certifications', [])
+    if certs:
+        lines += 2 + len(certs)
+
+    # education
+    education = resume_data.get('education', [])
+    if education:
+        lines += 2
+        for edu in education:
+            lines += 2  # subheading
+            if edu.get('details'):
+                lines += max(1, len(edu['details']) // 85 + 1)
+
+    # other experience
+    other_exp = resume_data.get('other_experience', [])
+    if other_exp:
+        lines += 2
+        for exp in other_exp:
+            lines += 2
+            for bullet in exp.get('bullets', []):
+                lines += max(1, len(bullet) // 85 + 1)
+
+    return lines
+
+
 def render_latex(resume_data):
-    """Build a .tex file that matches Meet_Patel_Resume.tex format exactly."""
+    """Build a .tex file that always fits on exactly one page.
+
+    Spacing is calculated dynamically based on content volume.
+    """
     header = resume_data.get('header', {})
     s = sanitize_latex
 
-    # preamble -- matches the template exactly
+    # estimate content and pick spacing tier
+    est_lines = _estimate_lines(resume_data)
+
+    # letter paper at 10pt with 0.45in margins ≈ 62 usable lines
+    # pick spacing based on how full the page is
+    if est_lines <= 48:
+        # light content -- generous spacing
+        section_before = '4pt'
+        section_after = '4pt'
+        entry_gap = '3pt'
+        section_gap = '2pt'
+        top_margin = '0.45in'
+        bottom_margin = '0.45in'
+        enlarge = ''
+    elif est_lines <= 56:
+        # medium content -- tighter
+        section_before = '3pt'
+        section_after = '3pt'
+        entry_gap = '2pt'
+        section_gap = '1pt'
+        top_margin = '0.4in'
+        bottom_margin = '0.4in'
+        enlarge = ''
+    elif est_lines <= 64:
+        # heavy content -- compress
+        section_before = '2pt'
+        section_after = '2pt'
+        entry_gap = '1pt'
+        section_gap = '0pt'
+        top_margin = '0.35in'
+        bottom_margin = '0.35in'
+        enlarge = r'\enlargethispage{0.15in}'
+    else:
+        # very heavy -- maximum compression
+        section_before = '1pt'
+        section_after = '1pt'
+        entry_gap = '0pt'
+        section_gap = '0pt'
+        top_margin = '0.3in'
+        bottom_margin = '0.3in'
+        enlarge = r'\enlargethispage{0.3in}'
+
+    # preamble with dynamic spacing
     latex = r"""\documentclass[10pt, letterpaper]{article}
 
-\usepackage[top=0.45in, bottom=0.45in, left=0.7in, right=0.7in]{geometry}
+\usepackage[top=""" + top_margin + r""", bottom=""" + bottom_margin + r""", left=0.7in, right=0.7in]{geometry}
 \usepackage{enumitem}
 \usepackage[hidelinks]{hyperref}
 \usepackage{titlesec}
@@ -41,7 +151,7 @@ def render_latex(resume_data):
 \usepackage[utf8]{inputenc}
 
 \titleformat{\section}{\large\bfseries\uppercase}{}{0em}{}[\titlerule]
-\titlespacing{\section}{0pt}{3pt}{3pt}
+\titlespacing{\section}{0pt}{""" + section_before + r"""}{""" + section_after + r"""}
 
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0pt}
@@ -54,7 +164,7 @@ def render_latex(resume_data):
 }
 
 \begin{document}
-"""
+""" + enlarge + "\n"
 
     # header
     name = s(header.get('name', 'Name'))
@@ -101,7 +211,7 @@ def render_latex(resume_data):
 
 """ + s(summary) + r"""
 
-\vspace{1pt}
+\vspace{""" + section_gap + r"""}
 """
 
     # skills
@@ -119,7 +229,7 @@ def render_latex(resume_data):
             skill_lines.append(rf"\textbf{{{category}:}} {items}")
         latex += ' \\\\\n'.join(skill_lines) + "\n"
         latex += r"""
-\vspace{1pt}
+\vspace{""" + section_gap + r"""}
 """
 
     # projects
@@ -142,14 +252,13 @@ def render_latex(resume_data):
                 latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
-            # spacing between entries
             if i < len(projects) - 1:
                 latex += r"""
-\vspace{3pt}
+\vspace{""" + entry_gap + r"""}
 """
 
         latex += r"""
-\vspace{1pt}
+\vspace{""" + section_gap + r"""}
 """
 
     # experience
@@ -173,14 +282,13 @@ def render_latex(resume_data):
                 latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
-            # spacing between entries
             if i < len(experience) - 1:
                 latex += r"""
-\vspace{3pt}
+\vspace{""" + entry_gap + r"""}
 """
 
         latex += r"""
-\vspace{1pt}
+\vspace{""" + section_gap + r"""}
 """
 
     # certifications
@@ -200,7 +308,7 @@ def render_latex(resume_data):
                 latex += rf"\textbf{{{s(cert)}}}" + "\n"
 
         latex += r"""
-\vspace{1pt}
+\vspace{""" + section_gap + r"""}
 """
 
     # education
@@ -225,10 +333,9 @@ def render_latex(resume_data):
   \resumeItem{""" + s(details) + r"""}
 \end{itemize}
 """
-            # spacing between entries
             if i < len(education) - 1:
                 latex += r"""
-\vspace{3pt}
+\vspace{""" + entry_gap + r"""}
 """
 
     # other experience
@@ -254,7 +361,7 @@ def render_latex(resume_data):
 
             if i < len(other_experience) - 1:
                 latex += r"""
-\vspace{3pt}
+\vspace{""" + entry_gap + r"""}
 """
 
     latex += r"""

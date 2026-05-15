@@ -257,20 +257,6 @@ def render_latex(resume_data):
 \vspace{3pt}
 """
 
-    # languages
-    other = resume_data.get('other', {})
-    languages = ''
-    if other and other.get('languages'):
-        languages = s(other['languages'])
-    elif resume_data.get('languages'):
-        languages = s(resume_data['languages'])
-
-    if languages:
-        latex += r"""
-\section{Languages}
-\small
-""" + languages + "\n"
-
     latex += r"""
 \end{document}
 """

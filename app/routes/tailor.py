@@ -263,13 +263,50 @@ def api_tailor():
                 # education from DB
                 tailored_data['education'] = master.education or []
 
-                # languages
-                lang = master.languages
-                if lang:
-                    lang_str = ', '.join(lang) if isinstance(lang, list) else str(lang)
-                    if 'other' not in tailored_data or not isinstance(tailored_data.get('other'), dict):
-                        tailored_data['other'] = {}
-                    tailored_data['other']['languages'] = lang_str
+                # enforce skill category structure from master resume
+                # the AI can reorder/add items, but categories must stay separate
+                master_skills = master.skills or []
+                ai_skills = tailored_data.get('skills', [])
+                if master_skills and ai_skills:
+                    # collect all items the AI produced (across all its categories)
+                    all_ai_items = set()
+                    for group in ai_skills:
+                        for item in group.get('items', []):
+                            all_ai_items.add(item.strip())
+
+                    # rebuild using master resume categories, but with AI's item ordering
+                    enforced_skills = []
+                    used_items = set()
+                    for master_group in master_skills:
+                        cat_name = master_group.get('category', '')
+                        master_items = master_group.get('items', [])
+
+                        # find matching AI category (case-insensitive)
+                        ai_items = []
+                        for ai_group in ai_skills:
+                            if ai_group.get('category', '').strip().lower() == cat_name.strip().lower():
+                                ai_items = ai_group.get('items', [])
+                                break
+
+                        if ai_items:
+                            # use AI's order, but make sure all master items are included
+                            merged = list(ai_items)
+                            for orig in master_items:
+                                if orig not in merged:
+                                    merged.append(orig)
+                            enforced_skills.append({'category': cat_name, 'items': merged})
+                            used_items.update(ai_items)
+                        else:
+                            # AI dropped this category -- restore from master + add any new items that fit
+                            enforced_skills.append({'category': cat_name, 'items': list(master_items)})
+                            used_items.update(master_items)
+
+                    # any AI items not placed in existing categories go into a new category
+                    leftover = [item for item in all_ai_items if item not in used_items]
+                    if leftover:
+                        enforced_skills.append({'category': 'Additional Skills', 'items': sorted(leftover)})
+
+                    tailored_data['skills'] = enforced_skills
 
                 # rebuild experience and project bullets from the bullet bank
                 if master.bullets:

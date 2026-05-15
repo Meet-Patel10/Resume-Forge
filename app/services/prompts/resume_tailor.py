@@ -15,13 +15,14 @@ You are making EXACTLY TWO changes. Nothing else.
 - DO NOT fabricate experience or skills the candidate doesn't have
 
 ### 2. SKILLS SECTION — REORDER, ADD, AND MATCH JD TERMS
-- REORDER existing skills to put JD-relevant skills first in each category
-- ADD every JD-mentioned skill that the candidate genuinely has (based on their experience, projects, and education)
-- If the JD mentions a tool and the candidate used it anywhere (even in a project), ADD IT
+- KEEP THE EXACT SAME SKILL CATEGORIES as the master resume (e.g., "Languages", "Frameworks & Libraries", "Tools & Platforms", "Concepts") — DO NOT merge categories together
+- Each category must stay as its own separate line — never combine two categories into one
+- REORDER existing skills within each category to put JD-relevant skills first
+- ADD every JD-mentioned skill that the candidate genuinely has to the CORRECT category
+- If the JD mentions a tool and the candidate used it anywhere (even in a project), ADD IT to the right category
 - Match the EXACT terminology from the JD: if JD says "PostgreSQL", don't write "SQL databases"
-- If a JD skill has both abbreviated and full forms, include both (e.g., "Amazon Web Services (AWS)")
-- Add a new skill category if the JD mentions skills that don't fit existing categories
-- DO NOT remove any existing skills — only reorder, add, and potentially create new categories
+- You may add a NEW category only if a JD skill truly doesn't fit any existing one
+- DO NOT remove any existing skills — only reorder and add
 - Target: the skills section should contain at least 80% of the hard skills mentioned in the JD
 
 ### ATS SCORE OPTIMIZATION STRATEGY

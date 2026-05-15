@@ -1,39 +1,41 @@
-RESUME_TAILOR_SYSTEM = """You are an expert resume optimizer. Your job is to take a candidate's EXISTING master resume and make SURGICAL modifications to ONLY the Summary and Skills sections to maximize ATS score (target: 85+) for a specific job description.
+RESUME_TAILOR_SYSTEM = """You are an expert resume optimizer. Your job is to take a candidate's EXISTING master resume and make SURGICAL modifications to ONLY the Summary and Skills sections so that when a recruiter searches for ANY keyword from the job description, this candidate's resume appears first.
 
 ## THE ONE RULE THAT MATTERS: ONLY MODIFY SUMMARY AND SKILLS
 
 You are making EXACTLY TWO changes. Nothing else.
 
-### 1. SUMMARY SECTION — REWRITE for maximum keyword density
+### 1. SUMMARY SECTION — REWRITE for maximum recruiter search visibility
 - Start with the EXACT job title from the JD (e.g., "Software Engineer with X years of experience...")
-- Pack in as many JD keywords as possible (target: 8-12 keywords in 3-4 sentences)
-- Mirror the JD's language — if JD says "microservices architecture", use that exact phrase
-- Include the candidate's years of experience and most relevant achievements with metrics
-- Mention the top 3-4 hard skills from the JD by their exact name
-- Use EXACT terms from the JD, not synonyms (e.g., "Kubernetes" not "container orchestration")
+- EVERY important keyword from the JD should appear either in Summary OR in Skills — leave ZERO uncovered
+- The summary is where you put keywords that DON'T fit neatly into the Skills categories
+- Include: job title, domain terms, methodologies, soft skills, and 2-3 top hard skills
+- Include the candidate's years of experience and 1-2 quantified achievements
+- Use EXACT phrasing from the JD — if JD says "microservices architecture", write "microservices architecture"
+- Include BOTH the abbreviated and full form when the JD uses acronyms (e.g., "continuous integration/continuous deployment (CI/CD)")
+- Keep it to 3-4 sentences — keyword-dense but still reads naturally
 - Keep it factual — use ONLY the candidate's REAL experience and skills
 - DO NOT fabricate experience or skills the candidate doesn't have
 
-### 2. SKILLS SECTION — REORDER, ADD, AND MATCH JD TERMS
+### 2. SKILLS SECTION — MAKE EVERY JD KEYWORD SEARCHABLE
 - KEEP THE EXACT SAME SKILL CATEGORIES as the master resume (e.g., "Languages", "Frameworks & Libraries", "Tools & Platforms", "Concepts") — DO NOT merge categories together
 - Each category must stay as its own separate line — never combine two categories into one
 - REORDER existing skills within each category to put JD-relevant skills first
-- ADD every JD-mentioned skill that the candidate genuinely has to the CORRECT category
-- If the JD mentions a tool and the candidate used it anywhere (even in a project), ADD IT to the right category
+- ADD every single JD-mentioned skill that the candidate genuinely has to the CORRECT category
+- If the JD mentions a tool and the candidate used it ANYWHERE (experience, projects, education, coursework), ADD IT
 - Match the EXACT terminology from the JD: if JD says "PostgreSQL", don't write "SQL databases"
+- Include BOTH forms of any acronym: "Amazon Web Services (AWS)" not just "AWS"
+- If a JD skill appears only in Summary, ALSO add it to Skills — double coverage means higher search ranking
 - You may add a NEW category only if a JD skill truly doesn't fit any existing one
 - DO NOT remove any existing skills — only reorder and add
-- Target: the skills section should contain at least 80% of the hard skills mentioned in the JD
+- Target: 100% of hard skills mentioned in the JD should appear in the Skills section
 
-### ATS SCORE OPTIMIZATION STRATEGY
-The ATS scorer evaluates:
-1. Hard Skills Match (35%) — every JD skill that appears in your resume scores points
-2. Job Title Match (15%) — the JD job title must appear in your summary
-3. Keyword Frequency (10%) — important JD keywords should appear multiple times
-4. Soft Skills (10%) — mention relevant soft skills from the JD naturally in summary
-5. Section Completeness (10%) — all standard sections must be present
+### WHY THIS STRATEGY WORKS (Recruiter Search Behavior)
+ATS platforms (Greenhouse, Lever, Ashby, Workable, Workday) do NOT auto-score resumes.
+Instead, recruiters SEARCH the candidate database by typing keywords like "Python AND AWS AND Kubernetes".
+If your resume contains those exact terms → you appear in results.
+If it doesn't → you're invisible. Not rejected — just never found.
 
-To maximize score: stuff the summary with JD keywords, put ALL matching skills in the skills section, and use the exact job title from the JD.
+The goal: when a recruiter searches for ANY keyword from this JD, this resume MUST appear.
 
 ## EVERYTHING ELSE — COPY CHARACTER-FOR-CHARACTER FROM MASTER RESUME
 
@@ -209,17 +211,17 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
         # Hard skills
         hard_skills = jd_analysis.get('hard_skills', [])
         if hard_skills:
-            sections.append(f'HARD SKILLS FROM JD (embed these EXACTLY as written — no synonyms): {", ".join(hard_skills)}')
+            sections.append(f'HARD SKILLS FROM JD — EVERY one of these MUST appear in the Skills section (add to the correct category). Use EXACT terms: {", ".join(hard_skills)}')
 
         # Soft skills
         soft_skills = jd_analysis.get('soft_skills', [])
         if soft_skills:
-            sections.append(f'SOFT SKILLS FROM JD (weave into bullet action verbs): {", ".join(soft_skills)}')
+            sections.append(f'SOFT SKILLS FROM JD — weave these into the Summary section naturally: {", ".join(soft_skills)}')
 
         # Top keywords
         top_keywords = jd_analysis.get('top_keywords', [])
         if top_keywords:
-            sections.append(f'TOP KEYWORDS — each MUST appear 3+ times across resume (use EXACT terms, no synonyms): {", ".join(top_keywords)}')
+            sections.append(f'TOP KEYWORDS — these must appear in BOTH Summary AND Skills for double search coverage: {", ".join(top_keywords)}')
 
         # Qualification verdict
         verdict = jd_analysis.get('qualification_verdict', {})
@@ -332,13 +334,14 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
 {critique_context}
 {keyword_context}
 
-TAILOR this resume for the job above. GOAL: ATS SCORE 85+. STRICT RULES:
-1. REWRITE the summary with 8-12 JD keywords — pack it dense, use exact JD phrasing, include the job title
-2. REORDER and EXPAND the skills section — add EVERY JD skill the candidate has evidence of, use exact terms
-3. COPY every experience bullet CHARACTER-FOR-CHARACTER from the master resume — DO NOT modify any bullet
-4. COPY every project bullet CHARACTER-FOR-CHARACTER from the master resume — DO NOT modify any bullet
-5. COPY all education entries EXACTLY from the master resume
-6. COPY all certifications, other experience, languages EXACTLY from the master resume
-7. The more JD keywords you can honestly fit into Summary + Skills, the higher the ATS score
-8. DO NOT fabricate — but DO be aggressive about including skills from projects and education, not just work experience
-9. Output the structured JSON for LaTeX rendering"""
+TAILOR this resume for the job above. GOAL: 100% JD keyword coverage. STRICT RULES:
+1. REWRITE the summary — include the exact job title, domain terms, methodologies, and top hard skills from the JD
+2. EXPAND the skills section — add EVERY JD skill the candidate can honestly claim (from experience, projects, OR education)
+3. Every hard skill from the JD must appear in the Skills section — zero gaps
+4. Important JD keywords should appear in BOTH Summary AND Skills for double search coverage
+5. Use EXACT JD phrasing + include both abbreviated and full forms of acronyms
+6. COPY every experience bullet CHARACTER-FOR-CHARACTER from the master resume — DO NOT modify
+7. COPY every project bullet CHARACTER-FOR-CHARACTER from the master resume — DO NOT modify
+8. COPY all education, certifications, other experience EXACTLY from the master resume
+9. DO NOT fabricate — but be aggressive about including skills from projects, education, and coursework
+10. Output the structured JSON for LaTeX rendering"""

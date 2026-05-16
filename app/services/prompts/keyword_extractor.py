@@ -49,12 +49,15 @@ Respond ONLY with valid JSON in this exact structure:
 
 ## Rules
 - Extract TECHNICAL skills and ROLE-SPECIFIC requirements, not generic soft skills unless the JD heavily emphasizes them.
-- "Strong match" means the resume explicitly demonstrates this skill with evidence.
+- "Strong match" means the resume explicitly demonstrates this skill with evidence — check Summary, Skills, Experience, AND Projects sections.
 - "Weak match" means the resume mentions it but without substance or proof.
 - "Missing" means the candidate has transferable experience → suggest a TRUTHFUL way to incorporate the keyword using their actual work.
 - "Not applicable" means the candidate genuinely lacks this — DO NOT fake it. Say "N/A — candidate lacks this experience" in phrase_to_add.
+- If a keyword appears in the Skills section, that IS a strong match — do not mark it as missing or weak.
+- If the summary already mentions a JD keyword, that counts as evidence — acknowledge it.
 - Phrases to add must sound natural, be TRUTHFUL, and use the candidate's REAL experience — not keyword-stuffed fabrication.
 - Consider both exact matches AND semantic equivalents (e.g., "CI/CD" = "automated deployment pipelines").
+- current_match_percentage should reflect the ACTUAL count of strong_match + weak_match keywords out of total.
 - BE BRUTALLY HONEST. The candidate is better served by knowing what they genuinely lack than by false confidence.
 """
 

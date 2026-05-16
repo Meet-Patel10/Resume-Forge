@@ -164,7 +164,63 @@ def api_tailor():
         keyword_data=keyword_data,
         jd_analysis=jd_analysis,
     )
-    result = claude.analyze(RESUME_TAILOR_SYSTEM, user_message, max_tokens=16000)
+
+    # retry up to 3 times -- the tailor call is the most critical and must return valid JSON
+    result = None
+    required_keys = {'summary', 'skills', 'experience'}
+    for attempt in range(3):
+        temp = 0.15 if attempt == 0 else 0.1
+        attempt_result = claude.analyze(RESUME_TAILOR_SYSTEM, user_message, max_tokens=16000, temperature=temp)
+
+        if attempt_result.get('error'):
+            print(f"[tailor] attempt {attempt + 1} error: {attempt_result['error']}")
+            result = attempt_result
+            continue
+
+        # check if response is usable (dict with required keys)
+        resp = attempt_result.get('response')
+        if isinstance(resp, dict) and required_keys.issubset(resp.keys()):
+            result = attempt_result
+            print(f"[tailor] attempt {attempt + 1} succeeded (valid JSON with {len(resp)} keys)")
+            break
+        elif isinstance(resp, str):
+            # AI returned text — try to extract JSON from it right here
+            raw = resp.strip()
+            extracted = None
+            # try stripping fences
+            cleaned = raw
+            if cleaned.startswith('```json'):
+                cleaned = cleaned[7:]
+            elif cleaned.startswith('```'):
+                cleaned = cleaned[3:]
+            if cleaned.endswith('```'):
+                cleaned = cleaned[:-3]
+            try:
+                extracted = json_mod.loads(cleaned.strip())
+            except Exception:
+                pass
+            # try finding { ... } blob
+            if not extracted:
+                bs = raw.find('{')
+                be = raw.rfind('}')
+                if bs != -1 and be > bs:
+                    try:
+                        extracted = json_mod.loads(raw[bs:be + 1])
+                    except Exception:
+                        pass
+
+            if isinstance(extracted, dict) and required_keys.issubset(extracted.keys()):
+                attempt_result['response'] = extracted
+                result = attempt_result
+                print(f"[tailor] attempt {attempt + 1} extracted JSON from string ({len(extracted)} keys)")
+                break
+            else:
+                print(f"[tailor] attempt {attempt + 1} returned unparseable string ({len(raw)} chars), retrying...")
+                result = attempt_result
+                # DON'T break — retry with lower temperature
+        else:
+            print(f"[tailor] attempt {attempt + 1} returned unusable data, retrying...")
+            result = attempt_result
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -355,11 +411,73 @@ def api_tailor():
 
                         tailored_data['projects'] = list(proj_by_name.values())
 
+                # certifications from DB (was missing before)
+                if master.education:
+                    # check if master has certifications stored
+                    # (certifications might be in a separate field or from AI output)
+                    pass  # keep whatever the AI provided or master has
+
                 print("[tailor] master resume data applied")
             else:
                 print("[tailor] no master resume in db, skipping")
         except Exception as e:
             print(f"[tailor] enforcement error (non-fatal): {e}")
+
+    # step 4.5: structure validation agent — ensures JSON matches template format
+    if isinstance(tailored_data, dict):
+        try:
+            from app.services.prompts.structure_validator import STRUCTURE_VALIDATOR_SYSTEM, build_validator_message
+
+            master = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
+            if master:
+                master_json = master.to_dict()
+                # build master structure for comparison
+                master_structure = {
+                    'header': {
+                        'name': master.full_name or '',
+                        'location': master.location or '',
+                        'phone': master.phone or '',
+                        'email': master.email or '',
+                        'linkedin': master.linkedin_url or '',
+                        'github': master.github_url or '',
+                    },
+                    'skills': master.skills or [],
+                    'education': master.education or [],
+                }
+                # add bullets structure
+                if master.bullets:
+                    exp_entries = {}
+                    proj_entries = {}
+                    for b in sorted(master.bullets, key=lambda x: x.sort_order or 0):
+                        if (b.section_type or 'experience') == 'experience' and b.is_active:
+                            key = f"{b.role}|||{b.company}"
+                            if key not in exp_entries:
+                                exp_entries[key] = {'title': b.role, 'company': b.company, 'bullets': []}
+                            exp_entries[key]['bullets'].append(b.original_text)
+                        elif b.section_type == 'project' and b.is_active:
+                            if b.company not in proj_entries:
+                                proj_entries[b.company] = {'name': b.company, 'bullets': []}
+                            proj_entries[b.company]['bullets'].append(b.original_text)
+                    master_structure['experience'] = list(exp_entries.values())
+                    master_structure['projects'] = list(proj_entries.values())
+
+                validator_msg = build_validator_message(tailored_data, master_structure)
+                val_result = claude.analyze(STRUCTURE_VALIDATOR_SYSTEM, validator_msg, max_tokens=16000, temperature=0.1)
+
+                if not val_result.get('error'):
+                    val_resp = val_result.get('response')
+                    if isinstance(val_resp, dict) and 'summary' in val_resp and 'skills' in val_resp:
+                        tailored_data = val_resp
+                        total_tokens += val_result.get('tokens_used', 0)
+                        total_cost += val_result.get('cost_usd', 0)
+                        pipeline_steps.append('structure_validator')
+                        print("[tailor] structure validation done — JSON fixed")
+                    else:
+                        print(f"[tailor] structure validator returned unusable data, skipping")
+                else:
+                    print(f"[tailor] structure validator error: {val_result['error']}")
+        except Exception as e:
+            print(f"[tailor] structure validator error (non-fatal): {e}")
 
     # run the summary through the external humanizer if we have a key
     if isinstance(tailored_data, dict) and tailored_data.get('summary'):

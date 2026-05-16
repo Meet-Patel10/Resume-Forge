@@ -146,9 +146,15 @@ class GreenhouseSimulator(BaseATSSimulator):
                  contact_score * 0.10 + metrics_score * 0.15 +
                  max(format_score, 0) * 0.15)
 
+        score = round(total)
+        kw_ratio = matched / max(len(jd_keywords[:20]), 1)
+        passes = score >= 65 and kw_ratio >= 0.5
+
         return {
             'platform': self.name,
-            'total_score': round(total),
+            'total_score': score,
+            'passes_ats': passes,
+            'verdict': 'PASS — Resume would surface in recruiter searches' if passes else 'FAIL — Too many JD keywords missing, resume invisible in searches',
             'breakdown': {
                 'keyword_match': round(keyword_score),
                 'section_structure': round(section_score),
@@ -235,9 +241,15 @@ class LeverSimulator(BaseATSSimulator):
                  summary_score * 0.15 + metrics_score * 0.15 +
                  completeness * 0.10)
 
+        score = round(total)
+        kw_ratio = matched / max(len(tech_keywords), 1)
+        passes = score >= 65 and kw_ratio >= 0.5
+
         return {
             'platform': self.name,
-            'total_score': round(total),
+            'total_score': score,
+            'passes_ats': passes,
+            'verdict': 'PASS — Skills tags match JD requirements' if passes else 'FAIL — Skill tags insufficient for recruiter filtering',
             'breakdown': {
                 'skills_alignment': round(skills_score),
                 'experience_relevance': round(exp_score),
@@ -322,9 +334,15 @@ class AshbySimulator(BaseATSSimulator):
                  achievement_score * 0.20 + progression_score * 0.10 +
                  max(presentation, 0) * 0.10)
 
+        score = round(total)
+        kw_ratio = matched / max(len(jd_keywords[:25]), 1)
+        passes = score >= 60 and kw_ratio >= 0.45
+
         return {
             'platform': self.name,
-            'total_score': round(total),
+            'total_score': score,
+            'passes_ats': passes,
+            'verdict': 'PASS — AI matching rates candidate as relevant' if passes else 'FAIL — AI matching finds insufficient relevance to JD',
             'breakdown': {
                 'content_relevance': round(relevance_score),
                 'technical_depth': round(tech_depth),
@@ -422,9 +440,16 @@ class WorkdaySimulator(BaseATSSimulator):
                  min_qual * 0.15 + density_score * 0.10 +
                  results_score * 0.10)
 
+        score = round(total)
+        kw_ratio = matched / max(len(jd_keywords[:20]), 1)
+        has_critical = any('CRITICAL' in i for i in issues)
+        passes = score >= 65 and kw_ratio >= 0.5 and not has_critical
+
         return {
             'platform': self.name,
-            'total_score': round(total),
+            'total_score': score,
+            'passes_ats': passes,
+            'verdict': 'PASS — Format and keywords meet Workday requirements' if passes else 'FAIL — ' + (issues[0] if issues else 'Keyword coverage too low for Workday filtering'),
             'breakdown': {
                 'exact_keyword_match': round(keyword_score),
                 'format_compliance': round(format_score),
@@ -447,6 +472,85 @@ class WorkdaySimulator(BaseATSSimulator):
 
 
 #
+# Workable Simulator
+#
+
+class WorkableSimulator(BaseATSSimulator):
+    """Workable -- semantic matching, AI scoring, understands context."""
+
+    name = 'Workable'
+    description = 'AI-powered ATS with semantic matching. Understands context, not just keywords.'
+
+    def score(self, resume_text, jd_text):
+        resume_lower = resume_text.lower()
+        jd_keywords = self._extract_jd_keywords(jd_text)
+        sections = self._count_sections(resume_text)
+        metrics_count = self._count_metrics(resume_text)
+
+        # 1. Semantic Relevance (40%) — Workable understands context
+        matched = sum(1 for kw in jd_keywords[:25] if _word_match(kw, resume_lower))
+        semantic_score = min((matched / max(len(jd_keywords[:25]), 1)) * 110, 100)
+
+        # 2. Skills Coverage (25%)
+        skills_text = ''
+        in_skills = False
+        for line in resume_text.split('\n'):
+            if re.search(r'\b(?:skills|technologies|competencies)\b', line.lower()):
+                in_skills = True
+            elif in_skills and re.search(r'^[A-Z]', line.strip()) and ':' not in line:
+                in_skills = False
+            if in_skills:
+                skills_text += line.lower() + ' '
+        skill_hits = sum(1 for kw in jd_keywords[:15] if kw in skills_text or kw in resume_lower)
+        skills_coverage = min((skill_hits / max(len(jd_keywords[:15]), 1)) * 100, 100)
+
+        # 3. Experience Quality (20%)
+        exp_score = min(metrics_count * 14, 100)
+
+        # 4. Structure (15%)
+        struct_score = 0
+        for s in ['summary', 'experience', 'education', 'skills']:
+            if s in sections:
+                struct_score += 25
+
+        issues = []
+        if semantic_score < 50:
+            issues.append('Low semantic relevance — Workable AI finds weak connection to JD')
+        if skills_coverage < 50:
+            issues.append('Skills section missing key JD terms')
+
+        total = (semantic_score * 0.40 + skills_coverage * 0.25 +
+                 exp_score * 0.20 + struct_score * 0.15)
+
+        score = round(total)
+        kw_ratio = matched / max(len(jd_keywords[:25]), 1)
+        passes = score >= 60 and kw_ratio >= 0.45
+
+        return {
+            'platform': self.name,
+            'total_score': score,
+            'passes_ats': passes,
+            'verdict': 'PASS — AI screening rates resume as compatible' if passes else 'FAIL — AI screening finds low compatibility with JD',
+            'breakdown': {
+                'semantic_relevance': round(semantic_score),
+                'skills_coverage': round(skills_coverage),
+                'experience_quality': round(exp_score),
+                'structure': round(struct_score),
+            },
+            'keywords_matched': matched,
+            'keywords_total': len(jd_keywords[:25]),
+            'issues': issues,
+            'tips': self._get_tips(semantic_score, skills_coverage),
+        }
+
+    def _get_tips(self, semantic, skills):
+        tips = []
+        if semantic < 60: tips.append('Workable uses semantic AI — use JD language naturally in bullets')
+        if skills < 60: tips.append('Add JD skills to your Skills section for direct matching')
+        return tips
+
+
+#
 # Simulator Registry
 #
 
@@ -455,11 +559,12 @@ ALL_SIMULATORS = {
     'lever': LeverSimulator(),
     'ashby': AshbySimulator(),
     'workday': WorkdaySimulator(),
+    'workable': WorkableSimulator(),
 }
 
 
 def run_all_simulators(resume_text, jd_text):
-    """Run all simulators, return combined results with average score."""
+    """Run all simulators, return combined results with pass/fail verdict."""
     results = {}
     for key, sim in ALL_SIMULATORS.items():
         results[key] = sim.score(resume_text, jd_text)
@@ -467,12 +572,16 @@ def run_all_simulators(resume_text, jd_text):
     scores = [r['total_score'] for r in results.values()]
     avg = round(sum(scores) / len(scores)) if scores else 0
     worst = min(results.items(), key=lambda x: x[1]['total_score']) if results else None
+    pass_count = sum(1 for r in results.values() if r.get('passes_ats'))
+    total_count = len(results)
 
     return {
         'platforms': results,
         'average_score': avg,
+        'passes_all': pass_count == total_count,
+        'pass_count': pass_count,
+        'total_platforms': total_count,
+        'overall_verdict': f'PASSES {pass_count}/{total_count} ATS platforms',
         'weakest_platform': worst[0] if worst else None,
         'weakest_score': worst[1]['total_score'] if worst else 0,
-        'disclaimer': 'These scores approximate each platform\'s known behavior. '
-                      'Actual ATS algorithms are proprietary and may differ.',
     }

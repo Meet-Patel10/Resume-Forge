@@ -56,8 +56,12 @@ class BedrockClient:
             env = 'testing'
         return self.MODELS[env], env
 
-    def analyze(self, system_prompt, user_message, max_tokens=4096):
-        """Send a prompt to Bedrock, return parsed response + token/cost info."""
+    def analyze(self, system_prompt, user_message, max_tokens=4096, temperature=0.2):
+        """Send a prompt to Bedrock, return parsed response + token/cost info.
+
+        temperature: 0.0-1.0. Lower = more deterministic. Default 0.2 for
+        consistent structured output. Use 0.4-0.5 for creative writing.
+        """
         try:
             model_cfg, env_name = self._get_model_config()
             model_id = model_cfg['model_id']
@@ -67,9 +71,9 @@ class BedrockClient:
 
             # Build request body based on provider
             if provider == 'anthropic':
-                body = self._build_anthropic_body(system_prompt, user_message, max_tokens)
+                body = self._build_anthropic_body(system_prompt, user_message, max_tokens, temperature)
             else:
-                body = self._build_amazon_body(system_prompt, user_message, max_tokens)
+                body = self._build_amazon_body(system_prompt, user_message, max_tokens, temperature)
 
             # Invoke the model
             response = self.client.invoke_model(
@@ -96,12 +100,12 @@ class BedrockClient:
                 'cost_usd': 0,
             }
 
-    def _build_anthropic_body(self, system_prompt, user_message, max_tokens):
+    def _build_anthropic_body(self, system_prompt, user_message, max_tokens, temperature):
         """Build request body for Anthropic Claude models on Bedrock."""
         return {
             'anthropic_version': 'bedrock-2023-05-31',
             'max_tokens': max_tokens,
-            'temperature': 0.7,
+            'temperature': temperature,
             'system': system_prompt,
             'messages': [
                 {
@@ -111,14 +115,14 @@ class BedrockClient:
             ],
         }
 
-    def _build_amazon_body(self, system_prompt, user_message, max_tokens):
+    def _build_amazon_body(self, system_prompt, user_message, max_tokens, temperature):
         """Build request body for Amazon Nova models on Bedrock."""
         # Nova has a strict maxTokens limit of 10240 (5120 is safer for output)
         safe_max_tokens = min(max_tokens, 5120)
         return {
             'inferenceConfig': {
                 'max_new_tokens': safe_max_tokens,
-                'temperature': 0.7,
+                'temperature': temperature,
             },
             'system': [
                 {'text': system_prompt}

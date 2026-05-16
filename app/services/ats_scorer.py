@@ -24,6 +24,7 @@ def _word_match(term: str, text: str) -> bool:
       - 'c' matching 'cloud'
 
     Special handling for terms with non-alphanumeric chars (c++, c#, .net, ci/cd).
+    Also handles synonyms: 'continuous integration' matches if 'ci/cd' is present.
     """
     term = term.strip().lower()
     text = text.lower()
@@ -31,6 +32,69 @@ def _word_match(term: str, text: str) -> bool:
     if not term:
         return False
 
+    # Check the term directly first
+    if _direct_match(term, text):
+        return True
+
+    # Check synonyms — if the JD says "continuous integration" but resume says "CI/CD"
+    synonyms = _SKILL_SYNONYMS.get(term)
+    if synonyms:
+        for alt in synonyms:
+            if _direct_match(alt, text):
+                return True
+
+    return False
+
+
+# Synonym map: JD term → list of equivalent terms that should also count as a match
+_SKILL_SYNONYMS = {
+    'continuous integration': ['ci/cd', 'ci cd', 'cicd'],
+    'continuous deployment': ['ci/cd', 'ci cd', 'cicd'],
+    'continuous delivery': ['ci/cd', 'ci cd', 'cicd'],
+    'ci/cd': ['continuous integration', 'continuous deployment'],
+    'source control': ['git', 'version control', 'github', 'gitlab', 'bitbucket'],
+    'version control': ['git', 'source control', 'github', 'gitlab', 'bitbucket'],
+    'nosql databases': ['nosql', 'mongodb', 'dynamodb', 'cassandra', 'redis', 'couchdb'],
+    'nosql': ['mongodb', 'dynamodb', 'cassandra', 'redis'],
+    'relational databases': ['sql', 'mysql', 'postgresql', 'postgres', 'oracle', 'sql server'],
+    'rdbms': ['sql', 'mysql', 'postgresql', 'postgres', 'oracle'],
+    'microsoft sql server': ['sql server', 'mssql', 'sql'],
+    'containers': ['docker', 'containerization', 'kubernetes'],
+    'containerization': ['docker', 'containers', 'kubernetes'],
+    'container orchestration': ['kubernetes', 'k8s', 'docker swarm'],
+    'object-oriented programming': ['oop', 'object oriented'],
+    'object oriented programming': ['oop', 'object-oriented'],
+    'oop': ['object-oriented', 'object oriented programming'],
+    'machine learning': ['ml', 'deep learning', 'neural network'],
+    'artificial intelligence': ['ai', 'machine learning', 'deep learning'],
+    'data structures and algorithms': ['data structures', 'algorithms', 'dsa'],
+    'data structures': ['data structures and algorithms', 'dsa'],
+    'algorithms': ['data structures and algorithms', 'dsa'],
+    'rest apis': ['restful apis', 'restful', 'rest api', 'apis'],
+    'restful apis': ['rest apis', 'restful', 'rest api'],
+    'web services': ['rest apis', 'restful apis', 'api'],
+    'cloud computing': ['aws', 'azure', 'gcp', 'cloud'],
+    'cloud': ['aws', 'azure', 'gcp', 'cloud computing'],
+    'amazon web services': ['aws'],
+    'aws': ['amazon web services'],
+    'unit testing': ['junit', 'pytest', 'testing', 'test'],
+    'testing': ['unit testing', 'test', 'junit', 'pytest'],
+    'agile': ['agile/scrum', 'scrum', 'agile methodology', 'agile development'],
+    'scrum': ['agile', 'agile/scrum', 'agile methodology'],
+    'agile methodologies': ['agile', 'scrum', 'agile/scrum'],
+    'etl': ['elt', 'data pipeline', 'data integration'],
+    'elt': ['etl', 'data pipeline', 'data integration'],
+    'data pipeline': ['etl', 'elt', 'pipeline'],
+    'infrastructure as code': ['terraform', 'iac', 'cloudformation'],
+    'iac': ['terraform', 'infrastructure as code'],
+    'devops': ['ci/cd', 'docker', 'kubernetes', 'jenkins'],
+    'linux/unix': ['linux', 'unix', 'bash'],
+    'scripting': ['bash', 'python', 'shell'],
+}
+
+
+def _direct_match(term: str, text: str) -> bool:
+    """Check if term directly appears in text as a whole word."""
     # Special-character skills: use escaped literal match
     if term in _SPECIAL_SKILLS:
         pattern = r'(?:^|[\s,;|/\(])' + re.escape(term) + r'(?:$|[\s,;|/\)])'
@@ -372,6 +436,9 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
             'top_matched': matched[:15],
             'source': 'dynamic_jd_analysis',
         }
+        print(f"[ats_scorer] hard skills: {len(matched)}/{total} matched ({hard_skill_score:.0f}%)")
+        if missing:
+            print(f"[ats_scorer] MISSING hard skills: {missing[:20]}")
     else:
         # STATIC FALLBACK: Extract hard skills from JD using curated tech keyword bank
         jd_skills = _extract_hard_skills(jd_text)

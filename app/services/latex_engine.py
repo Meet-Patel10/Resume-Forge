@@ -244,18 +244,14 @@ def render_latex(resume_data):
             tech = s(proj.get('tech_stack', ''))
             dates = s(proj.get('dates', ''))
 
-            latex += r"""
-\resumeSubheading{""" + proj_name + r"""}{""" + dates + r"""}{""" + tech + r"""}{}
-\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
-"""
+            latex += "\n\\resumeSubheading{" + proj_name + "}{" + dates + "}{" + tech + "}{}\n"
+            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in proj.get('bullets', []):
                 latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
             if i < len(projects) - 1:
-                latex += r"""
-\vspace{""" + entry_gap + r"""}
-"""
+                latex += "\n\\vspace{" + entry_gap + "}\n"
 
         latex += r"""
 \vspace{""" + section_gap + r"""}
@@ -274,18 +270,14 @@ def render_latex(resume_data):
             exp_location = s(exp.get('location', ''))
             dates = s(exp.get('dates', ''))
 
-            latex += r"""
-\resumeSubheading{""" + title + r"""}{""" + dates + r"""}{""" + company + r"""}{""" + exp_location + r"""}
-\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
-"""
+            latex += "\n\\resumeSubheading{" + title + "}{" + dates + "}{" + company + "}{" + exp_location + "}\n"
+            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in exp.get('bullets', []):
                 latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
             if i < len(experience) - 1:
-                latex += r"""
-\vspace{""" + entry_gap + r"""}
-"""
+                latex += "\n\\vspace{" + entry_gap + "}\n"
 
         latex += r"""
 \vspace{""" + section_gap + r"""}
@@ -325,18 +317,13 @@ def render_latex(resume_data):
             dates = s(edu.get('dates', ''))
             details = edu.get('details', '')
 
-            latex += r"""
-\resumeSubheading{""" + degree + r"""}{""" + dates + r"""}{""" + school + r"""}{""" + edu_location + r"""}
-"""
+            latex += "\n\\resumeSubheading{" + degree + "}{" + dates + "}{" + school + "}{" + edu_location + "}\n"
             if details:
-                latex += r"""\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
-  \resumeItem{""" + s(details) + r"""}
-\end{itemize}
-"""
+                latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
+                latex += r"  \resumeItem{" + s(details) + "}\n"
+                latex += "\\end{itemize}\n"
             if i < len(education) - 1:
-                latex += r"""
-\vspace{""" + entry_gap + r"""}
-"""
+                latex += "\n\\vspace{" + entry_gap + "}\n"
 
     # other experience
     other_experience = resume_data.get('other_experience', [])
@@ -351,18 +338,14 @@ def render_latex(resume_data):
             exp_location = s(exp.get('location', ''))
             dates = s(exp.get('dates', ''))
 
-            latex += r"""
-\resumeSubheading{""" + title + r"""}{""" + dates + r"""}{""" + company + r"""}{""" + exp_location + r"""}
-\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]
-"""
+            latex += "\n\\resumeSubheading{" + title + "}{" + dates + "}{" + company + "}{" + exp_location + "}\n"
+            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in exp.get('bullets', []):
                 latex += r"  \resumeItem{" + s(bullet) + "}\n"
             latex += r"\end{itemize}" + "\n"
 
             if i < len(other_experience) - 1:
-                latex += r"""
-\vspace{""" + entry_gap + r"""}
-"""
+                latex += "\n\\vspace{" + entry_gap + "}\n"
 
     latex += r"""
 \end{document}

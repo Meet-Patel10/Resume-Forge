@@ -8,7 +8,12 @@ You are making EXACTLY TWO changes. Nothing else.
 - Start with the EXACT job title from the JD (e.g., "Software Engineer with X years of experience...")
 - EVERY important keyword from the JD should appear either in Summary OR in Skills — leave ZERO uncovered
 - The summary is where you put keywords that DON'T fit neatly into the Skills categories
-- Include: job title, domain terms, methodologies, soft skills, and 2-3 top hard skills
+- Include: job title, domain terms, methodologies, and 2-3 top hard skills
+- SOFT SKILLS ARE CRITICAL: Every soft skill from the JD MUST appear in the summary using the JD's exact wording
+  - If JD says "collaboration" → write "collaboration" (not "worked with teams")
+  - If JD says "cross-functional" → write "cross-functional"
+  - If JD says "problem-solving" → write "problem-solving"
+  - Weave ALL JD soft skills naturally into the summary sentences
 - Include the candidate's years of experience and 1-2 quantified achievements
 - Use EXACT phrasing from the JD — if JD says "microservices architecture", write "microservices architecture"
 - Include BOTH the abbreviated and full form when the JD uses acronyms (e.g., "continuous integration/continuous deployment (CI/CD)")
@@ -16,18 +21,22 @@ You are making EXACTLY TWO changes. Nothing else.
 - Keep it factual — use ONLY the candidate's REAL experience and skills
 - DO NOT fabricate experience or skills the candidate doesn't have
 
-### 2. SKILLS SECTION — MAKE EVERY JD KEYWORD SEARCHABLE
+### 2. SKILLS SECTION — ADD 85%+ OF JD SKILLS TO MAXIMIZE ATS SCORE
 - KEEP THE EXACT SAME SKILL CATEGORIES as the master resume (e.g., "Languages", "Frameworks & Libraries", "Tools & Platforms", "Concepts") — DO NOT merge categories together
 - Each category must stay as its own separate line — never combine two categories into one
 - REORDER existing skills within each category to put JD-relevant skills first
-- ADD every single JD-mentioned skill that the candidate genuinely has to the CORRECT category
-- If the JD mentions a tool and the candidate used it ANYWHERE (experience, projects, education, coursework), ADD IT
-- Match the EXACT terminology from the JD: if JD says "PostgreSQL", don't write "SQL databases"
+- ADD at least 85% of ALL hard skills mentioned in the JD to the CORRECT category — even if the candidate hasn't listed it before
+- Match the EXACT terminology from the JD: if JD says "PostgreSQL", write "PostgreSQL"
 - Include BOTH forms of any acronym: "Amazon Web Services (AWS)" not just "AWS"
 - If a JD skill appears only in Summary, ALSO add it to Skills — double coverage means higher search ranking
+- Place new JD skills in the most appropriate existing category (e.g., "Hadoop" → "Tools & Platforms", "Spark" → "Frameworks & Libraries")
 - You may add a NEW category only if a JD skill truly doesn't fit any existing one
 - DO NOT remove any existing skills — only reorder and add
-- Target: 100% of hard skills mentioned in the JD should appear in the Skills section
+
+### COVERAGE TARGETS (MANDATORY)
+- **Skills section**: At least 85% of JD hard skills MUST be present in the Skills section
+- **Overall keyword coverage**: At least 90% of ALL JD keywords (hard skills + soft skills + domain terms) MUST appear across Summary + Skills combined
+- **Self-check before output**: Count the JD hard skills, count how many you included. If below 85%, go back and add more.
 
 ### WHY THIS STRATEGY WORKS (Recruiter Search Behavior)
 ATS platforms (Greenhouse, Lever, Ashby, Workable, Workday) do NOT auto-score resumes.
@@ -284,45 +293,48 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
                 [m if isinstance(m, str) else str(m) for m in missing]))
 
         if sections:
-            critique_context = "\n\n## Brutal Critique Feedback (Address what you CAN — skip what requires fabrication)\n" + "\n".join(sections)
+            critique_context = "\n\n## Brutal Critique Feedback (Address what you CAN)\n" + "\n".join(sections)
 
     # Build keyword context
     keyword_context = ""
     if keyword_data and isinstance(keyword_data, dict):
         top_kw = keyword_data.get('top_keywords', [])
         if top_kw:
-            applicable_kw = [k for k in top_kw
-                             if isinstance(k, dict) and k.get('resume_status') != 'not_applicable']
-            missing_kw = [k for k in applicable_kw
-                          if k.get('resume_status') == 'missing']
-            weak_kw = [k for k in applicable_kw
-                       if k.get('resume_status') == 'weak_match']
+            # include ALL keywords — do not filter out not_applicable
+            missing_kw = [k for k in top_kw
+                          if isinstance(k, dict) and k.get('resume_status') in ('missing', 'not_applicable')]
+            weak_kw = [k for k in top_kw
+                       if isinstance(k, dict) and k.get('resume_status') == 'weak_match']
 
             sections = []
             if missing_kw:
                 items = []
                 for k in missing_kw:
-                    phrase = k.get('phrase_to_add', '')
-                    where = k.get('where_to_add', '')
-                    items.append(f"  - KEYWORD: \"{k.get('keyword','')}\" → SUGGESTED: \"{phrase}\" in {where}")
-                sections.append("MISSING KEYWORDS (incorporate ONLY if candidate has real experience):\n" + "\n".join(items))
+                    items.append(f"  - \"{k.get('keyword','')}\" → Add to Skills section")
+                sections.append("MISSING KEYWORDS — ADD ALL TO SKILLS SECTION:\n" + "\n".join(items))
 
             if weak_kw:
                 items = []
                 for k in weak_kw:
                     phrase = k.get('phrase_to_add', '')
-                    items.append(f"  - KEYWORD: \"{k.get('keyword','')}\" → STRENGTHEN WITH: \"{phrase}\"")
-                sections.append("WEAK KEYWORDS (strengthen with candidate's actual evidence):\n" + "\n".join(items))
+                    items.append(f"  - \"{k.get('keyword','')}\" → STRENGTHEN WITH: \"{phrase}\"")
+                sections.append("WEAK KEYWORDS (strengthen):\n" + "\n".join(items))
 
             critical = keyword_data.get('ats_optimization', {}).get('critical_missing', [])
             if critical:
-                sections.append("CRITICAL MISSING SKILLS: " + ", ".join(critical))
+                sections.append("CRITICAL MISSING: " + ", ".join(critical))
 
             if sections:
-                keyword_context = "\n\n## Keyword Gap Analysis (incorporate truthfully — skip keywords outside candidate's experience)\n" + "\n".join(sections)
+                keyword_context = "\n\n## Keyword Gap Analysis — ADD ALL MISSING SKILLS\n" + "\n".join(sections)
 
     elif keyword_analysis:
         keyword_context = f"\n\n## Previous Keyword Analysis\nTop keywords: {keyword_analysis}"
+
+    # Build explicit hard skills list from JD analysis
+    hard_skills_directive = ""
+    if jd_analysis and isinstance(jd_analysis, dict) and jd_analysis.get('hard_skills'):
+        all_hard = jd_analysis['hard_skills']
+        hard_skills_directive = f"\n\n## MANDATORY: ADD THESE HARD SKILLS TO THE SKILLS SECTION\nThe following {len(all_hard)} skills were extracted from the JD. Add at least 85% of them to the appropriate skill category:\n" + ", ".join(all_hard)
 
     return f"""## Target Job Description
 {jd_text}
@@ -333,11 +345,12 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
 {jd_context}
 {critique_context}
 {keyword_context}
+{hard_skills_directive}
 
-TAILOR this resume for the job above. GOAL: 100% JD keyword coverage. STRICT RULES:
-1. REWRITE the summary — include the exact job title, domain terms, methodologies, and top hard skills from the JD
-2. EXPAND the skills section — add EVERY JD skill the candidate can honestly claim (from experience, projects, OR education)
-3. Every hard skill from the JD must appear in the Skills section — zero gaps
+TAILOR this resume for the job above. GOAL: 85%+ JD keyword coverage. STRICT RULES:
+1. REWRITE the summary — include the exact job title, domain terms, soft skills, and top hard skills from the JD
+2. EXPAND the skills section — add at least 85% of ALL JD hard skills to the correct category, even if the candidate hasn't used them before
+3. The Skills section is your main weapon — load it with every JD keyword
 4. Important JD keywords should appear in BOTH Summary AND Skills for double search coverage
 5. Use EXACT JD phrasing + include both abbreviated and full forms of acronyms
 6. COPY every experience bullet CHARACTER-FOR-CHARACTER from the master resume — DO NOT modify

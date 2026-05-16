@@ -533,11 +533,12 @@ def api_tailor():
         parts.append('PROFESSIONAL SUMMARY')
         parts.append(tailored_data.get('summary', ''))
 
-        # Skills section
+        # Skills section — join items with commas (matching how they appear on the resume)
         parts.append('TECHNICAL SKILLS')
         for skill_group in tailored_data.get('skills', []):
-            parts.append(skill_group.get('category', ''))
-            parts.extend(skill_group.get('items', []))
+            category = skill_group.get('category', '')
+            items = ', '.join(skill_group.get('items', []))
+            parts.append(f"{category}: {items}")
 
         # Projects section
         if tailored_data.get('projects'):

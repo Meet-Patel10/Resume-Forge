@@ -33,11 +33,16 @@ Compare the tailored JSON against the master JSON and fix ONLY structural issues
 - Items within each category may differ (the tailor adds/reorders items — that's fine)
 - Category names must be CHARACTER-FOR-CHARACTER identical to the master
 
-### EXPERIENCE & PROJECT BULLETS
-- Every experience entry in the master resume MUST appear in the output
+### EXPERIENCE ENTRIES
+- Every experience entry in the master resume MUST appear in the output (same title, company, dates)
+- The bullet COUNT per role must match the master resume (same number of bullets)
+- Bullet TEXT may differ from master — the tailor enhanced them with metrics and keywords — KEEP the enhanced versions
+- Do NOT restore original bullets — the enhancements are intentional
+
+### PROJECT BULLETS
 - Every project entry in the master resume MUST appear in the output
-- Bullet text must be CHARACTER-FOR-CHARACTER identical to the master resume bullets
-- If the tailor dropped or modified any bullets, RESTORE them from the master
+- Project bullet text must be CHARACTER-FOR-CHARACTER identical to the master resume bullets
+- If the tailor dropped or modified any PROJECT bullets, RESTORE them from the master
 
 ### EDUCATION
 - Every education entry must match the master resume exactly
@@ -56,6 +61,7 @@ The response must start with { and end with }
 ## WHAT NOT TO CHANGE
 - The SUMMARY text (this was intentionally rewritten by the tailor — keep it)
 - The SKILLS items within each category (the tailor added/reordered — keep that)
+- The EXPERIENCE bullet text (the tailor enhanced them with metrics and JD keywords — keep that)
 - Do NOT add or remove skill items — only fix category structure
 """
 
@@ -66,7 +72,7 @@ def build_validator_message(tailored_json, master_json):
     return f"""## Tailored Resume JSON (verify and fix structure)
 {json.dumps(tailored_json, indent=2)}
 
-## Master Resume JSON (ground truth for structure — categories, bullets, entries)
+## Master Resume JSON (ground truth for structure — categories, entries, project bullets)
 {json.dumps(master_json, indent=2)}
 
-Fix any structural issues: restore missing sections, fix skill category names, restore any dropped/modified bullets from master. Keep the tailored summary and skill items unchanged. Output ONLY the corrected JSON."""
+Fix structural issues: restore missing sections, fix skill category names, restore any dropped/modified PROJECT bullets from master. Keep the tailored summary, skill items, and ENHANCED experience bullets unchanged. Output ONLY the corrected JSON."""

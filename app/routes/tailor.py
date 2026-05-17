@@ -364,36 +364,60 @@ def api_tailor():
 
                     tailored_data['skills'] = enforced_skills
 
-                # rebuild experience and project bullets from the bullet bank
+                # enforce experience structure: ensure all roles present, keep AI-enhanced bullets
                 if master.bullets:
                     exp_bullets = [b for b in master.bullets if (b.section_type or 'experience') == 'experience' and b.is_active]
                     proj_bullets = [b for b in master.bullets if (b.section_type or '') == 'project' and b.is_active]
 
-                    # group experience bullets by role
+                    # For experience: keep AI's enhanced bullets (with metrics/keywords)
+                    # but ensure all roles from DB are present
                     if exp_bullets:
-                        exp_by_role = {}
+                        # build master role map for reference
+                        master_roles = {}
                         for b in sorted(exp_bullets, key=lambda x: x.sort_order or 0):
                             key = f"{b.role}|||{b.company}"
-                            if key not in exp_by_role:
-                                exp_by_role[key] = {
+                            if key not in master_roles:
+                                master_roles[key] = {
                                     'title': b.role,
                                     'company': b.company,
                                     'dates': b.dates or '',
                                     'location': '',
                                     'bullets': [],
                                 }
-                            exp_by_role[key]['bullets'].append(b.original_text)
+                            master_roles[key]['bullets'].append(b.original_text)
 
-                        # grab location from AI output since we don't store it
+                        # match AI experience entries to master roles
                         ai_exp = tailored_data.get('experience', [])
+                        matched_keys = set()
                         for ai_entry in ai_exp:
-                            for key, master_entry in exp_by_role.items():
+                            for key, master_entry in master_roles.items():
                                 if (ai_entry.get('title', '').strip().lower() == master_entry['title'].strip().lower() and
                                     ai_entry.get('company', '').strip().lower() == master_entry['company'].strip().lower()):
-                                    master_entry['location'] = ai_entry.get('location', '')
+                                    # keep AI's enhanced bullets, but enforce correct dates
+                                    if not ai_entry.get('dates') and master_entry['dates']:
+                                        ai_entry['dates'] = master_entry['dates']
+                                    # ensure bullet count matches
+                                    if len(ai_entry.get('bullets', [])) != len(master_entry['bullets']):
+                                        # AI added/removed bullets — restore correct count from master
+                                        ai_entry['bullets'] = master_entry['bullets']
+                                    matched_keys.add(key)
                                     break
 
-                        tailored_data['experience'] = list(exp_by_role.values())
+                        # add any missing roles that AI dropped
+                        for key, master_entry in master_roles.items():
+                            if key not in matched_keys:
+                                ai_exp.append(master_entry)
+
+                        # grab location from AI output since we don't store it in DB
+                        for ai_entry in ai_exp:
+                            for key, master_entry in master_roles.items():
+                                if (ai_entry.get('title', '').strip().lower() == master_entry['title'].strip().lower() and
+                                    ai_entry.get('company', '').strip().lower() == master_entry['company'].strip().lower()):
+                                    if not master_entry['location']:
+                                        master_entry['location'] = ai_entry.get('location', '')
+                                    break
+
+                        tailored_data['experience'] = ai_exp
 
                     # group project bullets by project name
                     if proj_bullets:
@@ -408,6 +432,20 @@ def api_tailor():
                                     'bullets': [],
                                 }
                             proj_by_name[key]['bullets'].append(b.original_text)
+
+                        # grab tech_stack and dates from AI output since DB bullets may not store them
+                        ai_projs = tailored_data.get('projects', [])
+                        for ai_proj in ai_projs:
+                            ai_name = ai_proj.get('name', '').strip()
+                            for key, master_proj in proj_by_name.items():
+                                # match by project name (case-insensitive, partial match for long names)
+                                if (ai_name.lower() in master_proj['name'].lower() or
+                                    master_proj['name'].lower() in ai_name.lower()):
+                                    if not master_proj['tech_stack'] and ai_proj.get('tech_stack'):
+                                        master_proj['tech_stack'] = ai_proj['tech_stack']
+                                    if not master_proj['dates'] and ai_proj.get('dates'):
+                                        master_proj['dates'] = ai_proj['dates']
+                                    break
 
                         tailored_data['projects'] = list(proj_by_name.values())
 

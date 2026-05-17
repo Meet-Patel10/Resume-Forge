@@ -2,9 +2,16 @@ import re
 
 
 def sanitize_latex(text):
-    """Escape chars that break LaTeX (& % $ # _ { } ~ ^)."""
+    """Escape chars that break LaTeX (& % $ # _ { } ~ ^).
+
+    Also normalizes unicode dashes to LaTeX -- and fixes abbreviation spacing.
+    """
     if not text:
         return ''
+
+    # Normalize unicode dashes to LaTeX double-hyphen BEFORE escaping
+    text = text.replace('\u2013', '--')  # en-dash → --
+    text = text.replace('\u2014', '---')  # em-dash → ---
 
     replacements = [
         ('\\', r'\textbackslash{}'),
@@ -21,6 +28,11 @@ def sanitize_latex(text):
 
     for char, replacement in replacements:
         text = text.replace(char, replacement)
+
+    # Fix abbreviation spacing for LaTeX
+    # "St." before a capital letter → "St.\ " (proper LaTeX inter-word space)
+    # "Jr." before a space → "Jr.\ "
+    text = re.sub(r'\b(St|Jr|Dr|Mr|Mrs|Ms|Prof|Inc|Corp|Ltd)\.\s+', r'\1.\\ ', text)
 
     return text
 
@@ -91,9 +103,10 @@ def _estimate_lines(resume_data):
 
 
 def render_latex(resume_data):
-    """Build a .tex file that always fits on exactly one page.
+    """Build a .tex file that matches Meet_Patel_Resume_v4.tex template EXACTLY.
 
-    Spacing is calculated dynamically based on content volume.
+    Spacing is calculated dynamically based on content volume to ensure
+    the resume always fits on exactly one page.
     """
     header = resume_data.get('header', {})
     s = sanitize_latex
@@ -102,45 +115,52 @@ def render_latex(resume_data):
     est_lines = _estimate_lines(resume_data)
 
     # letter paper at 10pt with 0.45in margins ≈ 62 usable lines
-    # pick spacing based on how full the page is
-    if est_lines <= 48:
-        # light content -- generous spacing
-        section_before = '4pt'
-        section_after = '4pt'
-        entry_gap = '3pt'
-        section_gap = '2pt'
+    if est_lines <= 52:
+        # light content -- generous spacing (matches template defaults)
+        section_before = '3pt'
+        section_after = '3pt'
+        proj_entry_gap = '-1pt'   # template uses -1pt between projects
+        exp_entry_gap = '3pt'     # template uses 3pt between experience entries
+        edu_entry_gap = '3pt'     # template uses 3pt between education entries
+        section_gap = '1pt'       # template uses 1pt between sections
         top_margin = '0.45in'
         bottom_margin = '0.45in'
         enlarge = ''
-    elif est_lines <= 56:
+    elif est_lines <= 60:
         # medium content -- tighter
         section_before = '3pt'
         section_after = '3pt'
-        entry_gap = '2pt'
+        proj_entry_gap = '-1pt'
+        exp_entry_gap = '2pt'
+        edu_entry_gap = '2pt'
         section_gap = '1pt'
-        top_margin = '0.4in'
-        bottom_margin = '0.4in'
+        top_margin = '0.45in'
+        bottom_margin = '0.45in'
         enlarge = ''
-    elif est_lines <= 64:
+    elif est_lines <= 68:
         # heavy content -- compress
         section_before = '2pt'
         section_after = '2pt'
-        entry_gap = '1pt'
-        section_gap = '0pt'
-        top_margin = '0.35in'
-        bottom_margin = '0.35in'
+        proj_entry_gap = '-1pt'
+        exp_entry_gap = '2pt'
+        edu_entry_gap = '2pt'
+        section_gap = '1pt'
+        top_margin = '0.4in'
+        bottom_margin = '0.4in'
         enlarge = r'\enlargethispage{0.15in}'
     else:
         # very heavy -- maximum compression
         section_before = '1pt'
         section_after = '1pt'
-        entry_gap = '0pt'
+        proj_entry_gap = '-2pt'
+        exp_entry_gap = '1pt'
+        edu_entry_gap = '1pt'
         section_gap = '0pt'
-        top_margin = '0.3in'
-        bottom_margin = '0.3in'
+        top_margin = '0.35in'
+        bottom_margin = '0.35in'
         enlarge = r'\enlargethispage{0.3in}'
 
-    # preamble with dynamic spacing
+    # ---- PREAMBLE (matches Meet_Patel_Resume_v4.tex exactly) ----
     latex = r"""\documentclass[10pt, letterpaper]{article}
 
 \usepackage[top=""" + top_margin + r""", bottom=""" + bottom_margin + r""", left=0.7in, right=0.7in]{geometry}
@@ -164,9 +184,11 @@ def render_latex(resume_data):
 }
 
 \begin{document}
-""" + enlarge + "\n"
+"""
+    if enlarge:
+        latex += enlarge + "\n"
 
-    # header
+    # ---- HEADER (matches template: \\[0pt] + \vspace{-7pt}) ----
     name = s(header.get('name', 'Name'))
     location = header.get('location', '')
     phone = header.get('phone', '')
@@ -192,53 +214,43 @@ def render_latex(resume_data):
 
     contact_line = r' $\vert$ '.join(contact_parts)
 
-    latex += r"""
-%---------- HEADER ----------
-\begin{center}
-  {\LARGE \textbf{""" + name + r"""}} \\[3pt]
-  \small
-  """ + contact_line + r"""
-\end{center}
-"""
+    latex += "\n%---------- HEADER ----------\n"
+    latex += "\\begin{center}\n"
+    latex += "  {\\LARGE \\textbf{" + name + "}} \\\\[0pt]\n"
+    latex += "  \\small\n"
+    latex += "  " + contact_line + "\n"
+    latex += "\\end{center}\n"
+    latex += "\\vspace{-7pt}\n"
 
-    # summary
+    # ---- SUMMARY (matches template: \small + blank line + text) ----
     summary = resume_data.get('summary', '')
     if summary:
-        latex += r"""
-%---------- SUMMARY ----------
-\section{Summary}
-\small
+        latex += "\n\n%---------- SUMMARY ----------\n"
+        latex += "\\section{Summary}\n"
+        latex += "\\small\n"
+        latex += "\n"
+        latex += s(summary) + "\n"
+        latex += "\n\\vspace{" + section_gap + "}\n"
 
-""" + s(summary) + r"""
-
-\vspace{""" + section_gap + r"""}
-"""
-
-    # skills
+    # ---- TECHNICAL SKILLS ----
     skills = resume_data.get('skills', [])
     if skills:
-        latex += r"""
-%---------- TECHNICAL SKILLS ----------
-\section{Technical Skills}
-\small
-"""
+        latex += "\n%---------- TECHNICAL SKILLS ----------\n"
+        latex += "\\section{Technical Skills}\n"
+        latex += "\\small\n"
         skill_lines = []
         for group in skills:
             category = s(group.get('category', ''))
             items = ', '.join([s(item) for item in group.get('items', [])])
             skill_lines.append(rf"\textbf{{{category}:}} {items}")
         latex += ' \\\\\n'.join(skill_lines) + "\n"
-        latex += r"""
-\vspace{""" + section_gap + r"""}
-"""
+        latex += "\n\\vspace{" + section_gap + "}\n"
 
-    # projects
+    # ---- PROJECTS (matches template: -1pt between entries) ----
     projects = resume_data.get('projects', [])
     if projects:
-        latex += r"""
-%---------- PROJECTS ----------
-\section{Projects}
-"""
+        latex += "\n%---------- PROJECTS ----------\n"
+        latex += "\\section{Projects}\n"
         for i, proj in enumerate(projects):
             proj_name = s(proj.get('name', ''))
             tech = s(proj.get('tech_stack', ''))
@@ -247,23 +259,19 @@ def render_latex(resume_data):
             latex += "\n\\resumeSubheading{" + proj_name + "}{" + dates + "}{" + tech + "}{}\n"
             latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in proj.get('bullets', []):
-                latex += r"  \resumeItem{" + s(bullet) + "}\n"
-            latex += r"\end{itemize}" + "\n"
+                latex += "  \\resumeItem{" + s(bullet) + "}\n"
+            latex += "\\end{itemize}\n"
 
             if i < len(projects) - 1:
-                latex += "\n\\vspace{" + entry_gap + "}\n"
+                latex += "\n\\vspace{" + proj_entry_gap + "}\n"
 
-        latex += r"""
-\vspace{""" + section_gap + r"""}
-"""
+        latex += "\n\\vspace{" + section_gap + "}\n"
 
-    # experience
+    # ---- EXPERIENCE (matches template: 3pt between entries) ----
     experience = resume_data.get('experience', [])
     if experience:
-        latex += r"""
-%---------- EXPERIENCE ----------
-\section{Experience}
-"""
+        latex += "\n%---------- EXPERIENCE ----------\n"
+        latex += "\\section{Experience}\n"
         for i, exp in enumerate(experience):
             title = s(exp.get('title', ''))
             company = s(exp.get('company', ''))
@@ -273,65 +281,88 @@ def render_latex(resume_data):
             latex += "\n\\resumeSubheading{" + title + "}{" + dates + "}{" + company + "}{" + exp_location + "}\n"
             latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in exp.get('bullets', []):
-                latex += r"  \resumeItem{" + s(bullet) + "}\n"
-            latex += r"\end{itemize}" + "\n"
+                latex += "  \\resumeItem{" + s(bullet) + "}\n"
+            latex += "\\end{itemize}\n"
 
             if i < len(experience) - 1:
-                latex += "\n\\vspace{" + entry_gap + "}\n"
+                latex += "\n\\vspace{" + exp_entry_gap + "}\n"
 
-        latex += r"""
-\vspace{""" + section_gap + r"""}
-"""
+        latex += "\n\\vspace{" + section_gap + "}\n"
 
-    # certifications
+    # ---- CERTIFICATIONS ----
     certifications = resume_data.get('certifications', [])
     if certifications:
-        latex += r"""
-%---------- CERTIFICATIONS ----------
-\section{Certifications}
-\small
-"""
+        latex += "\n%---------- CERTIFICATIONS ----------\n"
+        latex += "\\section{Certifications}\n"
+        latex += "\\small\n"
         for cert in certifications:
             if isinstance(cert, dict):
                 cert_name = s(cert.get('name', ''))
                 cert_dates = s(cert.get('dates', ''))
-                latex += rf"\textbf{{{cert_name}}} \hfill \textit{{{cert_dates}}}" + "\n"
+                latex += "\\textbf{" + cert_name + "} \\hfill \\textit{" + cert_dates + "}\n"
             elif isinstance(cert, str):
-                latex += rf"\textbf{{{s(cert)}}}" + "\n"
+                latex += "\\textbf{" + s(cert) + "}\n"
+        latex += "\n\\vspace{" + section_gap + "}\n"
 
-        latex += r"""
-\vspace{""" + section_gap + r"""}
-"""
-
-    # education
+    # ---- EDUCATION (matches template: GPA in heading, coursework in bullet) ----
     education = resume_data.get('education', [])
     if education:
-        latex += r"""
-%---------- EDUCATION ----------
-\section{Education}
-"""
+        latex += "\n%---------- EDUCATION ----------\n"
+        latex += "\\section{Education}\n"
         for i, edu in enumerate(education):
-            degree = s(edu.get('degree', ''))
+            degree_raw = edu.get('degree', '')
             school = s(edu.get('school', ''))
             edu_location = s(edu.get('location', ''))
             dates = s(edu.get('dates', ''))
-            details = edu.get('details', '')
+            details = edu.get('details', '') or ''
 
-            latex += "\n\\resumeSubheading{" + degree + "}{" + dates + "}{" + school + "}{" + edu_location + "}\n"
+            # Extract GPA from details and put it in the degree heading
+            # Template: "Master of Applied Computer Science $|$ GPA: 3.9/4.0 (88\%)"
+            gpa_text = ''
+            coursework_text = ''
+
             if details:
-                latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
-                latex += r"  \resumeItem{" + s(details) + "}\n"
-                latex += "\\end{itemize}\n"
-            if i < len(education) - 1:
-                latex += "\n\\vspace{" + entry_gap + "}\n"
+                # Try to extract GPA/CGPA pattern from details
+                gpa_match = re.search(
+                    r'((?:C?GPA|Grade)[\s:]*[\d.]+\s*/\s*[\d.]+(?:\s*\([\d.]+%?\))?)',
+                    details, re.IGNORECASE
+                )
+                if gpa_match:
+                    gpa_text = gpa_match.group(1).strip()
 
-    # other experience
+                # Extract coursework — everything after "Coursework:", "Focus:", etc.
+                cw_match = re.search(
+                    r'(?:Relevant\s+)?(?:Coursework|Focus|Specialization)\s*[:\-]\s*(.*)',
+                    details, re.IGNORECASE
+                )
+                if cw_match:
+                    coursework_text = cw_match.group(0).strip()
+                    # Ensure it starts with "Relevant Coursework:"
+                    if not coursework_text.lower().startswith('relevant'):
+                        coursework_text = 'Relevant Coursework: ' + cw_match.group(1).strip()
+                elif not gpa_match:
+                    # No GPA and no coursework pattern — use details as-is
+                    coursework_text = details
+
+            # Build degree with GPA in heading (template style)
+            degree_display = s(degree_raw)
+            if gpa_text and '$|$' not in degree_raw and 'GPA' not in degree_raw.upper():
+                degree_display = s(degree_raw) + r' $|$ ' + s(gpa_text)
+
+            latex += "\n\\resumeSubheading{" + degree_display + "}{" + dates + "}{" + school + "}{" + edu_location + "}\n"
+            if coursework_text:
+                latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
+                latex += "  \\resumeItem{" + s(coursework_text) + "}\n"
+                latex += "\\end{itemize}\n"
+
+            if i < len(education) - 1:
+                latex += "\n\\vspace{" + edu_entry_gap + "}\n"
+
+    # ---- OTHER EXPERIENCE ----
     other_experience = resume_data.get('other_experience', [])
     if other_experience:
-        latex += r"""
-%---------- OTHER EXPERIENCE ----------
-\section{Other Experience}
-"""
+        latex += "\n%---------- OTHER EXPERIENCE ----------\n"
+        latex += "\\section{Other Experience}\n"
         for i, exp in enumerate(other_experience):
             title = s(exp.get('title', ''))
             company = s(exp.get('company', ''))
@@ -341,14 +372,12 @@ def render_latex(resume_data):
             latex += "\n\\resumeSubheading{" + title + "}{" + dates + "}{" + company + "}{" + exp_location + "}\n"
             latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in exp.get('bullets', []):
-                latex += r"  \resumeItem{" + s(bullet) + "}\n"
-            latex += r"\end{itemize}" + "\n"
+                latex += "  \\resumeItem{" + s(bullet) + "}\n"
+            latex += "\\end{itemize}\n"
 
             if i < len(other_experience) - 1:
-                latex += "\n\\vspace{" + entry_gap + "}\n"
+                latex += "\n\\vspace{" + exp_entry_gap + "}\n"
 
-    latex += r"""
-\end{document}
-"""
+    latex += "\n\\end{document}\n"
 
     return latex

@@ -238,19 +238,23 @@
     const existingBullets = {{ bullets_list|tojson }};
     const existingEducation = {{ resume.education|tojson if resume else '[]' }};
 
+    // Monotonic counter for unique IDs (Date.now() fails in tight loops)
+    let _idCounter = 0;
+    function uniqueId() { return Date.now() + '_' + (++_idCounter); }
+
     // ===== Skills Management =====
     function addSkillGroup(data = null) {
         const container = document.getElementById('skills-container');
-        const id = Date.now();
+        const id = uniqueId();
         const html = `
-            <div class="result-item" id="skill-${id}">
+            <div class="result-item" id="skill-${id}" data-skill-group>
                 <div class="flex-between mb-4">
                     <input type="text" class="form-input" style="width: 200px" placeholder="Category (e.g., Languages)"
-                           value="${data ? data.category : ''}" onchange="updateSkillsJSON()" data-skill-category="${id}">
+                           value="${data ? data.category : ''}" onchange="updateSkillsJSON()" data-skill-category>
                     <button type="button" class="btn btn-sm btn-danger" onclick="document.getElementById('skill-${id}').remove(); updateSkillsJSON();">Remove</button>
                 </div>
                 <input type="text" class="form-input" placeholder="Skills (comma-separated): Java, Python, C++"
-                       value="${data ? data.items.join(', ') : ''}" onchange="updateSkillsJSON()" data-skill-items="${id}">
+                       value="${data ? data.items.join(', ') : ''}" onchange="updateSkillsJSON()" data-skill-items>
             </div>
         `;
         container.insertAdjacentHTML('beforeend', html);
@@ -258,10 +262,10 @@
 
     function updateSkillsJSON() {
         const groups = [];
-        document.querySelectorAll('[data-skill-category]').forEach(el => {
-            const id = el.dataset.skillCategory;
-            const category = el.value.trim();
-            const itemsEl = document.querySelector(`[data-skill-items="${id}"]`);
+        document.querySelectorAll('[data-skill-group]').forEach(el => {
+            const catEl = el.querySelector('[data-skill-category]');
+            const itemsEl = el.querySelector('[data-skill-items]');
+            const category = catEl ? catEl.value.trim() : '';
             const items = itemsEl ? itemsEl.value.split(',').map(s => s.trim()).filter(Boolean) : [];
             if (category) groups.push({ category, items });
         });
@@ -271,7 +275,7 @@
     // ===== Bullet Bank Management =====
     function addBulletEntry(type, data = null) {
         const container = document.getElementById('bullets-container');
-        const id = Date.now();
+        const id = uniqueId();
         const isProject = type === 'project';
         const html = `
             <div class="result-item" id="bullet-${id}" data-bullet-id="${id}">
@@ -349,7 +353,7 @@
     // ===== Education Management =====
     function addEducation(data = null) {
         const container = document.getElementById('education-container');
-        const id = Date.now();
+        const id = uniqueId();
         const html = `
             <div class="result-item" id="edu-${id}" data-edu-id="${id}">
                 <div class="flex-between mb-4">

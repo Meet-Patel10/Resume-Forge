@@ -356,62 +356,210 @@
 
         let html = '';
 
-        // ATS Overview
+        // ===== How It Works (one-time explainer) =====
+        html += `<div class="card mb-6" style="border-left: 4px solid var(--accent-info); background: rgba(99, 102, 241, 0.04);">
+            <h3 class="card-title" style="margin-bottom: var(--space-2)">💡 How does this work?</h3>
+            <p style="color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.6;">
+                We scanned the job description and your resume side-by-side. Below you'll see every important skill and term the employer is looking for.
+                <strong style="color: #22c55e;">Green</strong> = you already have it.
+                <strong style="color: #f59e0b;">Yellow</strong> = it's there but could be worded better.
+                <strong style="color: #ef4444;">Red</strong> = it's missing — add it to your resume before applying.
+            </p>
+        </div>`;
+
+        // ===== Overall Score =====
         if (k.ats_optimization) {
             const ats = k.ats_optimization;
+            const pct = ats.current_match_percentage || 0;
+            const emoji = pct >= 80 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
+            const verdict = pct >= 80 ? 'Your resume covers most of what this job asks for.' :
+                           pct >= 50 ? 'Your resume partially matches. Add the missing keywords below to improve.' :
+                           'Your resume is missing many keywords the employer is looking for. Fix the gaps below.';
             html += `
                 <div class="card mb-6">
-                    <h3 class="card-title">ATS Match Overview</h3>
-                    <div class="stat-value mt-4">${ats.current_match_percentage || 0}%</div>
-                    <div class="stat-label">Keyword Match Rate</div>
-                    ${ats.critical_missing ? `<div class="mt-4"><strong class="text-danger">Critical Missing:</strong> ${ats.critical_missing.join(', ')}</div>` : ''}
+                    <h3 class="card-title">📊 Your Match Score</h3>
+                    <div style="display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-4);">
+                        <div style="font-size: 3rem; font-weight: 800; color: ${pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444'};">${pct}%</div>
+                        <div>
+                            <p style="font-weight: 600; font-size: var(--text-lg);">${emoji} ${pct >= 80 ? 'Strong Match' : pct >= 50 ? 'Needs Improvement' : 'Weak Match'}</p>
+                            <p style="color: var(--text-muted); font-size: var(--text-sm); margin-top: 4px;">${verdict}</p>
+                        </div>
+                    </div>
+                    ${ats.critical_missing && ats.critical_missing.length ? `
+                        <div style="margin-top: var(--space-4); padding: var(--space-3); background: rgba(239, 68, 68, 0.06); border-radius: 8px;">
+                            <p style="font-weight: 600; color: #ef4444; margin-bottom: var(--space-2);">🚨 Most important keywords you're missing:</p>
+                            <p style="color: var(--text-secondary);">${ats.critical_missing.join(', ')}</p>
+                        </div>` : ''}
                 </div>
             `;
         }
 
-        // 6-Second Scan
+        // ===== 6-Second Scan =====
         if (k.six_second_scan) {
             const scan = k.six_second_scan;
             html += `
                 <div class="card mb-6" style="border-left: 4px solid var(--accent-${scan.passes_scan ? 'success' : 'danger'})">
-                    <h3 class="card-title">📱 6-Second Scan</h3>
-                    <p class="mt-2"><strong>First impression:</strong> ${scan.first_impression}</p>
-                    <p class="mt-2 badge badge-${scan.passes_scan ? 'success' : 'danger'}">${scan.passes_scan ? 'PASSES' : 'FAILS'} 6-second scan</p>
-                    <p class="mt-2 text-muted">${scan.improvement || ''}</p>
+                    <h3 class="card-title">⏱️ First Impression Test</h3>
+                    <p style="color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-3);">
+                        Recruiters spend about 6 seconds scanning a resume. Here's what they'd notice first:
+                    </p>
+                    <p style="font-size: var(--text-md); margin-bottom: var(--space-2);">${scan.first_impression}</p>
+                    <span class="badge badge-${scan.passes_scan ? 'success' : 'danger'}" style="font-size: var(--text-sm); padding: 6px 16px;">
+                        ${scan.passes_scan ? '✅ Looks good at a glance' : '❌ Needs work — recruiter may skip'}
+                    </span>
+                    ${scan.improvement ? `<p style="margin-top: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm);"><strong>Tip:</strong> ${scan.improvement}</p>` : ''}
                 </div>
             `;
         }
 
-        // Keyword Grid
+        // ===== Keyword Results =====
         if (k.top_keywords && k.top_keywords.length) {
-            html += '<div class="keyword-grid">';
+            const missingKws = [];
+            const weakKws = [];
+            const matchedKws = [];
             keywordGaps = [];
+
             k.top_keywords.forEach(kw => {
-                const statusClass = kw.resume_status === 'strong_match' ? 'match-strong' :
-                                   kw.resume_status === 'weak_match' ? 'match-weak' : 'match-missing';
-                const statusIcon = kw.resume_status === 'strong_match' ? '✅' :
-                                  kw.resume_status === 'weak_match' ? '⚠️' : '❌';
-
-                if (kw.resume_status !== 'strong_match') keywordGaps.push(kw.keyword);
-
-                html += `
-                    <div class="keyword-card ${statusClass}">
-                        <div class="flex-between mb-4">
-                            <strong>${statusIcon} ${kw.keyword}</strong>
-                            <span class="badge badge-primary">Priority: ${kw.priority}/10</span>
-                        </div>
-                        <p class="text-muted" style="font-size: var(--text-sm)">${kw.jd_context || ''}</p>
-                        ${kw.resume_evidence ? `<p class="mt-2" style="font-size: var(--text-sm)"><strong>Your evidence:</strong> ${kw.resume_evidence}</p>` : ''}
-                        <div class="result-fix mt-4">
-                            <strong>Add:</strong> "${kw.phrase_to_add || ''}"<br>
-                            <span class="text-muted">→ ${kw.where_to_add || 'Skills section'}</span>
-                        </div>
-                    </div>
-                `;
+                if (kw.resume_status === 'strong_match') {
+                    matchedKws.push(kw);
+                } else if (kw.resume_status === 'weak_match') {
+                    weakKws.push(kw);
+                    keywordGaps.push(kw.keyword);
+                } else {
+                    missingKws.push(kw);
+                    keywordGaps.push(kw.keyword);
+                }
             });
-            html += '</div>';
 
-            // Show gap fill button if gaps exist
+            // --- Coverage Progress Bar ---
+            const total = k.top_keywords.length;
+            const matchPct = Math.round((matchedKws.length / total) * 100);
+            const weakPct = Math.round((weakKws.length / total) * 100);
+            const missPct = Math.round((missingKws.length / total) * 100);
+
+            html += `<div class="card mb-6">
+                <h3 class="card-title" style="margin-bottom: var(--space-3);">📈 Keyword Coverage</h3>
+                <p style="color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-4);">
+                    Out of <strong>${total}</strong> keywords the employer is looking for:
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); margin-bottom: var(--space-4);">
+                    <div style="text-align: center; padding: var(--space-3); background: rgba(34, 197, 94, 0.08); border-radius: 10px;">
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #22c55e;">${matchedKws.length}</div>
+                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Already in<br>your resume</div>
+                    </div>
+                    <div style="text-align: center; padding: var(--space-3); background: rgba(245, 158, 11, 0.08); border-radius: 10px;">
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #f59e0b;">${weakKws.length}</div>
+                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Needs better<br>wording</div>
+                    </div>
+                    <div style="text-align: center; padding: var(--space-3); background: rgba(239, 68, 68, 0.08); border-radius: 10px;">
+                        <div style="font-size: 1.8rem; font-weight: 700; color: #ef4444;">${missingKws.length}</div>
+                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Not found<br>— add these</div>
+                    </div>
+                </div>
+                <div style="display: flex; height: 10px; border-radius: 5px; overflow: hidden;">
+                    <div style="width: ${matchPct}%; background: #22c55e; transition: width 1s ease;" title="${matchPct}% matched"></div>
+                    <div style="width: ${weakPct}%; background: #f59e0b; transition: width 1s ease;" title="${weakPct}% weak"></div>
+                    <div style="width: ${missPct}%; background: #ef4444; transition: width 1s ease;" title="${missPct}% missing"></div>
+                </div>
+            </div>`;
+
+            // --- Missing Keywords: Action List ---
+            if (missingKws.length) {
+                html += `<div class="card mb-6" style="border-left: 4px solid #ef4444;">
+                    <h3 class="card-title" style="margin-bottom: var(--space-2);">❌ Add These to Your Resume</h3>
+                    <p style="color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-4);">
+                        The job description mentions these skills/terms, but they're nowhere in your resume. Adding them will help your resume show up when a recruiter searches for candidates.
+                    </p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-4);">`;
+                missingKws.forEach(kw => {
+                    html += `<span title="Add to: ${kw.where_to_add || 'Skills section'}" style="
+                        display: inline-flex; align-items: center; gap: 6px; cursor: default;
+                        padding: 7px 16px; border-radius: 20px; font-size: 0.84rem; font-weight: 500;
+                        background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2);
+                    ">${kw.keyword}</span>`;
+                });
+                html += `</div>
+                    <details style="margin-top: var(--space-2);">
+                        <summary style="cursor: pointer; font-size: var(--text-sm); color: var(--text-muted); font-weight: 500;">
+                            Show where to add each keyword →
+                        </summary>
+                        <div style="margin-top: var(--space-3);">`;
+                missingKws.forEach((kw, i) => {
+                    html += `<div style="display: flex; align-items: flex-start; gap: var(--space-3); padding: 10px 0; ${i < missingKws.length - 1 ? 'border-bottom: 1px solid var(--border-subtle);' : ''}">
+                        <span style="min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+                               background: rgba(239, 68, 68, 0.1); border-radius: 50%; font-size: 0.75rem; font-weight: 700; color: #ef4444;">
+                            ${i + 1}
+                        </span>
+                        <div>
+                            <strong style="color: var(--text-primary);">${kw.keyword}</strong>
+                            ${kw.phrase_to_add ? `<p style="font-size: var(--text-sm); color: var(--text-secondary); margin-top: 2px;">
+                                Write: <em>"${kw.phrase_to_add}"</em>
+                            </p>` : ''}
+                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+                                📍 Add it to your <strong>${kw.where_to_add || 'Skills section'}</strong>
+                            </p>
+                        </div>
+                    </div>`;
+                });
+                html += `</div></details>
+                </div>`;
+            }
+
+            // --- Weak Keywords ---
+            if (weakKws.length) {
+                html += `<div class="card mb-6" style="border-left: 4px solid #f59e0b;">
+                    <h3 class="card-title" style="margin-bottom: var(--space-2);">⚠️ Strengthen These Keywords</h3>
+                    <p style="color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-4);">
+                        These are in your resume but not in the exact words the employer used. Matching the exact wording improves your chances.
+                    </p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-4);">`;
+                weakKws.forEach(kw => {
+                    html += `<span title="${kw.resume_evidence || ''} → Use: ${kw.phrase_to_add || kw.keyword}" style="
+                        display: inline-flex; align-items: center; gap: 6px; cursor: default;
+                        padding: 7px 16px; border-radius: 20px; font-size: 0.84rem; font-weight: 500;
+                        background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2);
+                    ">${kw.keyword}</span>`;
+                });
+                html += `</div>
+                    <details>
+                        <summary style="cursor: pointer; font-size: var(--text-sm); color: var(--text-muted); font-weight: 500;">
+                            Show how to fix each one →
+                        </summary>
+                        <div style="margin-top: var(--space-3);">`;
+                weakKws.forEach((kw, i) => {
+                    html += `<div style="padding: 10px 0; ${i < weakKws.length - 1 ? 'border-bottom: 1px solid var(--border-subtle);' : ''}">
+                        <strong style="color: var(--text-primary);">${kw.keyword}</strong>
+                        ${kw.resume_evidence ? `<p style="font-size: var(--text-sm); color: var(--text-muted); margin-top: 2px;">
+                            You wrote: "${kw.resume_evidence}"
+                        </p>` : ''}
+                        ${kw.phrase_to_add ? `<p style="font-size: var(--text-sm); color: #f59e0b; margin-top: 2px;">
+                            ✏️ Change to: <em>"${kw.phrase_to_add}"</em>
+                        </p>` : ''}
+                    </div>`;
+                });
+                html += `</div></details>
+                </div>`;
+            }
+
+            // --- Matched Keywords (collapsed by default) ---
+            if (matchedKws.length) {
+                html += `<details class="card mb-6" style="border-left: 4px solid #22c55e;">
+                    <summary style="cursor: pointer;">
+                        <h3 class="card-title" style="display: inline; margin-left: var(--space-2);">✅ Keywords You Already Have (${matchedKws.length})</h3>
+                    </summary>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: var(--space-4);">`;
+                matchedKws.forEach(kw => {
+                    html += `<span style="
+                        display: inline-flex; align-items: center; gap: 4px;
+                        padding: 7px 16px; border-radius: 20px; font-size: 0.84rem; font-weight: 500;
+                        background: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.2);
+                    ">${kw.keyword}</span>`;
+                });
+                html += `</div>
+                </details>`;
+            }
+
+            // Show gap fill button
             if (keywordGaps.length) {
                 document.getElementById('btn-gap').style.display = 'inline-flex';
             }

@@ -116,20 +116,20 @@ def render_latex(resume_data):
 
     # letter paper at 10pt with 0.45in margins ≈ 62 usable lines
     if est_lines <= 52:
-        # light content -- generous spacing (matches template defaults)
-        section_before = '3pt'
-        section_after = '3pt'
-        proj_entry_gap = '-1pt'   # template uses -1pt between projects
-        exp_entry_gap = '3pt'     # template uses 3pt between experience entries
-        edu_entry_gap = '3pt'     # template uses 3pt between education entries
-        section_gap = '1pt'       # template uses 1pt between sections
+        # light content -- generous spacing
+        section_before = '2pt'
+        section_after = '2pt'
+        proj_entry_gap = '-1pt'
+        exp_entry_gap = '3pt'
+        edu_entry_gap = '3pt'
+        section_gap = '1pt'
         top_margin = '0.45in'
         bottom_margin = '0.45in'
         enlarge = ''
     elif est_lines <= 60:
         # medium content -- tighter
-        section_before = '3pt'
-        section_after = '3pt'
+        section_before = '2pt'
+        section_after = '2pt'
         proj_entry_gap = '-1pt'
         exp_entry_gap = '2pt'
         edu_entry_gap = '2pt'
@@ -150,8 +150,8 @@ def render_latex(resume_data):
         enlarge = r'\enlargethispage{0.15in}'
     else:
         # very heavy -- maximum compression
-        section_before = '1pt'
-        section_after = '1pt'
+        section_before = '2pt'
+        section_after = '2pt'
         proj_entry_gap = '-2pt'
         exp_entry_gap = '1pt'
         edu_entry_gap = '1pt'
@@ -203,10 +203,6 @@ def render_latex(resume_data):
         contact_parts.append(s(phone))
     if email:
         contact_parts.append(r'\href{mailto:' + s(email) + '}{' + s(email) + '}')
-    if github:
-        github_url = github if github.startswith('http') else 'https://' + github
-        github_display = github.replace('https://', '').replace('http://', '')
-        contact_parts.append(r'\href{' + s(github_url) + '}{' + s(github_display) + '}')
     if linkedin:
         linkedin_url = linkedin if linkedin.startswith('http') else 'https://' + linkedin
         linkedin_display = linkedin.replace('https://', '').replace('http://', '')

@@ -1,5 +1,7 @@
 import json
+import time
 import boto3
+from botocore.config import Config as BotoConfig
 from flask import current_app
 
 
@@ -40,11 +42,18 @@ class BedrockClient:
                     "Get them from IAM → Users → Security Credentials → Create Access Key."
                 )
 
+            # 90s read timeout prevents hanging forever on slow/stuck connections
+            boto_cfg = BotoConfig(
+                read_timeout=90,
+                connect_timeout=10,
+                retries={'max_attempts': 1},
+            )
             self._client = boto3.client(
                 'bedrock-runtime',
                 region_name=region,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
+                config=boto_cfg,
             )
         return self._client
 
@@ -67,7 +76,8 @@ class BedrockClient:
             model_id = model_cfg['model_id']
             provider = model_cfg['provider']
 
-            print(f"[bedrock] Using {model_id} (env={env_name})")
+            print(f"[bedrock] Using {model_id} (env={env_name}, max_tokens={max_tokens})")
+            t0 = time.time()
 
             # Build request body based on provider
             if provider == 'anthropic':
@@ -85,6 +95,8 @@ class BedrockClient:
 
             # Parse response
             response_body = json.loads(response['body'].read())
+            elapsed = time.time() - t0
+            print(f"[bedrock] API call completed in {elapsed:.1f}s")
 
             if provider == 'anthropic':
                 return self._parse_anthropic_response(response_body, model_cfg)

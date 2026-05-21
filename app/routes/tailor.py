@@ -69,6 +69,7 @@ def api_tailor():
     total_tokens = 0
     total_cost = 0.0
     pipeline_steps = []
+    pipeline_start = __import__('time').time()
 
     # step 0: parse the JD for skills, requirements, etc.
     jd_analysis = None
@@ -92,7 +93,7 @@ def api_tailor():
             total_tokens += jd_result.get('tokens_used', 0)
             total_cost += jd_result.get('cost_usd', 0)
             pipeline_steps.append('jd_analysis')
-            print(f"[tailor] jd analysis done")
+            print(f"[tailor] jd analysis done ({jd_result.get('tokens_used', 0)} tokens)")
         else:
             print(f"[tailor] jd analysis skipped: {jd_result['error']}")
     except Exception as e:
@@ -121,7 +122,7 @@ def api_tailor():
             total_tokens += critique_result.get('tokens_used', 0)
             total_cost += critique_result.get('cost_usd', 0)
             pipeline_steps.append('critique')
-            print("[tailor] critique done")
+            print(f"[tailor] critique done ({critique_result.get('tokens_used', 0)} tokens)")
         else:
             print(f"[tailor] critique skipped: {critique_result['error']}")
     except Exception as e:
@@ -150,7 +151,7 @@ def api_tailor():
             total_tokens += kw_result.get('tokens_used', 0)
             total_cost += kw_result.get('cost_usd', 0)
             pipeline_steps.append('keywords')
-            print("[tailor] keywords done")
+            print(f"[tailor] keywords done ({kw_result.get('tokens_used', 0)} tokens)")
         else:
             print(f"[tailor] keywords skipped: {kw_result['error']}")
     except Exception as e:
@@ -165,12 +166,12 @@ def api_tailor():
         jd_analysis=jd_analysis,
     )
 
-    # retry up to 3 times -- the tailor call is the most critical and must return valid JSON
+    # retry up to 2 times (not 3 — avoid excessive wait on repeated failures)
     result = None
     required_keys = {'summary', 'skills', 'experience'}
-    for attempt in range(3):
+    for attempt in range(2):
         temp = 0.15 if attempt == 0 else 0.1
-        attempt_result = claude.analyze(RESUME_TAILOR_SYSTEM, user_message, max_tokens=16000, temperature=temp)
+        attempt_result = claude.analyze(RESUME_TAILOR_SYSTEM, user_message, max_tokens=8000, temperature=temp)
 
         if attempt_result.get('error'):
             print(f"[tailor] attempt {attempt + 1} error: {attempt_result['error']}")
@@ -228,7 +229,8 @@ def api_tailor():
     total_tokens += result.get('tokens_used', 0)
     total_cost += result.get('cost_usd', 0)
     pipeline_steps.append('tailor')
-    print(f"[tailor] done ({pipeline_steps})")
+    pipeline_elapsed = __import__('time').time() - pipeline_start
+    print(f"[tailor] done ({pipeline_steps}) — total {pipeline_elapsed:.1f}s, {total_tokens} tokens, ${total_cost:.4f}")
 
     tailored_data = result['response']
 
@@ -364,15 +366,167 @@ def api_tailor():
 
                     tailored_data['skills'] = enforced_skills
 
-                # enforce experience structure: ensure all roles present, keep AI-enhanced bullets
+                # ---- SUMMARY ENFORCEMENT: ALWAYS use master + programmatic injection ----
+                # We NEVER trust the AI's summary rewrite. Instead we:
+                #   1. Start from the master summary (exact text from DB)
+                #   2. Collect JD keywords the AI tried to add
+                #   3. Programmatically inject them into MIDDLE sentences
+                #   4. First and last sentences stay untouched
+                master_summary = (master.summary or '').strip()
+                ai_summary = (tailored_data.get('summary', '') or '').strip()
+
+                if master_summary:
+                    import re as _re_inj
+
+                    # ---- Step 1: collect keywords to inject ----
+                    new_keywords = []
+
+                    # from JD analysis: hard skills + soft skills not already in master
+                    jd_hard = []
+                    jd_soft = []
+                    jd_top = []
+                    if jd_analysis and isinstance(jd_analysis, dict):
+                        jd_hard = jd_analysis.get('hard_skills', [])
+                        jd_soft = jd_analysis.get('soft_skills', [])
+                        jd_top = jd_analysis.get('top_keywords', [])
+
+                    master_lower = master_summary.lower()
+                    ai_lower = ai_summary.lower() if ai_summary else ''
+
+                    # prefer keywords the AI tried to inject (they're likely the best fits)
+                    for term in jd_hard + jd_soft + jd_top:
+                        term_lower = term.lower()
+                        if term_lower not in master_lower:
+                            # prioritise ones the AI also chose
+                            if ai_lower and term_lower in ai_lower:
+                                new_keywords.insert(0, term)  # front of list
+                            else:
+                                new_keywords.append(term)
+
+                    # also grab from keyword gap analysis
+                    if keyword_data and isinstance(keyword_data, dict):
+                        for kw in keyword_data.get('top_keywords', []):
+                            if isinstance(kw, dict) and kw.get('resume_status') in ('missing', 'weak_match'):
+                                k = kw.get('keyword', '')
+                                if k and k.lower() not in master_lower and len(k.split()) <= 3:
+                                    new_keywords.append(k)
+
+                    # deduplicate while preserving order
+                    seen = set()
+                    unique_kw = []
+                    for k in new_keywords:
+                        kl = k.lower()
+                        if kl not in seen and kl not in master_lower:
+                            seen.add(kl)
+                            unique_kw.append(k)
+
+                    # ---- Step 2: JD title swap in first sentence ----
+                    sentences = _re_inj.split(r'(?<=[.!?])\s+', master_summary.strip())
+                    sentences = [s.strip() for s in sentences if s.strip()]
+
+                    if jd_analysis and isinstance(jd_analysis, dict):
+                        jd_title = (jd_analysis.get('job_title', '') or '').strip()
+                        if jd_title and sentences:
+                            # look for a role/title in the first sentence to swap
+                            # common patterns: "...Software Developer with...", "...Data Analyst with..."
+                            import difflib
+                            first = sentences[0]
+                            if jd_title.lower() not in first.lower() and ai_summary:
+                                ai_sents = _re_inj.split(r'(?<=[.!?])\s+', ai_summary.strip())
+                                ai_sents = [s.strip() for s in ai_sents if s.strip()]
+                                if ai_sents and jd_title.lower() in ai_sents[0].lower():
+                                    # AI swapped the title — figure out what it replaced
+                                    m_tokens = first.split()
+                                    a_tokens = ai_sents[0].split()
+                                    sm = difflib.SequenceMatcher(None,
+                                        [t.lower() for t in m_tokens],
+                                        [t.lower() for t in a_tokens])
+                                    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                                        if tag == 'replace':
+                                            replaced_in_ai = ' '.join(a_tokens[j1:j2])
+                                            if jd_title.lower() in replaced_in_ai.lower():
+                                                original_chunk = ' '.join(m_tokens[i1:i2])
+                                                sentences[0] = first.replace(original_chunk, jd_title, 1)
+                                                print(f"[tailor] swapped title '{original_chunk}' → '{jd_title}' in first sentence")
+                                                break
+
+                    # ---- Step 3: smart middle injection ----
+                    if unique_kw and len(sentences) >= 2:
+                        top_kw = unique_kw[:6]
+                        # middle indices (skip first and last sentence)
+                        if len(sentences) >= 3:
+                            mid_start, mid_end = 1, len(sentences) - 1
+                        else:
+                            # only 2 sentences — inject into the first one
+                            mid_start, mid_end = 0, 1
+
+                        # score each keyword against each middle sentence
+                        # cap at 3 keywords per sentence to avoid overloading
+                        MAX_KW_PER_SENT = 3
+                        placed = {i: [] for i in range(mid_start, mid_end)}
+                        unplaced = []
+                        for kw in top_kw:
+                            kw_words = set(kw.lower().split())
+                            # rank all middle sentences by fit
+                            scored = []
+                            for i in range(mid_start, mid_end):
+                                sent_words = set(sentences[i].lower().split())
+                                score = len(kw_words & sent_words)
+                                if any(w in sentences[i].lower() for w in kw_words):
+                                    score += 1
+                                scored.append((score, i))
+                            scored.sort(key=lambda x: -x[0])
+                            # pick the best sentence that isn't full
+                            assigned = False
+                            for score, idx in scored:
+                                if len(placed[idx]) < MAX_KW_PER_SENT:
+                                    placed[idx].append(kw)
+                                    assigned = True
+                                    break
+                            if not assigned:
+                                unplaced.append(kw)
+
+                        # inject into each middle sentence
+                        for i in range(mid_start, mid_end):
+                            kws = placed.get(i, [])
+                            if not kws:
+                                continue
+                            sent = sentences[i].rstrip('.')
+                            if len(kws) == 1:
+                                sent += f' and {kws[0]}'
+                            else:
+                                sent += f', including {", ".join(kws[:-1])} and {kws[-1]}'
+                            sentences[i] = sent + '.'
+
+                        # leftover keywords go as a brief phrase before the last sentence
+                        if unplaced:
+                            insert_pos = max(1, len(sentences) - 1)
+                            if len(unplaced) > 1:
+                                leftover_phrase = ', '.join(unplaced[:-1]) + ' and ' + unplaced[-1]
+                            else:
+                                leftover_phrase = unplaced[0]
+                            sentences.insert(insert_pos, f'Experienced with {leftover_phrase}.')
+
+                    elif unique_kw:
+                        # single sentence summary — append naturally
+                        top_kw = unique_kw[:6]
+                        last = sentences[-1].rstrip('.')
+                        if len(top_kw) > 1:
+                            kw_phrase = ', '.join(top_kw[:-1]) + ' and ' + top_kw[-1]
+                        else:
+                            kw_phrase = top_kw[0]
+                        sentences[-1] = f'{last}, with proficiency in {kw_phrase}.'
+
+                    tailored_data['summary'] = ' '.join(sentences)
+                    print(f"[tailor] summary: master preserved, {len(unique_kw)} keywords injected programmatically")
+
+                # enforce experience: keep AI's smart-injected bullets, enforce structure
                 if master.bullets:
                     exp_bullets = [b for b in master.bullets if (b.section_type or 'experience') == 'experience' and b.is_active]
                     proj_bullets = [b for b in master.bullets if (b.section_type or '') == 'project' and b.is_active]
 
-                    # For experience: keep AI's enhanced bullets (with metrics/keywords)
-                    # but ensure all roles from DB are present
+                    # For experience: keep AI's smart keyword injection but enforce structure
                     if exp_bullets:
-                        # build master role map for reference
                         master_roles = {}
                         for b in sorted(exp_bullets, key=lambda x: x.sort_order or 0):
                             key = f"{b.role}|||{b.company}"
@@ -393,13 +547,15 @@ def api_tailor():
                             for key, master_entry in master_roles.items():
                                 if (ai_entry.get('title', '').strip().lower() == master_entry['title'].strip().lower() and
                                     ai_entry.get('company', '').strip().lower() == master_entry['company'].strip().lower()):
-                                    # keep AI's enhanced bullets, but enforce correct dates
-                                    if not ai_entry.get('dates') and master_entry['dates']:
+                                    # enforce correct dates from DB
+                                    if master_entry['dates']:
                                         ai_entry['dates'] = master_entry['dates']
-                                    # ensure bullet count matches
+                                    # enforce bullet count — if AI added/removed bullets, restore from DB
                                     if len(ai_entry.get('bullets', [])) != len(master_entry['bullets']):
-                                        # AI added/removed bullets — restore correct count from master
                                         ai_entry['bullets'] = master_entry['bullets']
+                                    # grab location from AI (DB doesn't store it)
+                                    if not master_entry['location']:
+                                        master_entry['location'] = ai_entry.get('location', '')
                                     matched_keys.add(key)
                                     break
 
@@ -407,15 +563,6 @@ def api_tailor():
                         for key, master_entry in master_roles.items():
                             if key not in matched_keys:
                                 ai_exp.append(master_entry)
-
-                        # grab location from AI output since we don't store it in DB
-                        for ai_entry in ai_exp:
-                            for key, master_entry in master_roles.items():
-                                if (ai_entry.get('title', '').strip().lower() == master_entry['title'].strip().lower() and
-                                    ai_entry.get('company', '').strip().lower() == master_entry['company'].strip().lower()):
-                                    if not master_entry['location']:
-                                        master_entry['location'] = ai_entry.get('location', '')
-                                    break
 
                         tailored_data['experience'] = ai_exp
 
@@ -461,75 +608,13 @@ def api_tailor():
         except Exception as e:
             print(f"[tailor] enforcement error (non-fatal): {e}")
 
-    # step 4.5: structure validation agent — ensures JSON matches template format
-    if isinstance(tailored_data, dict):
-        try:
-            from app.services.prompts.structure_validator import STRUCTURE_VALIDATOR_SYSTEM, build_validator_message
+    # NOTE: Structure validator AI call removed — it added 30-60s latency for a
+    # 16K-token call that duplicated what the programmatic enforcement above
+    # already handles (skill categories, bullet counts, entries, header, education).
 
-            master = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
-            if master:
-                master_json = master.to_dict()
-                # build master structure for comparison
-                master_structure = {
-                    'header': {
-                        'name': master.full_name or '',
-                        'location': master.location or '',
-                        'phone': master.phone or '',
-                        'email': master.email or '',
-                        'linkedin': master.linkedin_url or '',
-                        'github': master.github_url or '',
-                    },
-                    'skills': master.skills or [],
-                    'education': master.education or [],
-                }
-                # add bullets structure
-                if master.bullets:
-                    exp_entries = {}
-                    proj_entries = {}
-                    for b in sorted(master.bullets, key=lambda x: x.sort_order or 0):
-                        if (b.section_type or 'experience') == 'experience' and b.is_active:
-                            key = f"{b.role}|||{b.company}"
-                            if key not in exp_entries:
-                                exp_entries[key] = {'title': b.role, 'company': b.company, 'bullets': []}
-                            exp_entries[key]['bullets'].append(b.original_text)
-                        elif b.section_type == 'project' and b.is_active:
-                            if b.company not in proj_entries:
-                                proj_entries[b.company] = {'name': b.company, 'bullets': []}
-                            proj_entries[b.company]['bullets'].append(b.original_text)
-                    master_structure['experience'] = list(exp_entries.values())
-                    master_structure['projects'] = list(proj_entries.values())
-
-                validator_msg = build_validator_message(tailored_data, master_structure)
-                val_result = claude.analyze(STRUCTURE_VALIDATOR_SYSTEM, validator_msg, max_tokens=16000, temperature=0.1)
-
-                if not val_result.get('error'):
-                    val_resp = val_result.get('response')
-                    if isinstance(val_resp, dict) and 'summary' in val_resp and 'skills' in val_resp:
-                        tailored_data = val_resp
-                        total_tokens += val_result.get('tokens_used', 0)
-                        total_cost += val_result.get('cost_usd', 0)
-                        pipeline_steps.append('structure_validator')
-                        print("[tailor] structure validation done — JSON fixed")
-                    else:
-                        print(f"[tailor] structure validator returned unusable data, skipping")
-                else:
-                    print(f"[tailor] structure validator error: {val_result['error']}")
-        except Exception as e:
-            print(f"[tailor] structure validator error (non-fatal): {e}")
-
-    # run the summary through the external humanizer if we have a key
-    if isinstance(tailored_data, dict) and tailored_data.get('summary'):
-        try:
-            from app.services.humanize_client import humanize_text
-            original_summary = tailored_data['summary']
-            humanized_summary = humanize_text(original_summary, model="humanoidx", tone="formal")
-            if humanized_summary and humanized_summary != original_summary:
-                tailored_data['summary'] = humanized_summary
-                print(f"[tailor] summary humanized")
-            else:
-                print("[tailor] humanizer skipped or returned same text")
-        except Exception as e:
-            print(f"[tailor] humanizer error: {e}")
+    # NOTE: External humanize API removed. Humanization rules are now baked
+    # directly into the tailor prompt (RESUME_TAILOR_SYSTEM) so the AI produces
+    # human-sounding text in a single pass — no post-processing needed.
 
     # generate the latex
     latex_output = ''

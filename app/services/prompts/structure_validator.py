@@ -27,11 +27,12 @@ Compare the tailored JSON against the master JSON and fix ONLY structural issues
 7. education
 
 ### SKILL CATEGORIES
-- The tailored resume MUST have the EXACT SAME category names as the master resume
-- If the tailor merged categories (e.g., combined "Languages" with "Frameworks & Libraries"), SPLIT them back
-- If a category is missing, RESTORE it from the master resume
+- The tailored resume must have AT LEAST as many categories as the master resume, and at most 7 total
+- Category names MAY be renamed to align with the JD's terminology (e.g., "Tools & Platforms" → "Cloud & DevOps") — this is expected and correct
+- If the tailor merged categories (fewer than master count), SPLIT them back to match the master count
+- If the tailor has more than 7, merge the extras into the most relevant existing category
+- All original master skill items must still be present in some category — none may be dropped
 - Items within each category may differ (the tailor adds/reorders items — that's fine)
-- Category names must be CHARACTER-FOR-CHARACTER identical to the master
 
 ### EXPERIENCE ENTRIES
 - Every experience entry in the master resume MUST appear in the output (same title, company, dates)

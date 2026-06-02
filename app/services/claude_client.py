@@ -212,6 +212,40 @@ class BedrockClient:
             'cost_usd': round(cost, 6),
         }
 
+    def _fix_json_newlines(self, text):
+        """Escape literal newlines inside JSON string values.
+
+        LLMs sometimes output JSON with raw newlines inside string values
+        (e.g. multi-line cover letter text), which is invalid JSON.
+        This walks character-by-character and escapes them.
+        """
+        result = []
+        in_string = False
+        escape_next = False
+
+        for char in text:
+            if escape_next:
+                result.append(char)
+                escape_next = False
+                continue
+            if char == '\\':
+                result.append(char)
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                result.append(char)
+                continue
+            if in_string and char == '\n':
+                result.append('\\n')
+                continue
+            if in_string and char == '\r':
+                result.append('\\r')
+                continue
+            result.append(char)
+
+        return ''.join(result)
+
     def _try_parse_json(self, raw_text):
         """Try to parse raw text as JSON, stripping code fences if present."""
         try:
@@ -222,7 +256,17 @@ class BedrockClient:
                 cleaned = cleaned[3:]
             if cleaned.endswith('```'):
                 cleaned = cleaned[:-3]
-            return json.loads(cleaned.strip())
+            cleaned = cleaned.strip()
+
+            # First try direct parse
+            try:
+                return json.loads(cleaned)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            # If that fails, fix literal newlines inside JSON string values and retry
+            fixed = self._fix_json_newlines(cleaned)
+            return json.loads(fixed)
         except (json.JSONDecodeError, ValueError):
             return raw_text
 

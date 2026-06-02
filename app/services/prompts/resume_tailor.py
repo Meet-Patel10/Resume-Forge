@@ -7,9 +7,10 @@ The tailored resume should READ like the master resume — same voice, same stru
 
 ## SECTION 1: SUMMARY — SMART KEYWORD INJECTION (keep original voice)
 - KEEP the original summary as the base — same sentence structure, same voice, same tone
+- **THE FIRST SENTENCE IS IMMUTABLE** — Copy it EXACTLY from the master resume, word-for-word, character-for-character. Do NOT change, rephrase, extend, or modify the first sentence in ANY way. The only allowed change is updating the job title if the JD uses a different title (e.g., "Junior Software Developer" → "Data Engineer"). Everything else in the first sentence stays EXACTLY as written.
 - INJECT the JD job title naturally INTO THE SUMMARY ONLY (e.g., if master says "Junior Software Developer" and JD says "Data Engineer", adjust the title reference in the summary). Experience job titles are IMMUTABLE — never change them.
 - **INJECT KEYWORDS INTO THE MIDDLE of the summary** — NOT at the beginning or end:
-  - The FIRST sentence (your opening pitch) must keep its original meaning — only update the job title if needed
+  - The FIRST sentence (your opening pitch) is IMMUTABLE — copy verbatim, only update job title if needed
   - The LAST sentence (your closing statement) must keep its original meaning — do NOT append keyword lists here
   - MIDDLE sentences are your injection targets: extend them with JD keywords using natural connectors ("and", "including", "such as")
   - Example: If the middle sentence says "specializing in backend engineering" and JD mentions "cloud infrastructure", enhance to: "specializing in backend engineering and cloud infrastructure"
@@ -25,17 +26,60 @@ The tailored resume should READ like the master resume — same voice, same stru
 - The result should sound like the CANDIDATE wrote it, not an AI
 - **DO NOT change the meaning of any existing sentence** — only EXTEND sentences with contextually relevant keywords
 
-## SECTION 2: SKILLS — ADD 85%+ OF JD SKILLS
-- KEEP THE EXACT SAME SKILL CATEGORIES as the master resume (e.g., "Languages", "Frameworks & Libraries", "Tools & Platforms", "Concepts") — DO NOT merge categories together
-- Each category must stay as its own separate line — never combine two categories into one
-- REORDER existing skills within each category to put JD-relevant skills first
-- ADD at least 85% of ALL hard skills mentioned in the JD to the CORRECT category — even if the candidate hasn't listed it before
-- Match the EXACT terminology from the JD: if JD says "PostgreSQL", write "PostgreSQL"
+## SECTION 2: SKILLS — STRICT JD KEYWORD EXTRACTION (100% PRECISION)
+
+### EXTRACTION RULE — NO FLUFF, NO INVENTION
+- Extract ONLY technical skills that are EXPLICITLY WRITTEN in the JD text. If a keyword is not literally in the JD, do NOT add it.
+- Use the EXACT term from the JD — if JD says "PostgreSQL", add "PostgreSQL". If JD says "Python", add "Python". No synonyms, no paraphrasing.
+- Do NOT infer, assume, or "read between the lines". If the JD says "cloud platforms" but does NOT name AWS specifically, do NOT add AWS. Only add what is explicitly stated.
+- Do NOT add skills from "nice to have" or "bonus" sections unless they are real technical keywords
+- Do NOT add generic filler like "Problem Solving", "Team Collaboration", "Communication" to technical skills — those belong in Summary only
+
+### INJECTION RULE
+- Add ALL extracted JD hard skills to the CORRECT skill category
+- Place JD-relevant skills FIRST within each category (reorder existing skills)
+- Match the EXACT terminology from the JD: if JD says "Kubernetes", write "Kubernetes", NOT "K8s"
 - Include BOTH forms of any acronym: "Amazon Web Services (AWS)" not just "AWS"
 - If a JD skill appears only in Summary, ALSO add it to Skills — double coverage means higher search ranking
-- Place new JD skills in the most appropriate existing category (e.g., "Hadoop" → "Tools & Platforms", "Spark" → "Frameworks & Libraries")
-- You may add a NEW category only if a JD skill truly doesn't fit any existing one
+
+### CATEGORY RULES
+- You MAY rename skill categories to better align with the JD's terminology, but ONLY when the JD clearly uses different naming:
+  - If the JD says "Cloud & DevOps" and master has "Tools & Platforms" → rename to "Cloud & DevOps"
+  - If the JD says "Languages" and master also has "Languages" → keep as "Languages" (no change needed)
+  - Only rename when it adds meaningful alignment — do NOT rename for trivial differences
+- The category name MUST accurately describe the skills inside it
+- You MUST have at most 7 skill categories total — never exceed 7
+- You may ADD new categories (up to the 7 limit) only if JD skills truly don't fit any existing category
+- You may NOT merge two existing categories into one — each master category must remain separate
+- Each category must stay as its own separate line
 - DO NOT remove any existing skills — only reorder and add
+- In tailoring_notes, include a "category_mapping" showing which categories were renamed (original → new name)
+
+### NO DUPLICATES — STRICT
+- Every skill must appear EXACTLY ONCE across ALL categories. No skill should be mentioned more than once in the entire skills section.
+- Before outputting, scan all categories and remove any duplicate entries. If a skill appears in two categories, keep it in the most relevant one and delete it from the other.
+- This includes variations of the same skill — do NOT list both "Docker" and "Docker Containers" or both "AWS" and "Amazon Web Services (AWS)". Pick the most complete form and list it once.
+
+### PROPER SKILL NAMING — ACCURATE AND PROFESSIONAL
+- Every skill name must be written in its full, proper, professional form. Do NOT use abbreviations or incomplete names:
+  - ❌ "CI/CD" → ✅ "CI/CD Pipelines"
+  - ❌ "REST" → ✅ "RESTful APIs"
+  - ❌ "K8s" → ✅ "Kubernetes"
+  - ❌ "ML" → ✅ "Machine Learning"
+  - ❌ "OOP" → ✅ "Object-Oriented Programming (OOP)"
+  - ❌ "DB" → ✅ "Database Management"
+  - ❌ "TDD" → ✅ "Test-Driven Development (TDD)"
+  - ❌ "Agile" → ✅ "Agile Methodologies"
+- If the JD uses a specific phrasing (e.g., "CI/CD Pipelines"), use THAT exact phrasing
+- If the JD uses an abbreviation only (e.g., "CI/CD"), expand it to the proper full form (e.g., "CI/CD Pipelines")
+- Every skill name should be recognizable and professional on a resume
+
+### SELF-CHECK
+- Before outputting, list every technical keyword from the JD. For each one, verify it appears in your Skills section.
+- If any JD keyword is missing from Skills, add it now.
+- Scan all categories for duplicates — remove any skill that appears more than once.
+- Verify every skill uses its proper, full professional name.
+- Target: 100% of explicit JD technical keywords present in Skills section, zero duplicates.
 
 ## SECTION 3: EXPERIENCE — SMART KEYWORD INJECTION (keep original voice)
 This is the KEY differentiator. You must KEEP the original bullet as-is, then SMARTLY ADD JD keywords WHERE THEY CONTEXTUALLY BELONG.
@@ -85,9 +129,9 @@ Result: "Designed responsive front-end interfaces using React and TypeScript for
 - Copy every certification name and date exactly as written
 
 ## COVERAGE TARGETS (MANDATORY)
-- **Skills section**: At least 85% of JD hard skills MUST be present
+- **Skills section**: 100% of JD hard skills that are EXPLICITLY mentioned MUST be present — no exceptions
 - **Summary + Skills + Experience combined**: At least 90% of ALL JD keywords MUST appear somewhere
-- **Self-check before output**: Count the JD hard skills, count how many you included. If below 85%, go back and add more to Skills.
+- **Self-check before output**: List every technical keyword from the JD. Verify each one appears in your Skills section. If any is missing, add it.
 - **Smart injection in Experience/Projects**: Add keywords ONLY where they contextually fit — never force them
 
 ### WHY THIS STRATEGY WORKS
@@ -217,7 +261,10 @@ Respond ONLY with valid JSON in this exact structure:
   "tailoring_notes": {
     "changes_made": ["<list each specific modification>"],
     "keywords_incorporated": ["<JD keywords added across all sections>"],
-    "keywords_skipped": ["<JD keywords that could NOT be added and why>"]
+    "keywords_skipped": ["<JD keywords that could NOT be added and why>"],
+    "category_mapping": {
+      "<original master category name>": "<new name if renamed, or same name if kept>"
+    }
   },
   "keywords_used": ["<exact list of all JD keywords you embedded>"]
 }
@@ -447,7 +494,9 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
 The candidate's current summary is:
 \"{original_summary}\"
 
-Your task: KEEP this summary as-is. Only INJECT JD keywords, the JD job title, and soft skills NATURALLY into the existing sentences. The output summary must still read like the candidate's own words. Do NOT replace sentences — only extend or lightly rephrase them to add keywords."""
+Your task: KEEP this summary as-is. Only INJECT JD keywords, the JD job title, and soft skills NATURALLY into the existing sentences. The output summary must still read like the candidate's own words. Do NOT replace sentences — only extend or lightly rephrase them to add keywords.
+
+**CRITICAL: THE FIRST SENTENCE IS SACRED.** Copy the first sentence of this summary VERBATIM into your output. The ONLY change allowed is swapping the job title if the JD uses a different one. Every other word in the first sentence must be identical to the original."""
 
     return f"""## Target Job Description
 {jd_text}
@@ -462,8 +511,8 @@ Your task: KEEP this summary as-is. Only INJECT JD keywords, the JD job title, a
 {hard_skills_directive}
 
 TAILOR this resume for the job above using SMART KEYWORD INJECTION. STRICT RULES:
-1. SUMMARY: Start from the ORIGINAL SUMMARY shown above. Keep every existing sentence. ONLY inject JD keywords, the JD job title, and soft skills into MIDDLE sentences where they naturally fit — do NOT change the opening or closing sentence meaning. Do NOT append keyword lists at the end.
-2. EXPAND the skills section — add at least 85% of ALL JD hard skills to the correct category
+1. SUMMARY: The FIRST SENTENCE is IMMUTABLE — copy it VERBATIM from the master resume (only swap the job title if JD uses a different one). Inject JD keywords ONLY into MIDDLE sentences. Do NOT append keyword lists at the end.
+2. SKILLS: Extract ONLY keywords that are EXPLICITLY written in the JD — no synonyms, no inferred skills, no fluff. 100% of explicit JD technical keywords must appear in Skills. Use EXACT JD terminology.
 3. SMART INJECT keywords into experience bullets — keep original wording, append/insert JD keywords where contextually appropriate
 4. SMART INJECT keywords into project bullets — same approach
 5. COPY all education, certifications, other experience EXACTLY from the master resume

@@ -127,6 +127,7 @@
     const resumeText = {{ resume.to_resume_text()|tojson if resume else '""' }};
     let currentLatex = '';
     let currentAppId = null;
+    let currentCoverLetterText = '';
 
     // Tab switching
     document.querySelectorAll('[data-tailor-tab]').forEach(tab => {
@@ -302,19 +303,83 @@
             document.querySelector('[data-tailor-tab="cover"]').classList.add('active');
             document.getElementById('ttab-cover').style.display = 'block';
 
-            const cl = data.cover_letter;
+            let cl = data.cover_letter;
+            // Defensively parse if the response arrives as a JSON string
+            if (typeof cl === 'string') {
+                try { cl = JSON.parse(cl); } catch(e) { /* leave as string */ }
+            }
             const text = typeof cl === 'string' ? cl : cl.cover_letter_text || JSON.stringify(cl, null, 2);
+            const formatUsed = cl.format_used || '';
+            const formatReason = cl.format_reasoning || '';
+            const wordCount = cl.word_count || '';
+            const jdKeywords = cl.jd_keywords_used || [];
+            const metrics = cl.metrics_used || [];
+            const companyHook = cl.company_research_hook || '';
+
+            let metaHtml = '';
+            if (formatUsed) {
+                metaHtml += `<div style="margin-bottom: var(--space-4); padding: var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-sm);">`;
+                metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Format:</strong> ${formatUsed}${formatReason ? ' — ' + formatReason : ''}</div>`;
+                if (wordCount) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Word Count:</strong> ${wordCount}</div>`;
+                if (companyHook) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Company Hook:</strong> ${companyHook}</div>`;
+                if (jdKeywords.length) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>JD Keywords Used:</strong> ${jdKeywords.join(', ')}</div>`;
+                if (metrics.length) metaHtml += `<div><strong>Metrics Referenced:</strong> ${metrics.join(', ')}</div>`;
+                metaHtml += `</div>`;
+            }
+
+            currentCoverLetterText = text;
 
             document.getElementById('cover-letter-output').innerHTML = `
                 <div class="flex-between mb-4">
-                    <h3 class="card-title">Cover Letter</h3>
-                    <button class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('cl-text').innerText); showToast('Copied!', 'success');">📋 Copy</button>
+                    <h3 class="card-title">Cover Letter${formatUsed ? ' — ' + formatUsed + ' Format' : ''}</h3>
+                    <div class="flex gap-4">
+                        <button class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('cl-text').innerText); showToast('Copied!', 'success');">📋 Copy</button>
+                        <button class="btn btn-sm btn-secondary" onclick="downloadCoverLetterPDF()">📥 Download PDF</button>
+                    </div>
                 </div>
+                ${metaHtml}
                 <div id="cl-text" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary)">${text}</div>
             `;
         } catch (e) {
             hideLoading();
             showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    async function downloadCoverLetterPDF() {
+        if (!currentCoverLetterText) return showToast('No cover letter to download.', 'error');
+
+        showLoading('Generating PDF...');
+        try {
+            const res = await fetch('/tailor/api/download-cover-letter-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cover_letter_text: currentCoverLetterText }),
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                // Extract filename from Content-Disposition header if available
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'Cover_Letter.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                showToast('Cover letter PDF downloaded!', 'success');
+            } else {
+                const data = await res.json();
+                hideLoading();
+                showToast(data.error || 'PDF generation failed.', 'error');
+            }
+        } catch (e) {
+            hideLoading();
+            showToast('PDF download failed: ' + e.message, 'error');
         }
     }
 

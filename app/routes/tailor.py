@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, session
+from flask import Blueprint, render_template, request, jsonify, session, send_file
 from app.routes.auth import login_required
 from app import db
 from app.models.master_resume import MasterResume
@@ -8,7 +8,7 @@ from app.models.resume_version import ResumeVersion
 from app.services.claude_client import claude
 from app.services.prompts.resume_tailor import RESUME_TAILOR_SYSTEM, build_tailor_message
 from app.services.prompts.bullet_rewriter import BULLET_REWRITER_SYSTEM, build_bullet_message
-from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, build_cover_letter_message
+from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, COVER_LETTER_ADJUST_SYSTEM, build_cover_letter_message, build_adjust_message
 from app.services.prompts.brutal_critic import BRUTAL_CRITIC_SYSTEM, build_critique_message
 from app.services.prompts.keyword_extractor import KEYWORD_EXTRACTOR_SYSTEM, build_keyword_message
 from app.services.prompts.jd_analyzer import JD_ANALYZER_SYSTEM, build_jd_analysis_message
@@ -336,50 +336,121 @@ def api_tailor():
                 # education from DB
                 tailored_data['education'] = master.education or []
 
-                # enforce skill category structure from master resume
-                # the AI can reorder/add items, but categories must stay separate
+                # ---- SKILLS ENFORCEMENT: accept JD-aligned renaming, enforce max 7, no skills lost ----
                 master_skills = master.skills or []
                 ai_skills = tailored_data.get('skills', [])
                 if master_skills and ai_skills:
-                    # collect all items the AI produced (across all its categories)
+                    # Get the category_mapping from tailoring_notes (original → renamed)
+                    notes = tailored_data.get('tailoring_notes', {})
+                    if isinstance(notes, str):
+                        notes = {}
+                    cat_mapping = notes.get('category_mapping', {})
+
+                    # Collect ALL items the AI produced across all categories
                     all_ai_items = set()
                     for group in ai_skills:
                         for item in group.get('items', []):
                             all_ai_items.add(item.strip())
 
-                    # rebuild using master resume categories, but with AI's item ordering
+                    # Build a mapping: master_index → ai_group
+                    # Strategy: use category_mapping first, then positional fallback
                     enforced_skills = []
+                    used_ai_indices = set()
                     used_items = set()
-                    for master_group in master_skills:
-                        cat_name = master_group.get('category', '')
+
+                    for m_idx, master_group in enumerate(master_skills):
+                        master_cat = master_group.get('category', '')
                         master_items = master_group.get('items', [])
 
-                        # find matching AI category (case-insensitive)
-                        ai_items = []
-                        for ai_group in ai_skills:
-                            if ai_group.get('category', '').strip().lower() == cat_name.strip().lower():
-                                ai_items = ai_group.get('items', [])
-                                break
+                        # 1. Check if AI renamed this category via category_mapping
+                        mapped_name = cat_mapping.get(master_cat, '').strip() if cat_mapping else ''
+                        matched_ai = None
+                        matched_ai_idx = None
 
-                        if ai_items:
-                            # use AI's order, but make sure all master items are included
-                            merged = list(ai_items)
+                        if mapped_name:
+                            # find the AI group with the mapped name
+                            for a_idx, ai_group in enumerate(ai_skills):
+                                if a_idx not in used_ai_indices and ai_group.get('category', '').strip().lower() == mapped_name.strip().lower():
+                                    matched_ai = ai_group
+                                    matched_ai_idx = a_idx
+                                    break
+
+                        # 2. Fallback: find AI group matching the original name exactly
+                        if matched_ai is None:
+                            for a_idx, ai_group in enumerate(ai_skills):
+                                if a_idx not in used_ai_indices and ai_group.get('category', '').strip().lower() == master_cat.strip().lower():
+                                    matched_ai = ai_group
+                                    matched_ai_idx = a_idx
+                                    break
+
+                        # 3. Fallback: positional match (if AI has same number of categories)
+                        if matched_ai is None and m_idx < len(ai_skills) and m_idx not in used_ai_indices:
+                            matched_ai = ai_skills[m_idx]
+                            matched_ai_idx = m_idx
+
+                        if matched_ai is not None and matched_ai_idx is not None:
+                            used_ai_indices.add(matched_ai_idx)
+                            # Use the AI's category name (renamed or original)
+                            new_cat_name = matched_ai.get('category', master_cat).strip()
+                            if not new_cat_name:
+                                new_cat_name = master_cat
+
+                            # Use AI's items + ensure all master items are present
+                            merged = list(matched_ai.get('items', []))
                             for orig in master_items:
                                 if orig not in merged:
                                     merged.append(orig)
-                            enforced_skills.append({'category': cat_name, 'items': merged})
-                            used_items.update(ai_items)
+                            enforced_skills.append({'category': new_cat_name, 'items': merged})
+                            used_items.update(merged)
                         else:
-                            # AI dropped this category -- restore from master + add any new items that fit
-                            enforced_skills.append({'category': cat_name, 'items': list(master_items)})
+                            # AI dropped this category entirely — restore from master
+                            enforced_skills.append({'category': master_cat, 'items': list(master_items)})
                             used_items.update(master_items)
 
-                    # any AI items not placed in existing categories go into a new category
+                    # Handle any extra AI categories (new ones the AI added for JD skills)
+                    MAX_CATEGORIES = 7
+                    for a_idx, ai_group in enumerate(ai_skills):
+                        if a_idx not in used_ai_indices:
+                            new_items = [item for item in ai_group.get('items', []) if item.strip() not in used_items]
+                            if new_items:
+                                if len(enforced_skills) < MAX_CATEGORIES:
+                                    # Accept the new category if under the limit
+                                    enforced_skills.append({
+                                        'category': ai_group.get('category', 'Additional Skills'),
+                                        'items': new_items
+                                    })
+                                    used_items.update(new_items)
+                                else:
+                                    # Over limit — distribute items into existing categories
+                                    # Put them in the last category as a catch-all
+                                    enforced_skills[-1]['items'].extend(new_items)
+                                    used_items.update(new_items)
+
+                    # Ensure any AI items not yet placed get added somewhere
                     leftover = [item for item in all_ai_items if item not in used_items]
-                    if leftover:
-                        enforced_skills.append({'category': 'Additional Skills', 'items': sorted(leftover)})
+                    if leftover and enforced_skills:
+                        enforced_skills[-1]['items'].extend(sorted(leftover))
+
+                    # Final cap at 7 categories
+                    if len(enforced_skills) > MAX_CATEGORIES:
+                        overflow = enforced_skills[MAX_CATEGORIES:]
+                        enforced_skills = enforced_skills[:MAX_CATEGORIES]
+                        for extra in overflow:
+                            enforced_skills[-1]['items'].extend(extra.get('items', []))
+
+                    # Deduplicate items within each category
+                    for group in enforced_skills:
+                        seen = set()
+                        deduped = []
+                        for item in group['items']:
+                            key = item.strip().lower()
+                            if key not in seen:
+                                seen.add(key)
+                                deduped.append(item)
+                        group['items'] = deduped
 
                     tailored_data['skills'] = enforced_skills
+                    print(f"[tailor] skills: {len(enforced_skills)} categories (max {MAX_CATEGORIES}), mapping={cat_mapping}")
 
                 # ---- SUMMARY ENFORCEMENT: ALWAYS use master + programmatic injection ----
                 # We NEVER trust the AI's summary rewrite. Instead we:
@@ -854,36 +925,368 @@ def api_tailor():
 @tailor_bp.route('/api/cover-letter', methods=['POST'])
 @login_required
 def api_cover_letter():
-    """Generate a matching cover letter."""
+    """Generate a matching cover letter with exactly 330 words in the body."""
     data = request.get_json()
     resume_text = data.get('resume_text', '')
     jd_text = data.get('jd_text', '')
     company_name = data.get('company_name', '')
     role_title = data.get('role_title', '')
+    TARGET_WORDS = 300
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
+    total_tokens = 0
+    total_cost = 0.0
+
+    # Step 1: Generate initial cover letter
     user_message = build_cover_letter_message(resume_text, jd_text, company_name, role_title)
-    result = claude.analyze(COVER_LETTER_SYSTEM, user_message, max_tokens=2048)
+    result = claude.analyze(COVER_LETTER_SYSTEM, user_message, max_tokens=2048, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
+
+    total_tokens += result.get('tokens_used', 0)
+    total_cost += result.get('cost_usd', 0.0)
+
+    response = result['response']
+    if not isinstance(response, dict):
+        return jsonify({'cover_letter': response, 'tokens_used': total_tokens, 'cost_usd': total_cost})
+
+    cover_letter_text = response.get('cover_letter_text', '')
+
+    # Step 2: Extract body text (between salutation and sign-off) and count words
+    def extract_body(text):
+        """Extract the body portion — everything between salutation and sign-off."""
+        lines = text.strip().split('\n')
+        body_lines = []
+        found_salutation = False
+        signoff_keywords = ['sincerely', 'best regards', 'regards', 'warm regards',
+                            'respectfully', 'yours truly', 'best,']
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if found_salutation:
+                    body_lines.append('')  # preserve paragraph breaks
+                continue
+
+            # Detect salutation
+            if not found_salutation and stripped.lower().startswith('dear '):
+                found_salutation = True
+                continue
+
+            # Detect sign-off
+            if found_salutation and stripped.lower().rstrip(',.') in signoff_keywords:
+                break
+            if found_salutation and any(stripped.lower().startswith(kw) for kw in signoff_keywords):
+                break
+
+            # Skip header lines (before salutation)
+            if not found_salutation:
+                continue
+
+            body_lines.append(stripped)
+
+        body_text = '\n'.join(body_lines).strip()
+        return body_text
+
+    def count_words(text):
+        return len(text.split())
+
+    body_text = extract_body(cover_letter_text)
+    current_count = count_words(body_text)
+
+    # Step 3: If word count is off, use adjustment loop (max 3 retries)
+    MAX_RETRIES = 3
+    for attempt in range(MAX_RETRIES):
+        if current_count == TARGET_WORDS:
+            break
+
+        print(f"[cover-letter] Body word count: {current_count}, target: {TARGET_WORDS}. Adjusting (attempt {attempt + 1})...")
+        adjust_msg = build_adjust_message(body_text, current_count, TARGET_WORDS)
+        adjust_result = claude.analyze(COVER_LETTER_ADJUST_SYSTEM, adjust_msg, max_tokens=2048, force_json=True)
+
+        total_tokens += adjust_result.get('tokens_used', 0)
+        total_cost += adjust_result.get('cost_usd', 0.0)
+
+        if adjust_result.get('error'):
+            break
+
+        adj_response = adjust_result['response']
+        if isinstance(adj_response, dict) and adj_response.get('adjusted_body'):
+            adjusted_body = adj_response['adjusted_body']
+            new_count = count_words(adjusted_body)
+
+            # Replace the body in the full cover letter text
+            # Reconstruct: header + salutation + adjusted body + sign-off
+            lines = cover_letter_text.strip().split('\n')
+            header_part = []
+            salutation_part = ''
+            signoff_part = []
+            found_sal = False
+            found_body_start = False
+            body_start_idx = 0
+            body_end_idx = len(lines)
+            signoff_keywords_check = ['sincerely', 'best regards', 'regards', 'warm regards',
+                                      'respectfully', 'yours truly', 'best,']
+
+            for idx, line in enumerate(lines):
+                stripped = line.strip()
+                if not found_sal:
+                    if stripped.lower().startswith('dear '):
+                        salutation_part = stripped
+                        found_sal = True
+                        found_body_start = False
+                    else:
+                        header_part.append(line)
+                elif not found_body_start:
+                    if stripped:
+                        found_body_start = True
+                        body_start_idx = idx
+                else:
+                    if stripped and (stripped.lower().rstrip(',.') in signoff_keywords_check or
+                                    any(stripped.lower().startswith(kw) for kw in signoff_keywords_check)):
+                        body_end_idx = idx
+                        signoff_part = [l for l in lines[idx:] if l.strip()]
+                        break
+
+            # Reconstruct the full letter
+            reconstructed = '\n'.join(header_part)
+            if salutation_part:
+                reconstructed += '\n\n' + salutation_part
+            reconstructed += '\n\n' + adjusted_body
+            if signoff_part:
+                reconstructed += '\n\n' + '\n'.join(signoff_part)
+
+            cover_letter_text = reconstructed
+            response['cover_letter_text'] = cover_letter_text
+            body_text = adjusted_body
+            current_count = new_count
+        else:
+            break
+
+    response['body_word_count'] = current_count
+    # Keep word_count for backward compatibility in the frontend
+    response['word_count'] = current_count
 
     # Update application record if provided
     app_id = data.get('application_id')
     if app_id:
         app_record = Application.query.get(app_id)
-        if app_record and isinstance(result['response'], dict):
-            app_record.cover_letter = result['response'].get('cover_letter_text', '')
+        if app_record and isinstance(response, dict):
+            app_record.cover_letter = response.get('cover_letter_text', '')
             db.session.commit()
 
     return jsonify({
-        'cover_letter': result['response'],
-        'tokens_used': result['tokens_used'],
-        'cost_usd': result['cost_usd'],
+        'cover_letter': response,
+        'tokens_used': total_tokens,
+        'cost_usd': total_cost,
     })
 
+
+@tailor_bp.route('/api/download-cover-letter-pdf', methods=['POST'])
+@login_required
+def api_download_cover_letter_pdf():
+    """Download the cover letter as a professionally formatted PDF."""
+    import io
+    from fpdf import FPDF
+
+    data = request.get_json()
+    cover_letter_text = data.get('cover_letter_text', '').strip()
+
+    if not cover_letter_text:
+        return jsonify({'error': 'No cover letter text provided'}), 400
+
+    try:
+        # Get the user's name for the filename
+        master = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
+        full_name = master.full_name if master else 'Cover_Letter'
+        # Format name for filename: "Meet Patel" -> "Meet_Patel"
+        file_name = full_name.replace(' ', '_') + '_Cover_Letter.pdf'
+
+        pdf = FPDF()
+        pdf.add_page()
+
+        # 1-inch margins (1 inch = 25.4mm)
+        pdf.set_margins(25.4, 25.4, 25.4)
+        pdf.set_auto_page_break(auto=True, margin=25.4)
+
+        # Load Arial Regular font (standard Arial, not Arial Unicode MS)
+        import os
+        font_name = 'Arial'
+        font_loaded = False
+        regular_paths = [
+            '/System/Library/Fonts/Supplemental/Arial.ttf',
+            '/Library/Fonts/Arial.ttf',
+            '/Library/Fonts/Arial Unicode.ttf',
+        ]
+        bold_path = '/System/Library/Fonts/Supplemental/Arial Bold.ttf'
+
+        for fpath in regular_paths:
+            if os.path.exists(fpath):
+                try:
+                    pdf.add_font(font_name, '', fpath)
+                    font_loaded = True
+                    break
+                except Exception:
+                    continue
+
+        # Load bold variant
+        bold_loaded = False
+        if font_loaded and os.path.exists(bold_path):
+            try:
+                pdf.add_font(font_name, 'B', bold_path)
+                bold_loaded = True
+            except Exception:
+                pass
+
+        if not font_loaded:
+            font_name = 'Helvetica'
+            bold_loaded = True
+
+        # Sanitize problematic Unicode chars for safety
+        replacements = {
+            '\u2014': '--', '\u2013': '-',
+            '\u2018': "'", '\u2019': "'",
+            '\u201c': '"', '\u201d': '"',
+            '\u2026': '...', '\u2022': '*',
+            '\u00a0': ' ',
+            '\u2192': '->', '\u2190': '<-',
+        }
+        for uni_char, ascii_char in replacements.items():
+            cover_letter_text = cover_letter_text.replace(uni_char, ascii_char)
+
+        pdf.set_text_color(30, 30, 30)
+
+        # Split into paragraphs
+        paragraphs = [p.strip() for p in cover_letter_text.split('\n\n') if p.strip()]
+
+        # Detect structure: header lines, date line, salutation, body, sign-off
+        header_lines = []
+        date_line = ''
+        salutation_line = ''
+        body_paragraphs = []
+        signoff_lines = []
+        signoff_keywords = ['sincerely', 'best regards', 'regards', 'warm regards',
+                            'respectfully', 'thank you', 'yours truly', 'best']
+
+        # Date pattern: "May 27, 2026", "January 2026", "12/27/2026", etc.
+        import re
+        date_pattern = re.compile(
+            r'^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}$|'
+            r'^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$|'
+            r'^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$',
+            re.IGNORECASE
+        )
+
+        # Parse paragraphs into sections
+        found_salutation = False
+        found_signoff = False
+        for para in paragraphs:
+            lines = [l.strip() for l in para.split('\n') if l.strip()]
+            if not found_salutation:
+                # Check if this paragraph contains the salutation
+                if any(line.lower().startswith('dear ') for line in lines):
+                    # Everything before "Dear" is header, "Dear" line is salutation
+                    for line in lines:
+                        if line.lower().startswith('dear '):
+                            salutation_line = line
+                            found_salutation = True
+                        elif not found_salutation:
+                            # Check if it's a date line
+                            if date_pattern.match(line.strip()):
+                                date_line = line.strip()
+                            else:
+                                header_lines.append(line)
+                else:
+                    # Check each line for date
+                    for line in lines:
+                        if date_pattern.match(line.strip()) and not date_line:
+                            date_line = line.strip()
+                        else:
+                            header_lines.append(line)
+            elif not found_signoff:
+                # Check if any line is a sign-off
+                first_line_lower = lines[0].lower().rstrip(',.')
+                if first_line_lower in signoff_keywords or any(
+                    lines[0].lower().startswith(kw) for kw in signoff_keywords
+                ):
+                    found_signoff = True
+                    signoff_lines.extend(lines)
+                else:
+                    body_paragraphs.append(para)
+            else:
+                signoff_lines.extend(lines)
+
+        # === RENDER HEADER ===
+        if header_lines:
+            # First line = name (bold, larger)
+            pdf.set_font(font_name, 'B' if bold_loaded else '', size=14)
+            pdf.cell(0, 7, header_lines[0], new_x='LMARGIN', new_y='NEXT', align='C')
+
+            # Remaining header lines (contact info — smaller, centered)
+            if len(header_lines) > 1:
+                pdf.set_font(font_name, '', size=10)
+                pdf.set_text_color(80, 80, 80)
+                for line in header_lines[1:]:
+                    pdf.cell(0, 5, line, new_x='LMARGIN', new_y='NEXT', align='C')
+                pdf.set_text_color(30, 30, 30)
+
+            # Separator line
+            pdf.ln(3)
+            y = pdf.get_y()
+            pdf.set_draw_color(180, 180, 180)
+            pdf.line(25.4, y, 595.28 / 72 * 25.4 - 25.4, y)
+            pdf.ln(6)
+
+        # === RENDER DATE ===
+        if date_line:
+            pdf.set_font(font_name, '', size=10)
+            pdf.cell(0, 6, date_line, new_x='LMARGIN', new_y='NEXT')
+            pdf.ln(4)
+
+        # === RENDER SALUTATION ===
+        if salutation_line:
+            pdf.set_font(font_name, '', size=10)
+            pdf.cell(0, 6, salutation_line, new_x='LMARGIN', new_y='NEXT')
+            pdf.ln(4)
+
+        # === RENDER BODY PARAGRAPHS ===
+        for i, para in enumerate(body_paragraphs):
+            pdf.set_font(font_name, '', size=10)
+            clean_text = ' '.join(l.strip() for l in para.split('\n') if l.strip())
+            pdf.multi_cell(0, 5.5, clean_text, new_x='LMARGIN', new_y='NEXT')
+            if i < len(body_paragraphs) - 1:
+                pdf.ln(4)
+
+        # === RENDER SIGN-OFF ===
+        if signoff_lines:
+            pdf.ln(6)
+            for j, line in enumerate(signoff_lines):
+                if line.strip() == full_name or line.strip() == full_name.strip():
+                    pdf.set_font(font_name, 'B' if bold_loaded else '', size=10)
+                    pdf.cell(0, 6, line, new_x='LMARGIN', new_y='NEXT')
+                else:
+                    pdf.set_font(font_name, '', size=10)
+                    pdf.cell(0, 6, line, new_x='LMARGIN', new_y='NEXT')
+
+        # Generate PDF bytes
+        pdf_bytes = pdf.output()
+        buffer = io.BytesIO(pdf_bytes)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=file_name,
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[cover-letter-pdf] Error: {e}")
+        return jsonify({'error': f'PDF generation failed: {str(e)}'}), 500
 
 @tailor_bp.route('/api/ats-score', methods=['POST'])
 @login_required

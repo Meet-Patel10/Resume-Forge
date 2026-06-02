@@ -670,7 +670,7 @@
         const company = document.getElementById('company-name').value.trim();
         const role = document.getElementById('role-title').value.trim();
 
-        showLoading('Running 3-step pipeline: ① Analyze JD → ② Extract Keywords → ③ Tailor Resume... This takes 30-60 seconds.');
+        showLoading('Running 4-step pipeline: ① Critique → ② Keywords → ③ Tailor → ④ Humanize... This takes 60-90 seconds.');
         try {
             const res = await fetch('/tailor/api/tailor', {
                 method: 'POST',

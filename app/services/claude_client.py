@@ -1,7 +1,5 @@
 import json
-import time
 import boto3
-from botocore.config import Config as BotoConfig
 from flask import current_app
 
 
@@ -42,18 +40,11 @@ class BedrockClient:
                     "Get them from IAM → Users → Security Credentials → Create Access Key."
                 )
 
-            # 90s read timeout prevents hanging forever on slow/stuck connections
-            boto_cfg = BotoConfig(
-                read_timeout=90,
-                connect_timeout=10,
-                retries={'max_attempts': 1},
-            )
             self._client = boto3.client(
                 'bedrock-runtime',
                 region_name=region,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
-                config=boto_cfg,
             )
         return self._client
 
@@ -65,23 +56,25 @@ class BedrockClient:
             env = 'testing'
         return self.MODELS[env], env
 
-    def analyze(self, system_prompt, user_message, max_tokens=4096, temperature=0.2):
+    def analyze(self, system_prompt, user_message, max_tokens=4096, temperature=0.2, force_json=False):
         """Send a prompt to Bedrock, return parsed response + token/cost info.
 
         temperature: 0.0-1.0. Lower = more deterministic. Default 0.2 for
         consistent structured output. Use 0.4-0.5 for creative writing.
+        force_json: If True, prefill the assistant response with '{' to force
+        JSON output (Anthropic models only). Prevents the model from asking
+        clarifying questions instead of producing structured output.
         """
         try:
             model_cfg, env_name = self._get_model_config()
             model_id = model_cfg['model_id']
             provider = model_cfg['provider']
 
-            print(f"[bedrock] Using {model_id} (env={env_name}, max_tokens={max_tokens})")
-            t0 = time.time()
+            print(f"[bedrock] Using {model_id} (env={env_name})")
 
             # Build request body based on provider
             if provider == 'anthropic':
-                body = self._build_anthropic_body(system_prompt, user_message, max_tokens, temperature)
+                body = self._build_anthropic_body(system_prompt, user_message, max_tokens, temperature, force_json)
             else:
                 body = self._build_amazon_body(system_prompt, user_message, max_tokens, temperature)
 
@@ -95,11 +88,9 @@ class BedrockClient:
 
             # Parse response
             response_body = json.loads(response['body'].read())
-            elapsed = time.time() - t0
-            print(f"[bedrock] API call completed in {elapsed:.1f}s")
 
             if provider == 'anthropic':
-                return self._parse_anthropic_response(response_body, model_cfg)
+                return self._parse_anthropic_response(response_body, model_cfg, force_json)
             else:
                 return self._parse_amazon_response(response_body, model_cfg)
 
@@ -112,19 +103,29 @@ class BedrockClient:
                 'cost_usd': 0,
             }
 
-    def _build_anthropic_body(self, system_prompt, user_message, max_tokens, temperature):
+    def _build_anthropic_body(self, system_prompt, user_message, max_tokens, temperature, force_json=False):
         """Build request body for Anthropic Claude models on Bedrock."""
+        messages = [
+            {
+                'role': 'user',
+                'content': user_message,
+            }
+        ]
+
+        # Prefill technique: start the assistant's response with '{' to force JSON
+        # This prevents the model from asking clarifying questions or outputting text
+        if force_json:
+            messages.append({
+                'role': 'assistant',
+                'content': '{',
+            })
+
         return {
             'anthropic_version': 'bedrock-2023-05-31',
             'max_tokens': max_tokens,
             'temperature': temperature,
             'system': system_prompt,
-            'messages': [
-                {
-                    'role': 'user',
-                    'content': user_message,
-                }
-            ],
+            'messages': messages,
         }
 
     def _build_amazon_body(self, system_prompt, user_message, max_tokens, temperature):
@@ -149,9 +150,14 @@ class BedrockClient:
             ],
         }
 
-    def _parse_anthropic_response(self, response_body, model_cfg):
+    def _parse_anthropic_response(self, response_body, model_cfg, force_json=False):
         """Parse Claude response from Bedrock."""
         raw_text = response_body.get('content', [{}])[0].get('text', '')
+
+        # When force_json is enabled, the assistant prefill was '{' so the
+        # model's continuation won't include the opening brace — prepend it.
+        if force_json and raw_text and not raw_text.strip().startswith('{'):
+            raw_text = '{' + raw_text
 
         # Token usage
         usage = response_body.get('usage', {})

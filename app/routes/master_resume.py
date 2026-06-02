@@ -126,7 +126,7 @@ def upload_resume():
 
         # 2. Parse text into structured JSON using AI
         user_message = f"Here is the raw resume text:\n\n{raw_text}"
-        ai_result = claude.analyze(MASTER_PARSER_SYSTEM, user_message)
+        ai_result = claude.analyze(MASTER_PARSER_SYSTEM, user_message, force_json=True)
 
         if ai_result.get('error'):
             return jsonify({'error': f"AI parsing failed: {ai_result['error']}"}), 500
@@ -198,7 +198,7 @@ def ats_check():
         import json as json_mod
 
         jd_msg = build_jd_analysis_message(resume_text, jd_text)
-        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000)
+        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000, force_json=True)
         if not jd_result.get('error'):
             jd_analysis = jd_result['response']
             if isinstance(jd_analysis, str):

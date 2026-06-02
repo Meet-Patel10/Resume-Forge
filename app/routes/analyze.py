@@ -33,7 +33,7 @@ def api_critique():
 
     # Get critique from Claude
     user_message = build_critique_message(resume_text, jd_text)
-    result = claude.analyze(BRUTAL_CRITIC_SYSTEM, user_message, max_tokens=4096)
+    result = claude.analyze(BRUTAL_CRITIC_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -71,7 +71,7 @@ def api_keywords():
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
     user_message = build_keyword_message(resume_text, jd_text)
-    result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, user_message, max_tokens=4096)
+    result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -110,7 +110,7 @@ def api_gap_fill():
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
     user_message = build_gap_message(resume_text, jd_text, keyword_gaps)
-    result = claude.analyze(GAP_FILLER_SYSTEM, user_message, max_tokens=4096)
+    result = claude.analyze(GAP_FILLER_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500

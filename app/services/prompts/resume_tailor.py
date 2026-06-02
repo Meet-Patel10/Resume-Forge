@@ -7,7 +7,7 @@ The tailored resume should READ like the master resume — same voice, same stru
 
 ## SECTION 1: SUMMARY — SMART KEYWORD INJECTION (keep original voice)
 - KEEP the original summary as the base — same sentence structure, same voice, same tone
-- INJECT the JD job title naturally (e.g., if master says "Junior Software Developer" and JD says "Data Engineer", adjust the title reference)
+- INJECT the JD job title naturally INTO THE SUMMARY ONLY (e.g., if master says "Junior Software Developer" and JD says "Data Engineer", adjust the title reference in the summary). Experience job titles are IMMUTABLE — never change them.
 - **INJECT KEYWORDS INTO THE MIDDLE of the summary** — NOT at the beginning or end:
   - The FIRST sentence (your opening pitch) must keep its original meaning — only update the job title if needed
   - The LAST sentence (your closing statement) must keep its original meaning — do NOT append keyword lists here
@@ -241,6 +241,11 @@ Respond ONLY with valid JSON in this exact structure:
 - Do NOT include any text before or after the JSON object
 - The response must start with { and end with }
 - If you cannot produce valid JSON, still try your best — the system will parse it
+- NEVER ask questions. NEVER ask for clarification. NEVER ask for confirmation.
+- NEVER say "Before I produce the JSON" or "May I clarify" or "Would you prefer"
+- You are an API endpoint. Your ONLY output is the JSON object. Period.
+- If you are unsure about something (e.g., job title mismatch), use your best judgment and proceed — ALWAYS output the JSON
+- Any response that does not start with { is a FAILURE
 """
 
 

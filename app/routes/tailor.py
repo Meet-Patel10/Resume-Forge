@@ -40,7 +40,7 @@ def api_rewrite_bullets():
         return jsonify({'error': 'Bullets and job description are required'}), 400
 
     user_message = build_bullet_message(bullets, jd_text, role_context)
-    result = claude.analyze(BULLET_REWRITER_SYSTEM, user_message, max_tokens=4096)
+    result = claude.analyze(BULLET_REWRITER_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -69,13 +69,12 @@ def api_tailor():
     total_tokens = 0
     total_cost = 0.0
     pipeline_steps = []
-    pipeline_start = __import__('time').time()
 
     # step 0: parse the JD for skills, requirements, etc.
     jd_analysis = None
     try:
         jd_msg = build_jd_analysis_message(resume_text, jd_text)
-        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000)
+        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000, force_json=True)
         if not jd_result.get('error'):
             jd_analysis = jd_result['response']
             if isinstance(jd_analysis, str):
@@ -93,7 +92,7 @@ def api_tailor():
             total_tokens += jd_result.get('tokens_used', 0)
             total_cost += jd_result.get('cost_usd', 0)
             pipeline_steps.append('jd_analysis')
-            print(f"[tailor] jd analysis done ({jd_result.get('tokens_used', 0)} tokens)")
+            print(f"[tailor] jd analysis done")
         else:
             print(f"[tailor] jd analysis skipped: {jd_result['error']}")
     except Exception as e:
@@ -103,7 +102,7 @@ def api_tailor():
     critique_data = None
     try:
         critique_msg = build_critique_message(resume_text, jd_text)
-        critique_result = claude.analyze(BRUTAL_CRITIC_SYSTEM, critique_msg, max_tokens=3000)
+        critique_result = claude.analyze(BRUTAL_CRITIC_SYSTEM, critique_msg, max_tokens=3000, force_json=True)
         if not critique_result.get('error'):
             critique_data = critique_result['response']
             # try to parse string response
@@ -122,7 +121,7 @@ def api_tailor():
             total_tokens += critique_result.get('tokens_used', 0)
             total_cost += critique_result.get('cost_usd', 0)
             pipeline_steps.append('critique')
-            print(f"[tailor] critique done ({critique_result.get('tokens_used', 0)} tokens)")
+            print("[tailor] critique done")
         else:
             print(f"[tailor] critique skipped: {critique_result['error']}")
     except Exception as e:
@@ -132,7 +131,7 @@ def api_tailor():
     keyword_data = None
     try:
         kw_msg = build_keyword_message(resume_text, jd_text)
-        kw_result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, kw_msg, max_tokens=3000)
+        kw_result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, kw_msg, max_tokens=3000, force_json=True)
         if not kw_result.get('error'):
             keyword_data = kw_result['response']
             # parse if string
@@ -151,7 +150,7 @@ def api_tailor():
             total_tokens += kw_result.get('tokens_used', 0)
             total_cost += kw_result.get('cost_usd', 0)
             pipeline_steps.append('keywords')
-            print(f"[tailor] keywords done ({kw_result.get('tokens_used', 0)} tokens)")
+            print("[tailor] keywords done")
         else:
             print(f"[tailor] keywords skipped: {kw_result['error']}")
     except Exception as e:
@@ -166,12 +165,29 @@ def api_tailor():
         jd_analysis=jd_analysis,
     )
 
-    # retry up to 2 times (not 3 — avoid excessive wait on repeated failures)
+    # retry up to 4 times -- the tailor call is the most critical and must return valid JSON
+    # We use force_json=True (assistant prefill with '{') to make conversational responses impossible
     result = None
     required_keys = {'summary', 'skills', 'experience'}
-    for attempt in range(2):
-        temp = 0.15 if attempt == 0 else 0.1
-        attempt_result = claude.analyze(RESUME_TAILOR_SYSTEM, user_message, max_tokens=8000, temperature=temp)
+    retry_messages = [
+        None,  # first attempt: use original message as-is
+        "\n\n⚠️ CRITICAL: You MUST respond with ONLY a valid JSON object. Start with { and end with }. Do NOT ask questions. Do NOT include any text outside the JSON. Output the complete resume JSON now.",
+        "\n\n🚨 MANDATORY: OUTPUT ONLY JSON. No questions, no clarifications, no explanations. Your response MUST be a single JSON object starting with { and ending with }. Any non-JSON output is a system failure. Produce the JSON immediately.",
+        "\n\n🛑 FINAL ATTEMPT: Return ONLY the JSON resume object. Nothing else. Start with {.",
+    ]
+
+    for attempt in range(4):
+        temp = max(0.0, 0.15 - (attempt * 0.05))  # 0.15 → 0.10 → 0.05 → 0.00
+        msg = user_message
+        if attempt > 0 and retry_messages[attempt]:
+            msg = user_message + retry_messages[attempt]
+            print(f"[tailor] attempt {attempt + 1}: retrying with stricter JSON instruction (temp={temp})")
+
+        attempt_result = claude.analyze(
+            RESUME_TAILOR_SYSTEM, msg,
+            max_tokens=16000, temperature=temp,
+            force_json=True
+        )
 
         if attempt_result.get('error'):
             print(f"[tailor] attempt {attempt + 1} error: {attempt_result['error']}")
@@ -218,7 +234,7 @@ def api_tailor():
             else:
                 print(f"[tailor] attempt {attempt + 1} returned unparseable string ({len(raw)} chars), retrying...")
                 result = attempt_result
-                # DON'T break — retry with lower temperature
+                # DON'T break — retry with lower temperature + stronger instruction
         else:
             print(f"[tailor] attempt {attempt + 1} returned unusable data, retrying...")
             result = attempt_result
@@ -229,8 +245,7 @@ def api_tailor():
     total_tokens += result.get('tokens_used', 0)
     total_cost += result.get('cost_usd', 0)
     pipeline_steps.append('tailor')
-    pipeline_elapsed = __import__('time').time() - pipeline_start
-    print(f"[tailor] done ({pipeline_steps}) — total {pipeline_elapsed:.1f}s, {total_tokens} tokens, ${total_cost:.4f}")
+    print(f"[tailor] done ({pipeline_steps})")
 
     tailored_data = result['response']
 
@@ -608,9 +623,61 @@ def api_tailor():
         except Exception as e:
             print(f"[tailor] enforcement error (non-fatal): {e}")
 
-    # NOTE: Structure validator AI call removed — it added 30-60s latency for a
-    # 16K-token call that duplicated what the programmatic enforcement above
-    # already handles (skill categories, bullet counts, entries, header, education).
+    # step 4.5: structure validation agent — ensures JSON matches template format
+    if isinstance(tailored_data, dict):
+        try:
+            from app.services.prompts.structure_validator import STRUCTURE_VALIDATOR_SYSTEM, build_validator_message
+
+            master = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
+            if master:
+                master_json = master.to_dict()
+                # build master structure for comparison
+                master_structure = {
+                    'header': {
+                        'name': master.full_name or '',
+                        'location': master.location or '',
+                        'phone': master.phone or '',
+                        'email': master.email or '',
+                        'linkedin': master.linkedin_url or '',
+                        'github': master.github_url or '',
+                    },
+                    'skills': master.skills or [],
+                    'education': master.education or [],
+                }
+                # add bullets structure
+                if master.bullets:
+                    exp_entries = {}
+                    proj_entries = {}
+                    for b in sorted(master.bullets, key=lambda x: x.sort_order or 0):
+                        if (b.section_type or 'experience') == 'experience' and b.is_active:
+                            key = f"{b.role}|||{b.company}"
+                            if key not in exp_entries:
+                                exp_entries[key] = {'title': b.role, 'company': b.company, 'bullets': []}
+                            exp_entries[key]['bullets'].append(b.original_text)
+                        elif b.section_type == 'project' and b.is_active:
+                            if b.company not in proj_entries:
+                                proj_entries[b.company] = {'name': b.company, 'bullets': []}
+                            proj_entries[b.company]['bullets'].append(b.original_text)
+                    master_structure['experience'] = list(exp_entries.values())
+                    master_structure['projects'] = list(proj_entries.values())
+
+                validator_msg = build_validator_message(tailored_data, master_structure)
+                val_result = claude.analyze(STRUCTURE_VALIDATOR_SYSTEM, validator_msg, max_tokens=16000, temperature=0.1, force_json=True)
+
+                if not val_result.get('error'):
+                    val_resp = val_result.get('response')
+                    if isinstance(val_resp, dict) and 'summary' in val_resp and 'skills' in val_resp:
+                        tailored_data = val_resp
+                        total_tokens += val_result.get('tokens_used', 0)
+                        total_cost += val_result.get('cost_usd', 0)
+                        pipeline_steps.append('structure_validator')
+                        print("[tailor] structure validation done — JSON fixed")
+                    else:
+                        print(f"[tailor] structure validator returned unusable data, skipping")
+                else:
+                    print(f"[tailor] structure validator error: {val_result['error']}")
+        except Exception as e:
+            print(f"[tailor] structure validator error (non-fatal): {e}")
 
     # NOTE: External humanize API removed. Humanization rules are now baked
     # directly into the tailor prompt (RESUME_TAILOR_SYSTEM) so the AI produces

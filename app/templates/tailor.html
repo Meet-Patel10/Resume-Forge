@@ -291,10 +291,32 @@
                     application_id: currentAppId,
                 })
             });
-            const data = await res.json();
+
+            // Handle non-OK responses before trying to parse JSON
+            if (!res.ok) {
+                hideLoading();
+                let errMsg = 'Server error (' + res.status + ')';
+                try {
+                    const errData = await res.json();
+                    if (errData && errData.error) errMsg = errData.error;
+                } catch(e) { /* response wasn't JSON */ }
+                return showToast(errMsg, 'error');
+            }
+
+            let data;
+            try {
+                data = await res.json();
+            } catch(e) {
+                hideLoading();
+                return showToast('Server returned invalid response', 'error');
+            }
+
             hideLoading();
 
-            if (data.error) return showToast(data.error, 'error');
+            if (!data || data.error) {
+                return showToast((data && data.error) || 'Unknown error', 'error');
+            }
+
             updateCost(data.cost_usd);
 
             // Switch to cover letter tab
@@ -303,18 +325,31 @@
             document.querySelector('[data-tailor-tab="cover"]').classList.add('active');
             document.getElementById('ttab-cover').style.display = 'block';
 
-            let cl = data.cover_letter;
-            // Defensively parse if the response arrives as a JSON string
-            if (typeof cl === 'string') {
-                try { cl = JSON.parse(cl); } catch(e) { /* leave as string */ }
+            // Extract text — flat response format: data.cover_letter_text is a plain string
+            let text = (data.cover_letter_text || '').toString();
+            const formatUsed = data.format_used || '';
+            const formatReason = data.format_reasoning || '';
+            const wordCount = data.word_count || '';
+            const jdKeywords = data.jd_keywords_used || [];
+            const metrics = data.metrics_used || [];
+            const companyHook = data.company_research_hook || '';
+
+            // Legacy fallback: if old nested format comes back (data.cover_letter is a dict)
+            if (!text) {
+                const cl = data.cover_letter;
+                if (cl && typeof cl === 'object' && cl.cover_letter_text) {
+                    text = cl.cover_letter_text;
+                } else if (cl && typeof cl === 'string') {
+                    try {
+                        const parsed = JSON.parse(cl);
+                        text = (parsed && parsed.cover_letter_text) ? parsed.cover_letter_text : cl;
+                    } catch(e) { text = cl; }
+                }
             }
-            const text = typeof cl === 'string' ? cl : cl.cover_letter_text || JSON.stringify(cl, null, 2);
-            const formatUsed = cl.format_used || '';
-            const formatReason = cl.format_reasoning || '';
-            const wordCount = cl.word_count || '';
-            const jdKeywords = cl.jd_keywords_used || [];
-            const metrics = cl.metrics_used || [];
-            const companyHook = cl.company_research_hook || '';
+
+            if (!text) {
+                return showToast('Cover letter generation failed — no text returned', 'error');
+            }
 
             let metaHtml = '';
             if (formatUsed) {

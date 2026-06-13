@@ -336,7 +336,7 @@ def api_tailor():
                 # education from DB
                 tailored_data['education'] = master.education or []
 
-                # ---- SKILLS ENFORCEMENT: accept JD-aligned renaming, enforce max 7, no skills lost ----
+                # ---- SKILLS ENFORCEMENT: JD-dominant, competing tech suppressed, global dedup ----
                 master_skills = master.skills or []
                 ai_skills = tailored_data.get('skills', [])
                 if master_skills and ai_skills:
@@ -345,6 +345,86 @@ def api_tailor():
                     if isinstance(notes, str):
                         notes = {}
                     cat_mapping = notes.get('category_mapping', {})
+
+                    # ---- Competing technology groups ----
+                    # Each list is a group of direct competitors.
+                    # If JD mentions one, the others should be suppressed.
+                    COMPETING_TECH_GROUPS = [
+                        # Cloud platforms
+                        ['aws', 'amazon web services', 'amazon web services (aws)',
+                         'azure', 'microsoft azure',
+                         'gcp', 'google cloud', 'google cloud platform', 'google cloud platform (gcp)'],
+                        # Frontend frameworks
+                        ['react', 'react.js', 'reactjs',
+                         'angular', 'angular.js', 'angularjs',
+                         'vue', 'vue.js', 'vuejs',
+                         'svelte', 'svelte.js'],
+                        # SQL databases
+                        ['postgresql', 'postgres',
+                         'mysql',
+                         'mariadb',
+                         'sql server', 'mssql', 'microsoft sql server'],
+                        # NoSQL databases
+                        ['mongodb', 'dynamodb', 'cassandra', 'couchdb'],
+                        # CI/CD tools
+                        ['jenkins',
+                         'github actions',
+                         'gitlab ci', 'gitlab ci/cd',
+                         'circleci', 'circle ci',
+                         'travis ci', 'travisci'],
+                        # Container orchestration
+                        ['kubernetes', 'k8s',
+                         'docker swarm',
+                         'ecs', 'amazon ecs',
+                         'nomad'],
+                        # IaC tools
+                        ['terraform',
+                         'cloudformation', 'aws cloudformation',
+                         'pulumi'],
+                        # Message queues
+                        ['kafka', 'apache kafka',
+                         'rabbitmq', 'rabbit mq',
+                         'sqs', 'amazon sqs',
+                         'activemq', 'active mq'],
+                        # Backend frameworks (Python)
+                        ['django', 'flask', 'fastapi'],
+                        # Backend frameworks (Java)
+                        ['spring', 'spring boot',
+                         'quarkus', 'micronaut'],
+                    ]
+
+                    # Build a set of JD hard skills (lowercase) for lookup
+                    jd_hard_skills_lower = set()
+                    if jd_analysis and isinstance(jd_analysis, dict):
+                        for s in jd_analysis.get('hard_skills', []):
+                            if isinstance(s, str):
+                                jd_hard_skills_lower.add(s.strip().lower())
+                        for s in jd_analysis.get('top_keywords', []):
+                            if isinstance(s, str):
+                                jd_hard_skills_lower.add(s.strip().lower())
+
+                    # Determine which competing skills to suppress
+                    # For each group: if JD mentions any member, suppress all OTHER members
+                    skills_to_suppress = set()
+                    for group in COMPETING_TECH_GROUPS:
+                        jd_mentions = [g for g in group if g in jd_hard_skills_lower]
+                        if jd_mentions:
+                            # JD explicitly names some members → suppress the rest
+                            for g in group:
+                                if g not in jd_hard_skills_lower:
+                                    skills_to_suppress.add(g)
+
+                    def _should_suppress(skill_name):
+                        """Check if a skill should be suppressed as a competing technology."""
+                        sl = skill_name.strip().lower()
+                        # Check exact match
+                        if sl in skills_to_suppress:
+                            return True
+                        # Check if skill contains a suppressed term (e.g., "Amazon Web Services (AWS)" contains "aws")
+                        for suppressed in skills_to_suppress:
+                            if suppressed in sl or sl in suppressed:
+                                return True
+                        return False
 
                     # Collect ALL items the AI produced across all categories
                     all_ai_items = set()
@@ -395,17 +475,25 @@ def api_tailor():
                             if not new_cat_name:
                                 new_cat_name = master_cat
 
-                            # Use AI's items + ensure all master items are present
+                            # Accept the AI's skill list (which should already
+                            # apply Tier 1/2/3 filtering from the prompt).
+                            # We do NOT force-add all master items back — the AI
+                            # intentionally removed Tier 3 (irrelevant) skills.
                             merged = list(matched_ai.get('items', []))
-                            for orig in master_items:
-                                if orig not in merged:
-                                    merged.append(orig)
                             enforced_skills.append({'category': new_cat_name, 'items': merged})
                             used_items.update(merged)
                         else:
-                            # AI dropped this category entirely — restore from master
-                            enforced_skills.append({'category': master_cat, 'items': list(master_items)})
-                            used_items.update(master_items)
+                            # AI dropped this category entirely — this means all
+                            # skills in it were Tier 3 / irrelevant. Only restore
+                            # if some master items are JD-relevant.
+                            relevant_master = [
+                                item for item in master_items
+                                if item.strip().lower() in jd_hard_skills_lower
+                            ]
+                            if relevant_master:
+                                enforced_skills.append({'category': master_cat, 'items': relevant_master})
+                                used_items.update(relevant_master)
+                            # else: category was all Tier 3 — correctly omitted
 
                     # Handle any extra AI categories (new ones the AI added for JD skills)
                     MAX_CATEGORIES = 7
@@ -422,7 +510,6 @@ def api_tailor():
                                     used_items.update(new_items)
                                 else:
                                     # Over limit — distribute items into existing categories
-                                    # Put them in the last category as a catch-all
                                     enforced_skills[-1]['items'].extend(new_items)
                                     used_items.update(new_items)
 
@@ -438,16 +525,77 @@ def api_tailor():
                         for extra in overflow:
                             enforced_skills[-1]['items'].extend(extra.get('items', []))
 
-                    # Deduplicate items within each category
+                    # ---- COMPETING TECH SUPPRESSION (server-side enforcement) ----
+                    # Remove skills that compete with JD-specified technologies.
+                    # The AI prompt should have already done this, but we enforce it
+                    # programmatically as a safety net.
+                    if skills_to_suppress:
+                        suppressed_log = []
+                        for group in enforced_skills:
+                            original_items = group['items']
+                            filtered = []
+                            for item in original_items:
+                                if _should_suppress(item) and item.strip().lower() not in jd_hard_skills_lower:
+                                    suppressed_log.append(item)
+                                else:
+                                    filtered.append(item)
+                            group['items'] = filtered
+                        if suppressed_log:
+                            print(f"[tailor] competing tech suppressed: {suppressed_log}")
+
+                    # ---- GLOBAL CROSS-CATEGORY DEDUPLICATION ----
+                    # A skill must appear EXACTLY ONCE across ALL categories.
+                    # This replaces the old per-category-only dedup.
+                    global_seen = set()
+                    # Also track common variations for fuzzy dedup
+                    VARIATION_MAP = {
+                        'k8s': 'kubernetes',
+                        'postgres': 'postgresql',
+                        'mongo': 'mongodb',
+                        'react.js': 'react',
+                        'reactjs': 'react',
+                        'vue.js': 'vue',
+                        'vuejs': 'vue',
+                        'angular.js': 'angular',
+                        'angularjs': 'angular',
+                        'node': 'node.js',
+                        'nodejs': 'node.js',
+                        'express': 'express.js',
+                        'expressjs': 'express.js',
+                        'restful api': 'restful apis',
+                        'rest api': 'restful apis',
+                        'rest apis': 'restful apis',
+                        'ci/cd': 'ci/cd pipelines',
+                        'ml': 'machine learning',
+                        'dl': 'deep learning',
+                        'oop': 'object-oriented programming (oop)',
+                        'tdd': 'test-driven development (tdd)',
+                        'agile': 'agile methodologies',
+                    }
+
+                    def _normalize_skill(name):
+                        """Normalize a skill name for dedup comparison."""
+                        n = name.strip().lower()
+                        # Strip parenthetical abbreviations for comparison
+                        # e.g., "Amazon Web Services (AWS)" → "amazon web services"
+                        import re as _re_dedup
+                        n_base = _re_dedup.sub(r'\s*\([^)]*\)\s*', '', n).strip()
+                        # Check variation map
+                        return VARIATION_MAP.get(n_base, VARIATION_MAP.get(n, n_base))
+
                     for group in enforced_skills:
-                        seen = set()
                         deduped = []
                         for item in group['items']:
-                            key = item.strip().lower()
-                            if key not in seen:
-                                seen.add(key)
+                            norm = _normalize_skill(item)
+                            if norm not in global_seen:
+                                global_seen.add(norm)
+                                # Also add the raw lowercase to catch exact matches
+                                global_seen.add(item.strip().lower())
                                 deduped.append(item)
                         group['items'] = deduped
+
+                    # Remove any categories that became empty after filtering
+                    enforced_skills = [g for g in enforced_skills if g.get('items')]
 
                     tailored_data['skills'] = enforced_skills
                     print(f"[tailor] skills: {len(enforced_skills)} categories (max {MAX_CATEGORIES}), mapping={cat_mapping}")
@@ -926,12 +1074,21 @@ def api_tailor():
 @login_required
 def api_cover_letter():
     """Generate a matching cover letter with exactly 330 words in the body."""
+    try:
+        return _generate_cover_letter_impl()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Cover letter generation failed: {str(e)}'}), 500
+
+
+def _generate_cover_letter_impl():
     data = request.get_json()
     resume_text = data.get('resume_text', '')
     jd_text = data.get('jd_text', '')
     company_name = data.get('company_name', '')
     role_title = data.get('role_title', '')
-    TARGET_WORDS = 300
+    TARGET_WORDS = 330
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
@@ -951,7 +1108,34 @@ def api_cover_letter():
 
     response = result['response']
     if not isinstance(response, dict):
-        return jsonify({'cover_letter': response, 'tokens_used': total_tokens, 'cost_usd': total_cost})
+        # Response came back as raw string — try harder to parse it
+        import re as _re
+        raw = response if isinstance(response, str) else str(response)
+
+        # Attempt 1: Fix newlines inside JSON strings and retry parse
+        try:
+            fixed = claude._fix_json_newlines(raw.strip())
+            parsed = json_mod.loads(fixed)
+            if isinstance(parsed, dict):
+                response = parsed
+        except (json_mod.JSONDecodeError, ValueError):
+            pass
+
+        # Attempt 2: Extract JSON object with regex
+        if not isinstance(response, dict):
+            match = _re.search(r'\{[\s\S]*\}', raw)
+            if match:
+                try:
+                    fixed = claude._fix_json_newlines(match.group(0))
+                    parsed = json_mod.loads(fixed)
+                    if isinstance(parsed, dict):
+                        response = parsed
+                except (json_mod.JSONDecodeError, ValueError):
+                    pass
+
+        # Last resort: wrap the raw text as cover_letter_text
+        if not isinstance(response, dict):
+            response = {'cover_letter_text': raw, 'format_used': 'Problem-Solution'}
 
     cover_letter_text = response.get('cover_letter_text', '')
 
@@ -1067,19 +1251,33 @@ def api_cover_letter():
             break
 
     response['body_word_count'] = current_count
-    # Keep word_count for backward compatibility in the frontend
     response['word_count'] = current_count
+
+    # Guarantee cover_letter_text is always present and non-empty
+    final_text = response.get('cover_letter_text', '') or cover_letter_text or ''
+
+    print(f"[cover-letter] Final response type: {type(response).__name__}")
+    print(f"[cover-letter] cover_letter_text length: {len(final_text)}")
+    print(f"[cover-letter] cover_letter_text first 120 chars: {repr(final_text[:120])}")
 
     # Update application record if provided
     app_id = data.get('application_id')
     if app_id:
         app_record = Application.query.get(app_id)
-        if app_record and isinstance(response, dict):
-            app_record.cover_letter = response.get('cover_letter_text', '')
+        if app_record:
+            app_record.cover_letter = final_text
             db.session.commit()
 
+    # Send ALL fields as flat top-level keys — no nested dicts.
+    # This guarantees the frontend always gets cover_letter_text as a plain string.
     return jsonify({
-        'cover_letter': response,
+        'cover_letter_text': final_text,
+        'format_used': response.get('format_used', ''),
+        'format_reasoning': response.get('format_reasoning', ''),
+        'word_count': current_count,
+        'jd_keywords_used': response.get('jd_keywords_used', []),
+        'metrics_used': response.get('metrics_used', []),
+        'company_research_hook': response.get('company_research_hook', ''),
         'tokens_used': total_tokens,
         'cost_usd': total_cost,
     })
@@ -1221,52 +1419,65 @@ def api_download_cover_letter_pdf():
 
         # === RENDER HEADER ===
         if header_lines:
-            # First line = name (bold, larger)
-            pdf.set_font(font_name, 'B' if bold_loaded else '', size=14)
-            pdf.cell(0, 7, header_lines[0], new_x='LMARGIN', new_y='NEXT', align='C')
+            # Name — bold, larger, professional navy color
+            pdf.set_font(font_name, 'B' if bold_loaded else '', size=16)
+            pdf.set_text_color(25, 42, 86)  # Professional navy
+            pdf.cell(0, 8, header_lines[0], new_x='LMARGIN', new_y='NEXT', align='C')
 
-            # Remaining header lines (contact info — smaller, centered)
+            # Contact info — refined, subtle gray, slightly larger for readability
             if len(header_lines) > 1:
-                pdf.set_font(font_name, '', size=10)
-                pdf.set_text_color(80, 80, 80)
-                for line in header_lines[1:]:
-                    pdf.cell(0, 5, line, new_x='LMARGIN', new_y='NEXT', align='C')
-                pdf.set_text_color(30, 30, 30)
+                pdf.set_font(font_name, '', size=9)
+                pdf.set_text_color(100, 100, 100)
+                # Join contact details with separator for a clean single line
+                contact_text = '  |  '.join(header_lines[1:]) if len(header_lines[1:]) <= 3 else None
+                if contact_text and pdf.get_string_width(contact_text) < 159:
+                    pdf.cell(0, 5, contact_text, new_x='LMARGIN', new_y='NEXT', align='C')
+                else:
+                    for line in header_lines[1:]:
+                        pdf.cell(0, 5, line, new_x='LMARGIN', new_y='NEXT', align='C')
 
-            # Separator line
-            pdf.ln(3)
+            # Elegant thin separator line
+            pdf.ln(4)
             y = pdf.get_y()
-            pdf.set_draw_color(180, 180, 180)
+            pdf.set_draw_color(25, 42, 86)  # Match navy header
+            pdf.set_line_width(0.4)
             pdf.line(25.4, y, 595.28 / 72 * 25.4 - 25.4, y)
+            pdf.set_line_width(0.2)  # Reset
             pdf.ln(6)
+
+        # Reset to body text color
+        pdf.set_text_color(35, 35, 35)
 
         # === RENDER DATE ===
         if date_line:
             pdf.set_font(font_name, '', size=10)
             pdf.cell(0, 6, date_line, new_x='LMARGIN', new_y='NEXT')
-            pdf.ln(4)
+            pdf.ln(3)
 
         # === RENDER SALUTATION ===
         if salutation_line:
-            pdf.set_font(font_name, '', size=10)
+            pdf.set_font(font_name, 'B' if bold_loaded else '', size=10)
             pdf.cell(0, 6, salutation_line, new_x='LMARGIN', new_y='NEXT')
-            pdf.ln(4)
+            pdf.ln(3)
 
         # === RENDER BODY PARAGRAPHS ===
+        pdf.set_font(font_name, '', size=10)
         for i, para in enumerate(body_paragraphs):
-            pdf.set_font(font_name, '', size=10)
             clean_text = ' '.join(l.strip() for l in para.split('\n') if l.strip())
-            pdf.multi_cell(0, 5.5, clean_text, new_x='LMARGIN', new_y='NEXT')
+            pdf.multi_cell(0, 5.2, clean_text, new_x='LMARGIN', new_y='NEXT')
             if i < len(body_paragraphs) - 1:
-                pdf.ln(4)
+                pdf.ln(3)
 
         # === RENDER SIGN-OFF ===
         if signoff_lines:
-            pdf.ln(6)
+            pdf.ln(5)
             for j, line in enumerate(signoff_lines):
                 if line.strip() == full_name or line.strip() == full_name.strip():
+                    # Name in bold navy to match header
                     pdf.set_font(font_name, 'B' if bold_loaded else '', size=10)
+                    pdf.set_text_color(25, 42, 86)
                     pdf.cell(0, 6, line, new_x='LMARGIN', new_y='NEXT')
+                    pdf.set_text_color(35, 35, 35)
                 else:
                     pdf.set_font(font_name, '', size=10)
                     pdf.cell(0, 6, line, new_x='LMARGIN', new_y='NEXT')

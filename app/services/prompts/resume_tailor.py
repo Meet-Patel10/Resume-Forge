@@ -26,39 +26,101 @@ The tailored resume should READ like the master resume — same voice, same stru
 - The result should sound like the CANDIDATE wrote it, not an AI
 - **DO NOT change the meaning of any existing sentence** — only EXTEND sentences with contextually relevant keywords
 
-## SECTION 2: SKILLS — STRICT JD KEYWORD EXTRACTION (100% PRECISION)
+## SECTION 2: SKILLS — JD-DOMINANT WITH SMART RETENTION
+
+### PHILOSOPHY: YOUR SKILLS SECTION IS A MARKETING DOCUMENT FOR THIS ROLE
+The skills section must read like you are a SPECIALIST for this specific job. Every skill listed should make the recruiter think "this person fits." Skills that are irrelevant to the JD create noise and dilute keyword density.
+
+### THREE-TIER SKILL SELECTION
+
+**TIER 1 — JD SKILLS (ALWAYS INCLUDE, PLACED FIRST)**
+- Extract EVERY technical skill that is EXPLICITLY WRITTEN in the JD text. If a keyword is not literally in the JD, do NOT add it.
+- Use the EXACT term from the JD — if JD says "PostgreSQL", add "PostgreSQL". No synonyms, no paraphrasing.
+- Do NOT infer or "read between the lines". If the JD says "cloud platforms" but does NOT name AWS specifically, do NOT add AWS.
+- Do NOT add generic filler like "Problem Solving", "Team Collaboration" — those belong in Summary only.
+- Place these skills FIRST within each category — they are the highest priority.
+- These skills are MANDATORY — 100% of JD hard skills MUST appear in your skills section.
+
+**TIER 2 — SUPPORTING CORE SKILLS (KEEP IF THEY SUPPORT THE JD)**
+- From the master resume, KEEP skills that are foundational or directly supportive of the JD's domain.
+- Examples of Tier 2 for different JD types:
+  - AWS Backend JD → keep: Git, Linux, SQL, RESTful APIs, Agile Methodologies (they support AWS backend work)
+  - React Frontend JD → keep: Git, HTML, CSS, JavaScript, npm (they support React work)
+  - Data Engineering JD → keep: Python, SQL, Linux, Git (they support data engineering)
+- A skill is Tier 2 if a recruiter would EXPECT to see it alongside the JD's required skills.
+- Tier 2 skills go AFTER Tier 1 skills within each category.
+
+**TIER 3 — IRRELEVANT SKILLS (REMOVE)**
+- From the master resume, REMOVE skills that have ZERO connection to the JD's domain/role.
+- Examples of Tier 3 removals:
+  - JD is for AWS Backend Engineer → remove: Angular, Vue.js, Figma, Salesforce, Power BI
+  - JD is for React Frontend Developer → remove: Terraform, Ansible, Kafka, Spark, Hadoop
+  - JD is for Data Engineer → remove: React, Angular, Figma, UI/UX Design
+- A skill is Tier 3 if a recruiter reading the JD would think "why is this here?"
+- REMOVING irrelevant skills is CORRECT behavior — the master resume preserves everything permanently.
+
+### COMPETING TECHNOLOGY SUPPRESSION — CRITICAL RULE
+When the JD names a SPECIFIC technology, do NOT include its direct competitors. Show ONLY what the JD asks for:
+
+**Cloud Platforms:**
+- JD says "AWS" → show ONLY AWS. Remove Azure, GCP, Google Cloud.
+- JD says "Azure" → show ONLY Azure. Remove AWS, GCP.
+- JD says "GCP" → show ONLY GCP. Remove AWS, Azure.
+- JD says "cloud" generically (no specific platform named) → keep whichever the candidate has.
+
+**Frontend Frameworks:**
+- JD says "React" → show ONLY React. Remove Angular, Vue.js, Svelte.
+- JD says "Angular" → show ONLY Angular. Remove React, Vue.js.
+- JD says "Vue" → show ONLY Vue.js. Remove React, Angular.
+
+**Databases:**
+- JD says "PostgreSQL" → show ONLY PostgreSQL. Remove MySQL, MariaDB (but MongoDB is OK if it's a different category — NoSQL vs SQL).
+- JD says "MongoDB" → show ONLY MongoDB. Remove DynamoDB, Cassandra.
+
+**CI/CD Tools:**
+- JD says "Jenkins" → show ONLY Jenkins. Remove GitHub Actions, GitLab CI, CircleCI.
+- JD says "GitHub Actions" → show ONLY GitHub Actions. Remove Jenkins, GitLab CI.
+
+**Container Orchestration:**
+- JD says "Kubernetes" → show ONLY Kubernetes. Remove Docker Swarm, ECS, Nomad.
+
+**IaC Tools:**
+- JD says "Terraform" → show ONLY Terraform. Remove CloudFormation, Pulumi, Ansible (for IaC).
+
+**Message Queues:**
+- JD says "Kafka" → show ONLY Kafka. Remove RabbitMQ, SQS, ActiveMQ.
+- JD says "RabbitMQ" → show ONLY RabbitMQ. Remove Kafka, SQS.
+
+**EXCEPTION:** If the JD explicitly lists MULTIPLE technologies in a competing group (e.g., "AWS and Azure" or "React and Vue"), then include ALL that the JD mentions.
 
 ### EXTRACTION RULE — NO FLUFF, NO INVENTION
-- Extract ONLY technical skills that are EXPLICITLY WRITTEN in the JD text. If a keyword is not literally in the JD, do NOT add it.
-- Use the EXACT term from the JD — if JD says "PostgreSQL", add "PostgreSQL". If JD says "Python", add "Python". No synonyms, no paraphrasing.
-- Do NOT infer, assume, or "read between the lines". If the JD says "cloud platforms" but does NOT name AWS specifically, do NOT add AWS. Only add what is explicitly stated.
-- Do NOT add skills from "nice to have" or "bonus" sections unless they are real technical keywords
-- Do NOT add generic filler like "Problem Solving", "Team Collaboration", "Communication" to technical skills — those belong in Summary only
-
-### INJECTION RULE
-- Add ALL extracted JD hard skills to the CORRECT skill category
-- Place JD-relevant skills FIRST within each category (reorder existing skills)
-- Match the EXACT terminology from the JD: if JD says "Kubernetes", write "Kubernetes", NOT "K8s"
+- Use the EXACT term from the JD — if JD says "Kubernetes", write "Kubernetes", NOT "K8s"
 - Include BOTH forms of any acronym: "Amazon Web Services (AWS)" not just "AWS"
-- If a JD skill appears only in Summary, ALSO add it to Skills — double coverage means higher search ranking
+- If a JD skill appears only in Summary, ALSO add it to Skills — double coverage
 
 ### CATEGORY RULES
 - You MAY rename skill categories to better align with the JD's terminology, but ONLY when the JD clearly uses different naming:
   - If the JD says "Cloud & DevOps" and master has "Tools & Platforms" → rename to "Cloud & DevOps"
-  - If the JD says "Languages" and master also has "Languages" → keep as "Languages" (no change needed)
   - Only rename when it adds meaningful alignment — do NOT rename for trivial differences
 - The category name MUST accurately describe the skills inside it
 - You MUST have at most 7 skill categories total — never exceed 7
 - You may ADD new categories (up to the 7 limit) only if JD skills truly don't fit any existing category
 - You may NOT merge two existing categories into one — each master category must remain separate
 - Each category must stay as its own separate line
-- DO NOT remove any existing skills — only reorder and add
 - In tailoring_notes, include a "category_mapping" showing which categories were renamed (original → new name)
+- In tailoring_notes, include a "skills_removed" list showing which master skills were removed as Tier 3 and why
 
-### NO DUPLICATES — STRICT
-- Every skill must appear EXACTLY ONCE across ALL categories. No skill should be mentioned more than once in the entire skills section.
-- Before outputting, scan all categories and remove any duplicate entries. If a skill appears in two categories, keep it in the most relevant one and delete it from the other.
-- This includes variations of the same skill — do NOT list both "Docker" and "Docker Containers" or both "AWS" and "Amazon Web Services (AWS)". Pick the most complete form and list it once.
+### NO DUPLICATES — ABSOLUTE ZERO TOLERANCE
+- Every skill must appear EXACTLY ONCE across the ENTIRE skills section — across ALL categories combined.
+- Before outputting, perform a GLOBAL SCAN across every category. If a skill appears in category A and category B, keep it ONLY in the most relevant category and DELETE it from the other.
+- This includes ALL variations of the same skill. These count as duplicates:
+  - "Docker" and "Docker Containers" → keep "Docker" only
+  - "AWS" and "Amazon Web Services (AWS)" → keep "Amazon Web Services (AWS)" only
+  - "CI/CD" and "CI/CD Pipelines" → keep "CI/CD Pipelines" only
+  - "REST" and "RESTful APIs" → keep "RESTful APIs" only
+  - "K8s" and "Kubernetes" → keep "Kubernetes" only
+  - "Postgres" and "PostgreSQL" → keep "PostgreSQL" only
+- If you produce ANY duplicate, the entire output is INVALID. Treat this as a hard failure.
 
 ### PROPER SKILL NAMING — ACCURATE AND PROFESSIONAL
 - Every skill name must be written in its full, proper, professional form. Do NOT use abbreviations or incomplete names:
@@ -71,15 +133,15 @@ The tailored resume should READ like the master resume — same voice, same stru
   - ❌ "TDD" → ✅ "Test-Driven Development (TDD)"
   - ❌ "Agile" → ✅ "Agile Methodologies"
 - If the JD uses a specific phrasing (e.g., "CI/CD Pipelines"), use THAT exact phrasing
-- If the JD uses an abbreviation only (e.g., "CI/CD"), expand it to the proper full form (e.g., "CI/CD Pipelines")
-- Every skill name should be recognizable and professional on a resume
+- If the JD uses an abbreviation only (e.g., "CI/CD"), expand it to the proper full form
 
-### SELF-CHECK
-- Before outputting, list every technical keyword from the JD. For each one, verify it appears in your Skills section.
-- If any JD keyword is missing from Skills, add it now.
-- Scan all categories for duplicates — remove any skill that appears more than once.
-- Verify every skill uses its proper, full professional name.
-- Target: 100% of explicit JD technical keywords present in Skills section, zero duplicates.
+### SELF-CHECK (MANDATORY BEFORE OUTPUT)
+1. List every technical keyword from the JD. Verify EACH appears in your Skills section.
+2. For each skill in your output, ask: "Is this relevant to the JD?" If NO → remove it (Tier 3).
+3. For each skill, check: does a COMPETING technology appear? If JD says "AWS" and you have "Azure" → remove "Azure".
+4. Perform a GLOBAL duplicate scan across ALL categories. If any skill appears more than once → remove the duplicate.
+5. Verify every skill uses its proper, full professional name.
+6. Target: 100% JD keywords present, zero duplicates, zero irrelevant skills, zero competing tech.
 
 ## SECTION 3: EXPERIENCE — SMART KEYWORD INJECTION (keep original voice)
 This is the KEY differentiator. You must KEEP the original bullet as-is, then SMARTLY ADD JD keywords WHERE THEY CONTEXTUALLY BELONG.
@@ -264,7 +326,14 @@ Respond ONLY with valid JSON in this exact structure:
     "keywords_skipped": ["<JD keywords that could NOT be added and why>"],
     "category_mapping": {
       "<original master category name>": "<new name if renamed, or same name if kept>"
-    }
+    },
+    "skills_removed": [
+      {
+        "skill": "<skill name removed from master>",
+        "reason": "<'tier3_irrelevant' | 'competing_tech' | 'duplicate'>",
+        "detail": "<brief explanation — e.g. 'JD specifies AWS; removed Azure as competing cloud platform'>"
+      }
+    ]
   },
   "keywords_used": ["<exact list of all JD keywords you embedded>"]
 }
@@ -276,7 +345,7 @@ Respond ONLY with valid JSON in this exact structure:
 - Project bullets: SMART INJECTION — same rules as experience
 - Education: COPY EXACTLY — DO NOT modify
 - Certifications: COPY EXACTLY — DO NOT modify
-- Skills section: reorder + add. Do NOT remove existing skills.
+- Skills section: 3-TIER SELECTION. Keep Tier 1 (JD skills) + Tier 2 (supporting core). REMOVE Tier 3 (irrelevant). Suppress competing technologies. ZERO duplicates across all categories.
 - Summary: SMART INJECTION — keep original voice, inject JD keywords naturally
 - Action verbs: KEEP the original action verb from each bullet — do NOT change it
 - Experience entries in STRICT reverse-chronological order (same as master resume)

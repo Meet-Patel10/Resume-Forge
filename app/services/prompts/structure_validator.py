@@ -3,7 +3,7 @@ template structure of Meet_Patel_Resume.tex before it reaches the LaTeX engine.
 
 This runs as Agent 4.5 (after Tailor, before LaTeX rendering).  It fixes:
 - Missing sections that exist in the master resume
-- Wrong section ordering (must be: Summary → Skills → Projects → Experience → Certs → Education)
+- Wrong section ordering (must be: Summary → Education → Projects → Experience → Skills → Certs)
 - Merged/missing skill categories
 - Empty or malformed entries
 """
@@ -20,11 +20,11 @@ Compare the tailored JSON against the master JSON and fix ONLY structural issues
 ### SECTION ORDER (MANDATORY — this exact order)
 1. header
 2. summary
-3. skills
+3. education
 4. projects
 5. experience
-6. certifications
-7. education
+6. skills
+7. certifications
 
 ### SKILL CATEGORIES
 - The tailored resume must have AT LEAST as many categories as the master resume, and at most 7 total

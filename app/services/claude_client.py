@@ -7,8 +7,16 @@ class BedrockClient:
     """Talks to AWS Bedrock for AI analysis (Claude or Nova depending on env)."""
 
     # Model configs
+    # APP_ENV values: 'productionHigh' | 'productionLow' | 'testing'
     MODELS = {
-        'production': {
+        'productionHigh': {
+            'model_id': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            'provider': 'anthropic',
+            # Claude 3.5 Sonnet v2 pricing (per 1K tokens)
+            'input_cost_per_1k': 0.003,
+            'output_cost_per_1k': 0.015,
+        },
+        'productionLow': {
             'model_id': 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
             'provider': 'anthropic',
             # Claude 3.5 Haiku pricing (per 1K tokens)
@@ -18,7 +26,7 @@ class BedrockClient:
         'testing': {
             'model_id': 'us.amazon.nova-lite-v1:0',
             'provider': 'amazon',
-            # Nova Lite pricing (per 1K tokens)
+            # Amazon Nova Lite pricing (per 1K tokens)
             'input_cost_per_1k': 0.0006,
             'output_cost_per_1k': 0.0024,
         },
@@ -49,14 +57,16 @@ class BedrockClient:
         return self._client
 
     def _get_model_config(self):
-        """Get model config based on APP_ENV."""
-        env = current_app.config.get('APP_ENV', 'testing').lower()
+        """Get model config based on APP_ENV.
+        Valid values: 'productionHigh', 'productionLow', 'testing'
+        """
+        env = current_app.config.get('APP_ENV', 'testing')  # preserve camelCase — do NOT lowercase
         if env not in self.MODELS:
-            print(f"[bedrock] Unknown APP_ENV '{env}', defaulting to 'testing'")
+            print(f"[bedrock] Unknown APP_ENV '{env}', defaulting to 'testing'. Valid: {list(self.MODELS.keys())}")
             env = 'testing'
         return self.MODELS[env], env
 
-    def analyze(self, system_prompt, user_message, max_tokens=4096, temperature=0.2, force_json=False):
+    def analyze(self, system_prompt, user_message, max_tokens=4096, temperature=0.2, force_json=False, model_override=None):
         """Send a prompt to Bedrock, return parsed response + token/cost info.
 
         temperature: 0.0-1.0. Lower = more deterministic. Default 0.2 for
@@ -64,9 +74,16 @@ class BedrockClient:
         force_json: If True, prefill the assistant response with '{' to force
         JSON output (Anthropic models only). Prevents the model from asking
         clarifying questions instead of producing structured output.
+        model_override: If set (e.g., 'productionHigh'), forces a specific model
+        regardless of APP_ENV. Use for tasks that need stronger reasoning.
         """
         try:
-            model_cfg, env_name = self._get_model_config()
+            if model_override and model_override in self.MODELS:
+                model_cfg = self.MODELS[model_override]
+                env_name = model_override
+                print(f"[bedrock] Using model override: {model_override} ({model_cfg['model_id']})")
+            else:
+                model_cfg, env_name = self._get_model_config()
             model_id = model_cfg['model_id']
             provider = model_cfg['provider']
 

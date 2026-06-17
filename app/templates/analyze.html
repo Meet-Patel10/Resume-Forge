@@ -30,6 +30,10 @@
             <label class="form-label">Role Title</label>
             <input type="text" id="role-title" class="form-input" placeholder="Software Engineer">
         </div>
+        <div class="form-group">
+            <label class="form-label">Job Location <span style="color: var(--text-muted); font-weight: normal; font-size: var(--text-xs);">(city)</span></label>
+            <input type="text" id="target-city" class="form-input" placeholder="e.g., Halifax, Toronto">
+        </div>
     </div>
     <div class="form-group">
         <textarea id="jd-input" class="form-textarea tall" placeholder="Paste the full job description here..."></textarea>
@@ -47,6 +51,16 @@
         <button class="btn btn-primary btn-lg" onclick="runTailor()" id="btn-tailor" style="background: var(--gradient-primary); border: none;">
             ✂️ Tailor My Resume
         </button>
+    </div>
+    <div class="form-group mt-4" id="recipient-group" style="display:none">
+        <div class="flex-between" style="margin-bottom: var(--space-2);">
+            <label class="form-label" style="margin-bottom: 0;">📧 Cold Outreach — Recipients <span style="color: var(--text-muted); font-weight: normal; font-size: var(--text-xs);">(up to 5 per company)</span></label>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="addRecipientRow()" id="add-recipient-btn" style="font-size: var(--text-xs);">+ Add Recipient</button>
+        </div>
+        <div id="recipients-list" style="display: flex; flex-direction: column; gap: var(--space-2);"></div>
+        <div style="margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-muted);">
+            ⚠️ Each recipient gets a unique email with a different angle. Find actual names on LinkedIn — no name = no email.
+        </div>
     </div>
 </div>
 
@@ -105,17 +119,18 @@
             </div>
         </div>
 
-        <!-- Sub-tabs: LaTeX / Cover Letter -->
+        <!-- Sub-tabs: LaTeX / Cover Letter / Leadership Email -->
         <div class="tabs">
             <button class="tab active" data-tailor-tab="latex">📝 LaTeX Output</button>
             <button class="tab" data-tailor-tab="cover">💌 Cover Letter</button>
+            <button class="tab" data-tailor-tab="email" id="tab-email" style="display:none">📧 Leadership Email</button>
         </div>
 
         <!-- LaTeX Output -->
         <div class="tailor-tab-content active" id="ttab-latex">
             <div class="card">
                 <div class="flex-between mb-4">
-                    <h3 class="card-title">Copy this into Overleaf</h3>
+                    <h3 class="card-title">Edit LaTeX & Export</h3>
                     <div class="flex gap-4" style="flex-wrap: wrap;">
                         <button class="btn btn-sm btn-secondary" onclick="selectAllLatex()">🔘 Select All</button>
                         <button class="btn btn-sm btn-primary" onclick="copyLatex()">📋 Copy to Clipboard</button>
@@ -123,7 +138,7 @@
                         <button class="btn btn-sm btn-secondary" onclick="downloadDOCX()" id="btn-download-docx">📄 Download DOCX</button>
                     </div>
                 </div>
-                <textarea id="latex-output" class="form-textarea" readonly
+                <textarea id="latex-output" class="form-textarea"
                           style="font-family: var(--font-mono); font-size: var(--text-sm); min-height: 500px; line-height: 1.5; background: var(--bg-tertiary); color: var(--text-primary); white-space: pre; overflow-x: auto;"></textarea>
             </div>
 
@@ -158,6 +173,18 @@
                 💌 Generate Cover Letter
             </button>
         </div>
+
+        <!-- Leadership Email -->
+        <div class="tailor-tab-content" id="ttab-email" style="display: none;">
+            <div class="card" id="leadership-email-output">
+                <div class="empty-state">
+                    <p>Generate a cover letter first, then click "Generate Leadership Email" to create a professional outreach email.</p>
+                </div>
+            </div>
+            <button class="btn btn-secondary mt-4" onclick="runLeadershipEmail()" id="btn-email" style="display:none">
+                📧 Generate Leadership Email
+            </button>
+        </div>
     </div>
 </div>
 
@@ -174,6 +201,7 @@
     let lastTailoredJSON = null;
     let lastResumePlainText = '';
     let currentCoverLetterText = '';
+    let currentEmailData = null; // Deprecated — use currentEmailDataList
 
     // ===== Tab Switching =====
     document.querySelectorAll('.tab[data-tab]').forEach(tab => {
@@ -670,6 +698,7 @@
 
         const company = document.getElementById('company-name').value.trim();
         const role = document.getElementById('role-title').value.trim();
+        const city = document.getElementById('target-city')?.value.trim() || '';
 
         showLoading('Running 4-step pipeline: ① Critique → ② Keywords → ③ Tailor → ④ Humanize... This takes 60-90 seconds.');
         try {
@@ -681,6 +710,7 @@
                     resume_text: resumeText,
                     company_name: company,
                     role_title: role,
+                    target_city: city,
                 })
             });
             const data = await res.json();
@@ -900,6 +930,15 @@
 
             currentCoverLetterText = text;
 
+            // Show the leadership email button and tab after cover letter is generated
+            document.getElementById('btn-email').style.display = 'inline-flex';
+            document.getElementById('tab-email').style.display = '';
+            document.getElementById('recipient-group').style.display = 'block';
+            // Auto-add first recipient row if empty
+            if (document.getElementById('recipients-list').children.length === 0) {
+                addRecipientRow();
+            }
+
             document.getElementById('cover-letter-output').innerHTML = `
                 <div class="flex-between mb-4">
                     <h3 class="card-title">Cover Letter${formatUsed ? ' — ' + formatUsed + ' Format' : ''}</h3>
@@ -909,7 +948,7 @@
                     </div>
                 </div>
                 ${metaHtml}
-                <div id="cl-text" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary)">${text}</div>
+                <div id="cl-text" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text;">${text}</div>
             `;
         } catch (e) {
             hideLoading();
@@ -918,14 +957,17 @@
     }
 
     async function downloadCoverLetterPDF() {
-        if (!currentCoverLetterText) return showToast('No cover letter to download.', 'error');
+        // Read from the editable DOM element so user edits are captured
+        const clEl = document.getElementById('cl-text');
+        const liveText = clEl ? clEl.innerText : currentCoverLetterText;
+        if (!liveText) return showToast('No cover letter to download.', 'error');
 
         showLoading('Generating PDF...');
         try {
             const res = await fetch('/tailor/api/download-cover-letter-pdf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cover_letter_text: currentCoverLetterText }),
+                body: JSON.stringify({ cover_letter_text: liveText }),
             });
 
             if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
@@ -975,13 +1017,14 @@
     async function downloadPDF() {
         const latex = document.getElementById('latex-output').value;
         if (!latex) return showToast('No LaTeX output to compile.', 'error');
+        const company = document.getElementById('company-name')?.value.trim() || '';
 
         showLoading('Compiling PDF...');
         try {
             const res = await fetch('/tailor/api/download-pdf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ latex_code: latex }),
+                body: JSON.stringify({ latex_code: latex, company_name: company }),
             });
 
             if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
@@ -989,7 +1032,9 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'tailored_resume.pdf';
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'Meet_Patel_Resume.pdf';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -1010,13 +1055,14 @@
     // ===== DOCX Download =====
     async function downloadDOCX() {
         if (!lastTailoredJSON) return showToast('No tailored resume data available.', 'error');
+        const company = document.getElementById('company-name')?.value.trim() || '';
 
         showLoading('Generating DOCX...');
         try {
             const res = await fetch('/tailor/api/download-docx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ resume_json: lastTailoredJSON }),
+                body: JSON.stringify({ resume_json: lastTailoredJSON, company_name: company }),
             });
 
             if (res.ok && res.headers.get('Content-Type')?.includes('wordprocessingml')) {
@@ -1024,7 +1070,9 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'tailored_resume.docx';
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'Meet_Patel_Resume.docx';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -1091,5 +1139,347 @@
             showToast('Simulation failed: ' + e.message, 'error');
         }
     }
+
+    // ===== Multi-Recipient Dynamic List =====
+    let recipientCounter = 0;
+    const MAX_RECIPIENTS = 5;
+
+    function addRecipientRow() {
+        const list = document.getElementById('recipients-list');
+        if (list.children.length >= MAX_RECIPIENTS) {
+            return showToast(`Maximum ${MAX_RECIPIENTS} recipients per company.`, 'error');
+        }
+        recipientCounter++;
+        const idx = recipientCounter;
+        const row = document.createElement('div');
+        row.className = 'recipient-row';
+        row.id = `recipient-row-${idx}`;
+        row.style.cssText = 'display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-2) var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);';
+        row.innerHTML = `
+            <div style="flex: 1.2; min-width: 140px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Name *</label>
+                <input type="text" class="form-input rcpt-name" placeholder="e.g., Sarah Chen" style="font-size: var(--text-sm);">
+            </div>
+            <div style="flex: 1.5; min-width: 160px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Email</label>
+                <input type="email" class="form-input rcpt-email" placeholder="e.g., sarah@company.com" style="font-size: var(--text-sm);">
+            </div>
+            <div style="flex: 1.2; min-width: 140px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Title</label>
+                <input type="text" class="form-input rcpt-title" placeholder="e.g., Eng Manager" style="font-size: var(--text-sm);">
+            </div>
+            <div style="flex: 0.8; min-width: 120px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Level</label>
+                <select class="form-input rcpt-category" style="padding: var(--space-2); font-size: var(--text-sm);">
+                    <option value="category_a">Manager / Lead</option>
+                    <option value="category_b">Director / VP</option>
+                </select>
+            </div>
+            <button type="button" onclick="removeRecipientRow('recipient-row-${idx}')" class="btn btn-sm" style="background: var(--accent-danger); color: white; padding: 6px 10px; border-radius: var(--radius-sm); flex-shrink: 0; margin-bottom: 1px;" title="Remove">✕</button>
+        `;
+        list.appendChild(row);
+        updateAddButton();
+    }
+
+    function removeRecipientRow(rowId) {
+        const list = document.getElementById('recipients-list');
+        const row = document.getElementById(rowId);
+        if (row && list.children.length > 1) {
+            row.remove();
+        } else if (list.children.length <= 1) {
+            showToast('At least one recipient is required.', 'error');
+        }
+        updateAddButton();
+    }
+
+    function updateAddButton() {
+        const list = document.getElementById('recipients-list');
+        const btn = document.getElementById('add-recipient-btn');
+        if (btn) {
+            btn.disabled = list.children.length >= MAX_RECIPIENTS;
+            btn.textContent = list.children.length >= MAX_RECIPIENTS ? 'Max 5 reached' : '+ Add Recipient';
+        }
+    }
+
+    function getRecipients() {
+        const rows = document.querySelectorAll('#recipients-list .recipient-row');
+        const recipients = [];
+        rows.forEach(row => {
+            const name  = row.querySelector('.rcpt-name').value.trim();
+            const email = row.querySelector('.rcpt-email')?.value.trim() || '';
+            const title = row.querySelector('.rcpt-title').value.trim();
+            const category = row.querySelector('.rcpt-category').value;
+            if (name) {
+                recipients.push({ name, email, title, category });
+            }
+        });
+        return recipients;
+    }
+
+    // ===== Leadership Email — Multi-Recipient =====
+    let currentEmailDataList = []; // Array of email objects
+    let activeEmailIdx = 0;
+
+    async function runLeadershipEmail() {
+        const jd = document.getElementById('jd-input').value.trim();
+        const company = document.getElementById('company-name').value.trim();
+        const role = document.getElementById('role-title').value.trim();
+
+        const recipients = getRecipients();
+        if (recipients.length === 0) {
+            return showToast('At least one recipient name is required. Find actual names on LinkedIn — no name = no email.', 'error');
+        }
+
+        // Validate all have names
+        const emptyNames = recipients.filter(r => !r.name);
+        if (emptyNames.length > 0) {
+            return showToast('Every recipient must have a name. Find the actual person\'s name on LinkedIn first.', 'error');
+        }
+
+        currentEmailDataList = [];
+        activeEmailIdx = 0;
+        const usedSignals = [];
+        const usedSubjects = [];
+        const usedBodies = [];
+        let totalCost = 0;
+
+        showLoading(`Generating cold outreach emails for ${recipients.length} recipient${recipients.length > 1 ? 's' : ''}...`);
+
+        try {
+            for (let i = 0; i < recipients.length; i++) {
+                const r = recipients[i];
+                showLoading(`Generating email ${i + 1} of ${recipients.length} — ${r.name}...`);
+
+                const res = await fetch('/tailor/api/leadership-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jd_text: jd,
+                        resume_text: lastResumePlainText || resumeText,
+                        company_name: company,
+                        role_title: role,
+                        recipient_name: r.name,
+                        recipient_title: r.title,
+                        recipient_category: r.category,
+                        cover_letter_text: currentCoverLetterText,
+                        previously_used_signals: usedSignals,
+                        previously_used_subjects: usedSubjects,
+                        previously_used_bodies: usedBodies,
+                    })
+                });
+
+                if (!res.ok) {
+                    let errMsg = `Failed for ${r.name} (${res.status})`;
+                    try {
+                        const errData = await res.json();
+                        if (errData && errData.error) errMsg = `${r.name}: ${errData.error}`;
+                    } catch(e) {}
+                    showToast(errMsg, 'error');
+                    continue; // Skip to next recipient
+                }
+
+                let data;
+                try {
+                    data = await res.json();
+                } catch(e) {
+                    showToast(`Invalid response for ${r.name}`, 'error');
+                    continue;
+                }
+
+                if (data && !data.error) {
+                    data._recipient = r; // Store recipient info
+                    currentEmailDataList.push(data);
+                    if (data.signal_used) usedSignals.push(data.signal_used);
+                    if (data.subject) usedSubjects.push(data.subject);
+                    if (data.body) usedBodies.push(data.body);
+                    totalCost += data.cost_usd || 0;
+                } else {
+                    showToast(`${r.name}: ${(data && data.error) || 'Unknown error'}`, 'error');
+                }
+            }
+
+            hideLoading();
+
+            if (currentEmailDataList.length === 0) {
+                return showToast('No emails were generated. Check errors above.', 'error');
+            }
+
+            updateCost(totalCost);
+            renderEmailResults();
+            showToast(`Generated ${currentEmailDataList.length} unique email${currentEmailDataList.length > 1 ? 's' : ''}!`, 'success');
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function renderEmailResults() {
+        // Switch to email tab
+        document.querySelectorAll('[data-tailor-tab]').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tailor-tab-content').forEach(c => c.style.display = 'none');
+        document.querySelector('[data-tailor-tab="email"]').classList.add('active');
+        document.getElementById('ttab-email').style.display = 'block';
+
+        const container = document.getElementById('leadership-email-output');
+        let html = '';
+
+        // Recipient tabs (only show if multiple)
+        if (currentEmailDataList.length > 1) {
+            html += '<div style="display: flex; gap: var(--space-1); margin-bottom: var(--space-4); flex-wrap: wrap;">';
+            currentEmailDataList.forEach((d, i) => {
+                const name = d._recipient?.name || `Recipient ${i + 1}`;
+                const firstName = name.split(' ')[0];
+                html += `<button class="btn btn-sm ${i === activeEmailIdx ? 'btn-primary' : 'btn-secondary'}" onclick="switchEmailTab(${i})" style="font-size: var(--text-xs);">${firstName}</button>`;
+            });
+            html += '</div>';
+        }
+
+        // Action buttons
+        html += `
+            <div class="flex-between mb-4">
+                <h3 class="card-title">📧 Cold Outreach Email${currentEmailDataList.length > 1 ? ` (${activeEmailIdx + 1}/${currentEmailDataList.length})` : ''}</h3>
+                <div class="flex gap-4" style="flex-wrap: wrap;">
+                    <button class="btn btn-sm btn-primary" onclick="copyEmailText()" title="Copy this email">📋 Copy</button>
+                    <button class="btn btn-sm btn-secondary" onclick="downloadEmailJSON()" title="Download all emails as JSON">${currentEmailDataList.length > 1 ? '💾 Download All (.json)' : '💾 Download .json'}</button>
+                </div>
+            </div>
+        `;
+
+        const data = currentEmailDataList[activeEmailIdx];
+        const subject = data.subject || '';
+        const body = data.body || '';
+        const refNum = data.ref_number || 'REFENUM';
+        const wordCount = data.word_count || '';
+        const signalUsed = data.signal_used || '';
+        const proofPoint = data.proof_point || '';
+        const catLabel = data.recipient_category === 'category_b' ? 'Director-level (strategic)' : 'Manager-level (technical)';
+        const skills = data.skills_highlighted || [];
+        const metrics = data.metrics_used || [];
+        const recipientName = data._recipient?.name || '';
+        const recipientTitle = data._recipient?.title || '';
+
+        // Meta info
+        let metaHtml = '<div style="margin-bottom: var(--space-4); padding: var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-sm);">';
+        metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>To:</strong> ${recipientName}${recipientTitle ? ', ' + recipientTitle : ''}</div>`;
+        if (wordCount) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Word Count:</strong> ${wordCount} (body only) <span style="color: ${wordCount <= 80 ? 'var(--accent-success)' : 'var(--accent-danger)'}">${wordCount <= 80 ? '✅ Under 80' : '⚠️ Over 80'}</span></div>`;
+        metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Level:</strong> ${catLabel}</div>`;
+        if (refNum) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Ref #:</strong> ${refNum === 'REFENUM' ? '<span style="color: var(--accent-warning)">⚠️ REFENUM (replace before sending)</span>' : refNum}</div>`;
+        if (signalUsed) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>🎯 Signal:</strong> ${signalUsed}</div>`;
+        if (proofPoint) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>📊 Proof:</strong> ${proofPoint}</div>`;
+        if (skills.length) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Skills:</strong> ${skills.join(', ')}</div>`;
+        if (metrics.length) metaHtml += `<div><strong>Metrics:</strong> ${metrics.join(', ')}</div>`;
+        metaHtml += '</div>';
+
+        html += metaHtml;
+
+        // Subject line
+        html += `
+            <div style="margin-bottom: var(--space-4); padding: var(--space-3); background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary)); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
+                <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em;">Subject Line (1–4 words, lowercase)</div>
+                <div id="email-subject" contenteditable="true" style="font-weight: 600; color: var(--text-primary); font-size: var(--text-base); outline: none; cursor: text;">${subject}</div>
+            </div>
+        `;
+
+        // Body
+        html += `<div id="email-body" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text;">${body}</div>`;
+
+        // Footer
+        html += `
+            <div style="margin-top: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text-muted);">
+                <strong>Structure:</strong> Hook (JD inference) → Proof (1 metric) → Bridge (domain transfer) → Ask (15-min chat) — Under 80 words, unique angle per recipient.
+            </div>
+        `;
+
+        container.innerHTML = html;
+    }
+
+    function switchEmailTab(idx) {
+        syncEditsToData();  // save any edits before switching
+        activeEmailIdx = idx;
+        renderEmailResults();
+    }
+
+    // Sync edits from the contenteditable DOM elements back into currentEmailDataList
+    function syncEditsToData() {
+        if (currentEmailDataList.length === 0) return;
+        const subjectEl = document.getElementById('email-subject');
+        const bodyEl = document.getElementById('email-body');
+        if (subjectEl) currentEmailDataList[activeEmailIdx].subject = subjectEl.innerText.trim();
+        if (bodyEl) currentEmailDataList[activeEmailIdx].body = bodyEl.innerText.trim();
+    }
+
+    function copyEmailText() {
+        if (currentEmailDataList.length === 0) return showToast('No email to copy.', 'error');
+        syncEditsToData();  // capture latest edits
+        const data = currentEmailDataList[activeEmailIdx];
+        // Read from editable DOM elements so user edits are captured
+        const subjectEl = document.getElementById('email-subject');
+        const bodyEl = document.getElementById('email-body');
+        const subject = subjectEl ? subjectEl.innerText : (data.subject || '');
+        const body = bodyEl ? bodyEl.innerText : (data.body || '');
+        const fullText = `Subject: ${subject}\n\n${body}`;
+        navigator.clipboard.writeText(fullText)
+            .then(() => showToast(`Email for ${data._recipient?.name || 'recipient'} copied!`, 'success'))
+            .catch(() => showToast('Failed to copy — try selecting manually.', 'error'));
+    }
+
+    async function downloadEmailJSON() {
+        if (currentEmailDataList.length === 0) return showToast('No emails to download.', 'error');
+
+        // Sync the currently visible email's edits back into the data array
+        syncEditsToData();
+
+        showLoading('Preparing download...');
+        try {
+            // Build array of all emails for automation (with edits baked in)
+            const allEmails = currentEmailDataList.map(d => ({
+                subject: d.subject,
+                body: d.body,
+                ref_number: d.ref_number,
+                company_name: d.company_name,
+                role_title: d.role_title,
+                recipient_name: d._recipient?.name || d.recipient_name || '',
+                recipient_email: d._recipient?.email || d.recipient_email || '',
+                recipient_title: d._recipient?.title || d.recipient_title || '',
+                recipient_category: d.recipient_category,
+                signal_used: d.signal_used || '',
+                word_count: d.word_count || 0,
+            }));
+
+            const res = await fetch('/tailor/api/download-leadership-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    emails: allEmails,
+                    company_name: allEmails[0]?.company_name || '',
+                    role_title: allEmails[0]?.role_title || '',
+                })
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('json')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'leadership_emails.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                showToast(`Downloaded ${allEmails.length} email${allEmails.length > 1 ? 's' : ''} as JSON!`, 'success');
+            } else {
+                const data = await res.json();
+                hideLoading();
+                showToast(data.error || 'Download failed.', 'error');
+            }
+        } catch (e) {
+            hideLoading();
+            showToast('Download failed: ' + e.message, 'error');
+        }
+    }
+
 </script>
 {% endblock %}

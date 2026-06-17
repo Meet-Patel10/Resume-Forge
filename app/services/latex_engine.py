@@ -228,78 +228,6 @@ def render_latex(resume_data):
         latex += s(summary) + "\n"
         latex += "\n\\vspace{" + section_gap + "}\n"
 
-    # ---- TECHNICAL SKILLS ----
-    skills = resume_data.get('skills', [])
-    if skills:
-        latex += "\n%---------- TECHNICAL SKILLS ----------\n"
-        latex += "\\section{Technical Skills}\n"
-        latex += "\\small\n"
-        skill_lines = []
-        for group in skills:
-            category = s(group.get('category', ''))
-            items = ', '.join([s(item) for item in group.get('items', [])])
-            skill_lines.append(rf"\textbf{{{category}:}} {items}")
-        latex += ' \\\\\n'.join(skill_lines) + "\n"
-        latex += "\n\\vspace{" + section_gap + "}\n"
-
-    # ---- PROJECTS (matches template: -1pt between entries) ----
-    projects = resume_data.get('projects', [])
-    if projects:
-        latex += "\n%---------- PROJECTS ----------\n"
-        latex += "\\section{Projects}\n"
-        for i, proj in enumerate(projects):
-            proj_name = s(proj.get('name', ''))
-            tech = s(proj.get('tech_stack', ''))
-            dates = s(proj.get('dates', ''))
-
-            latex += "\n\\resumeSubheading{" + proj_name + "}{" + dates + "}{" + tech + "}{}\n"
-            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
-            for bullet in proj.get('bullets', []):
-                latex += "  \\resumeItem{" + s(bullet) + "}\n"
-            latex += "\\end{itemize}\n"
-
-            if i < len(projects) - 1:
-                latex += "\n\\vspace{" + proj_entry_gap + "}\n"
-
-        latex += "\n\\vspace{" + section_gap + "}\n"
-
-    # ---- EXPERIENCE (matches template: 3pt between entries) ----
-    experience = resume_data.get('experience', [])
-    if experience:
-        latex += "\n%---------- EXPERIENCE ----------\n"
-        latex += "\\section{Experience}\n"
-        for i, exp in enumerate(experience):
-            title = s(exp.get('title', ''))
-            company = s(exp.get('company', ''))
-            exp_location = s(exp.get('location', ''))
-            dates = s(exp.get('dates', ''))
-
-            latex += "\n\\resumeSubheading{" + title + "}{" + dates + "}{" + company + "}{" + exp_location + "}\n"
-            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
-            for bullet in exp.get('bullets', []):
-                latex += "  \\resumeItem{" + s(bullet) + "}\n"
-            latex += "\\end{itemize}\n"
-
-            if i < len(experience) - 1:
-                latex += "\n\\vspace{" + exp_entry_gap + "}\n"
-
-        latex += "\n\\vspace{" + section_gap + "}\n"
-
-    # ---- CERTIFICATIONS ----
-    certifications = resume_data.get('certifications', [])
-    if certifications:
-        latex += "\n%---------- CERTIFICATIONS ----------\n"
-        latex += "\\section{Certifications}\n"
-        latex += "\\small\n"
-        for cert in certifications:
-            if isinstance(cert, dict):
-                cert_name = s(cert.get('name', ''))
-                cert_dates = s(cert.get('dates', ''))
-                latex += "\\textbf{" + cert_name + "} \\hfill \\textit{" + cert_dates + "}\n"
-            elif isinstance(cert, str):
-                latex += "\\textbf{" + s(cert) + "}\n"
-        latex += "\n\\vspace{" + section_gap + "}\n"
-
     # ---- EDUCATION (matches template: GPA in heading, coursework in bullet) ----
     education = resume_data.get('education', [])
     if education:
@@ -353,6 +281,80 @@ def render_latex(resume_data):
 
             if i < len(education) - 1:
                 latex += "\n\\vspace{" + edu_entry_gap + "}\n"
+
+        latex += "\n\\vspace{" + section_gap + "}\n"
+
+    # ---- PROJECTS (matches template: -1pt between entries) ----
+    projects = resume_data.get('projects', [])
+    if projects:
+        latex += "\n%---------- PROJECTS ----------\n"
+        latex += "\\section{Projects}\n"
+        for i, proj in enumerate(projects):
+            proj_name = s(proj.get('name', ''))
+            tech = s(proj.get('tech_stack', ''))
+            dates = s(proj.get('dates', ''))
+
+            latex += "\n\\resumeSubheading{" + proj_name + "}{" + dates + "}{" + tech + "}{}\n"
+            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
+            for bullet in proj.get('bullets', []):
+                latex += "  \\resumeItem{" + s(bullet) + "}\n"
+            latex += "\\end{itemize}\n"
+
+            if i < len(projects) - 1:
+                latex += "\n\\vspace{" + proj_entry_gap + "}\n"
+
+        latex += "\n\\vspace{" + section_gap + "}\n"
+
+    # ---- EXPERIENCE (matches template: 3pt between entries) ----
+    experience = resume_data.get('experience', [])
+    if experience:
+        latex += "\n%---------- EXPERIENCE ----------\n"
+        latex += "\\section{Experience}\n"
+        for i, exp in enumerate(experience):
+            title = s(exp.get('title', ''))
+            company = s(exp.get('company', ''))
+            exp_location = s(exp.get('location', ''))
+            dates = s(exp.get('dates', ''))
+
+            latex += "\n\\resumeSubheading{" + title + "}{" + dates + "}{" + company + "}{" + exp_location + "}\n"
+            latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
+            for bullet in exp.get('bullets', []):
+                latex += "  \\resumeItem{" + s(bullet) + "}\n"
+            latex += "\\end{itemize}\n"
+
+            if i < len(experience) - 1:
+                latex += "\n\\vspace{" + exp_entry_gap + "}\n"
+
+        latex += "\n\\vspace{" + section_gap + "}\n"
+
+    # ---- TECHNICAL SKILLS ----
+    skills = resume_data.get('skills', [])
+    if skills:
+        latex += "\n%---------- TECHNICAL SKILLS ----------\n"
+        latex += "\\section{Technical Skills}\n"
+        latex += "\\small\n"
+        skill_lines = []
+        for group in skills:
+            category = s(group.get('category', ''))
+            items = ', '.join([s(item) for item in group.get('items', [])])
+            skill_lines.append(rf"\textbf{{{category}:}} {items}")
+        latex += ' \\\\\n'.join(skill_lines) + "\n"
+        latex += "\n\\vspace{" + section_gap + "}\n"
+
+    # ---- CERTIFICATIONS ----
+    certifications = resume_data.get('certifications', [])
+    if certifications:
+        latex += "\n%---------- CERTIFICATIONS ----------\n"
+        latex += "\\section{Certifications}\n"
+        latex += "\\small\n"
+        for cert in certifications:
+            if isinstance(cert, dict):
+                cert_name = s(cert.get('name', ''))
+                cert_dates = s(cert.get('dates', ''))
+                latex += "\\textbf{" + cert_name + "} \\hfill \\textit{" + cert_dates + "}\n"
+            elif isinstance(cert, str):
+                latex += "\\textbf{" + s(cert) + "}\n"
+        latex += "\n\\vspace{" + section_gap + "}\n"
 
     # ---- OTHER EXPERIENCE ----
     other_experience = resume_data.get('other_experience', [])

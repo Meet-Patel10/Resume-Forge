@@ -12,6 +12,10 @@ from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, COVER_LETTER_
 from app.services.prompts.brutal_critic import BRUTAL_CRITIC_SYSTEM, build_critique_message
 from app.services.prompts.keyword_extractor import KEYWORD_EXTRACTOR_SYSTEM, build_keyword_message
 from app.services.prompts.jd_analyzer import JD_ANALYZER_SYSTEM, build_jd_analysis_message
+from app.services.prompts.leadership_email import (
+    LEADERSHIP_EMAIL_SYSTEM, LEADERSHIP_EMAIL_ADJUST_SYSTEM,
+    build_leadership_email_message, build_email_adjust_message
+)
 from app.services.latex_engine import render_latex
 from app.services.ats_scorer import calculate_ats_score
 import json as json_mod
@@ -62,9 +66,75 @@ def api_tailor():
     company_name = data.get('company_name', '')
     role_title = data.get('role_title', '')
     keyword_analysis = data.get('keyword_analysis', '')
+    target_city = data.get('target_city', '').strip()
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
+
+    # Canadian city → province code mapping (comprehensive)
+    CITY_TO_PROVINCE = {
+        # Ontario
+        'toronto': 'ON', 'ottawa': 'ON', 'mississauga': 'ON', 'brampton': 'ON',
+        'hamilton': 'ON', 'london': 'ON', 'markham': 'ON', 'vaughan': 'ON',
+        'kitchener': 'ON', 'windsor': 'ON', 'richmond hill': 'ON', 'oakville': 'ON',
+        'burlington': 'ON', 'oshawa': 'ON', 'barrie': 'ON', 'waterloo': 'ON',
+        'guelph': 'ON', 'cambridge': 'ON', 'whitby': 'ON', 'ajax': 'ON',
+        'milton': 'ON', 'niagara falls': 'ON', 'thunder bay': 'ON', 'sudbury': 'ON',
+        'peterborough': 'ON', 'belleville': 'ON', 'sarnia': 'ON', 'welland': 'ON',
+        'north bay': 'ON', 'cornwall': 'ON', 'pickering': 'ON', 'kanata': 'ON',
+        'scarborough': 'ON', 'etobicoke': 'ON', 'north york': 'ON',
+        # Quebec
+        'montreal': 'QC', 'quebec city': 'QC', 'laval': 'QC', 'gatineau': 'QC',
+        'longueuil': 'QC', 'sherbrooke': 'QC', 'levis': 'QC', 'trois-rivieres': 'QC',
+        'terrebonne': 'QC', 'saint-jean-sur-richelieu': 'QC', 'brossard': 'QC',
+        # British Columbia
+        'vancouver': 'BC', 'surrey': 'BC', 'burnaby': 'BC', 'richmond': 'BC',
+        'coquitlam': 'BC', 'kelowna': 'BC', 'victoria': 'BC', 'nanaimo': 'BC',
+        'kamloops': 'BC', 'chilliwack': 'BC', 'abbotsford': 'BC', 'langley': 'BC',
+        'new westminster': 'BC', 'north vancouver': 'BC', 'west vancouver': 'BC',
+        'prince george': 'BC', 'whistler': 'BC',
+        # Alberta
+        'calgary': 'AB', 'edmonton': 'AB', 'red deer': 'AB', 'lethbridge': 'AB',
+        'medicine hat': 'AB', 'grande prairie': 'AB', 'airdrie': 'AB',
+        'st. albert': 'AB', 'spruce grove': 'AB', 'fort mcmurray': 'AB',
+        # Manitoba
+        'winnipeg': 'MB', 'brandon': 'MB', 'steinbach': 'MB', 'thompson': 'MB',
+        # Saskatchewan
+        'saskatoon': 'SK', 'regina': 'SK', 'prince albert': 'SK', 'moose jaw': 'SK',
+        # Nova Scotia
+        'halifax': 'NS', 'dartmouth': 'NS', 'sydney': 'NS', 'truro': 'NS',
+        'new glasgow': 'NS', 'bridgewater': 'NS',
+        # New Brunswick
+        'saint john': 'NB', 'moncton': 'NB', 'fredericton': 'NB', 'dieppe': 'NB',
+        'miramichi': 'NB',
+        # Newfoundland and Labrador
+        "st. john's": 'NL', 'mount pearl': 'NL', 'corner brook': 'NL',
+        'conception bay south': 'NL',
+        # Prince Edward Island
+        'charlottetown': 'PE', 'summerside': 'PE',
+        # Northwest Territories
+        'yellowknife': 'NT',
+        # Yukon
+        'whitehorse': 'YT',
+        # Nunavut
+        'iqaluit': 'NU',
+    }
+
+    def _resolve_location(city_input):
+        """Resolve city name to 'City, Province, Canada' format."""
+        if not city_input:
+            return ''
+        city_lower = city_input.lower().strip()
+        province = CITY_TO_PROVINCE.get(city_lower)
+        # Title-case the city name (handle apostrophes like St. John's)
+        import re as _re_city
+        city_display = city_input.strip().title()
+        # Fix apostrophe-S issue: "John'S" → "John's"
+        city_display = _re_city.sub(r"'S\b", "'s", city_display)
+        if province:
+            return f"{city_display}, {province}, Canada"
+        # If not found in mapping, just append Canada
+        return f"{city_display}, Canada"
 
     total_tokens = 0
     total_cost = 0.0
@@ -332,6 +402,12 @@ def api_tailor():
                     'github': master.github_url or '',
                     'tagline': master.tagline or '',
                 }
+
+                # Override header location with target city if provided
+                if target_city:
+                    resolved_loc = _resolve_location(target_city)
+                    tailored_data['header']['location'] = resolved_loc
+                    print(f"[tailor] location overridden: '{target_city}' → '{resolved_loc}'")
 
                 # education from DB
                 tailored_data['education'] = master.education or []
@@ -1524,9 +1600,14 @@ def api_download_pdf():
 
     data = request.get_json()
     latex_code = data.get('latex_code', '')
+    company_name = data.get('company_name', '')
 
     if not latex_code:
         return jsonify({'error': 'No LaTeX code provided'}), 400
+
+    # Build filename: Meet_Patel_Resume_CompanyName.pdf
+    safe_company = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in company_name.strip()).strip('_')[:30] if company_name else ''
+    filename = f"Meet_Patel_Resume_{safe_company}.pdf" if safe_company else "Meet_Patel_Resume.pdf"
 
     try:
         # Use YtoTech LaTeX Online API (free, no API key required)
@@ -1546,7 +1627,7 @@ def api_download_pdf():
             return Response(
                 resp.content,
                 mimetype='application/pdf',
-                headers={'Content-Disposition': 'attachment; filename=tailored_resume.pdf'}
+                headers={'Content-Disposition': f'attachment; filename="{filename}"'}
             )
         else:
             error_msg = resp.text[:500] if resp.text else 'Unknown compilation error'
@@ -1564,9 +1645,14 @@ def api_download_docx():
 
     data = request.get_json()
     resume_json = data.get('resume_json', {})
+    company_name = data.get('company_name', '')
 
     if not resume_json:
         return jsonify({'error': 'No resume data provided'}), 400
+
+    # Build filename: Meet_Patel_Resume_CompanyName.docx
+    safe_company = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in company_name.strip()).strip('_')[:30] if company_name else ''
+    filename = f"Meet_Patel_Resume_{safe_company}.docx" if safe_company else "Meet_Patel_Resume.docx"
 
     try:
         from app.services.docx_engine import render_docx
@@ -1574,9 +1660,520 @@ def api_download_docx():
         return Response(
             docx_bytes,
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            headers={'Content-Disposition': 'attachment; filename=tailored_resume.docx'}
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
         )
     except ImportError:
         return jsonify({'error': 'python-docx is not installed. Run: pip install python-docx'}), 500
     except Exception as e:
         return jsonify({'error': f'DOCX generation failed: {str(e)}'}), 500
+
+
+@tailor_bp.route('/api/leadership-email', methods=['POST'])
+@login_required
+def api_leadership_email():
+    """Generate a professional leadership outreach email."""
+    try:
+        return _generate_leadership_email_impl()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Leadership email generation failed: {str(e)}'}), 500
+
+
+def _generate_leadership_email_impl():
+    import re as _re
+    import unicodedata as _ud
+
+    data = request.get_json()
+    resume_text = data.get('resume_text', '')
+    jd_text = data.get('jd_text', '')
+    company_name = data.get('company_name', '')
+    role_title = data.get('role_title', '')
+    recipient_name = data.get('recipient_name', '')
+    recipient_title = data.get('recipient_title', '')
+    recipient_category = data.get('recipient_category', '')
+    cover_letter_text = data.get('cover_letter_text', '')
+
+    TARGET_MIN = 60
+    TARGET_MAX = 100
+
+    if not jd_text or not resume_text:
+        return jsonify({'error': 'Both job description and resume text are required'}), 400
+
+    # Recipient name is REQUIRED — find their name on LinkedIn before generating
+    if not recipient_name or not recipient_name.strip():
+        return jsonify({'error': 'Recipient name is required. Find the actual person\'s name on LinkedIn or the company site before generating an outreach email — there is no greeting that fixes "I don\'t know who you are."'}), 400
+
+    first_name = recipient_name.strip().split()[0]
+
+    # Deduplication data (for multi-recipient: forces completely different emails)
+    previously_used_signals = data.get('previously_used_signals', [])
+    previously_used_subjects = data.get('previously_used_subjects', [])
+    previously_used_bodies = data.get('previously_used_bodies', [])
+
+    total_tokens = 0
+    total_cost = 0.0
+
+    # ===== BANNED WORD CHECKER — enforced programmatically =====
+    def _check_banned_words(text):
+        """Check if body contains banned proof patterns. Returns list of violations."""
+        violations = []
+        text_lower = text.lower()
+        # Banned verbs/words
+        if 'maintained' in text_lower or 'maintaining' in text_lower or 'maintenance' in text_lower:
+            violations.append('"maintained" (passive verb — must use active: built, designed, scaled)')
+        if 'incident' in text_lower:
+            violations.append('"incidents" (frames candidate as firefighter, not builder)')
+        if 'resolving' in text_lower and any(c.isdigit() for c in text_lower.split('resolving')[-1][:20]):
+            violations.append('"resolving [number]" (incident count metric)')
+        # Banned proof types
+        if 'sop' in text_lower.split() or 'sops' in text_lower.split():
+            violations.append('"SOPs" (documentation is not engineering proof)')
+        if 'troubleshooting guide' in text_lower or 'troubleshooting doc' in text_lower:
+            violations.append('"troubleshooting guides" (documentation is not proof)')
+        if 'runbook' in text_lower:
+            violations.append('"runbook" (documentation is not proof)')
+        # Banned bridge patterns
+        if 'whether' in text_lower and 'the same' in text_lower:
+            violations.append('"Whether X or Y, the same..." (banned bridge sentence)')
+        if 'root cause analysis' in text_lower:
+            violations.append('"root cause analysis" (reactive, not building)')
+        # Banned application references
+        if 'i applied for' in text_lower or 'i applied to' in text_lower:
+            violations.append('"I applied for" (passive — ask must reference THEIR challenge, not your application)')
+        if 'my application' in text_lower:
+            violations.append('"my application" (never reference application status)')
+        # Banned generic asks
+        if 'would you be open to a 15-minute conversation?' in text_lower and text_lower.count('?') == 1:
+            violations.append('"Would you be open to a 15-minute conversation?" (too generic — ask must reference their specific challenge)')
+        return violations
+
+    # Step 1: Generate email with AUTO-REJECT retry loop
+    MAX_GENERATION_ATTEMPTS = 3
+    response = None
+    generation_violations_log = []
+
+    for gen_attempt in range(MAX_GENERATION_ATTEMPTS):
+        user_message = build_leadership_email_message(
+            resume_text, jd_text, company_name, role_title,
+            recipient_name, cover_letter_text,
+            recipient_title, recipient_category,
+            previously_used_signals=previously_used_signals,
+            previously_used_subjects=previously_used_subjects,
+            previously_used_bodies=previously_used_bodies
+        )
+
+        # On retry, prepend rejection feedback to force a different output
+        if gen_attempt > 0 and generation_violations_log:
+            rejection_feedback = (
+                f"\n\n## ⛔ YOUR PREVIOUS OUTPUT WAS AUTO-REJECTED (attempt {gen_attempt})\n"
+                f"Violations found:\n"
+            )
+            for v in generation_violations_log[-1]:
+                rejection_feedback += f"  - {v}\n"
+            rejection_feedback += (
+                "\nYou MUST write a COMPLETELY DIFFERENT proof sentence. "
+                "Use an ACTIVE verb (built, designed, architected, scaled, deployed). "
+                "Choose a DIFFERENT achievement from the resume. "
+                "Do NOT use incidents, maintained, SOPs, or documentation. "
+                "The system will reject again if violations are found.\n"
+            )
+            user_message = rejection_feedback + user_message
+
+        result = claude.analyze(
+            LEADERSHIP_EMAIL_SYSTEM, user_message,
+            max_tokens=1000, force_json=True,
+            model_override='productionHigh'
+        )
+
+        if result.get('error'):
+            return jsonify({'error': result['error']}), 500
+
+        total_tokens += result.get('tokens_used', 0)
+        total_cost += result.get('cost_usd', 0.0)
+
+        response = result['response']
+        if not isinstance(response, dict):
+            raw = response if isinstance(response, str) else str(response)
+
+            # Attempt 1: Fix newlines inside JSON strings
+            try:
+                fixed = claude._fix_json_newlines(raw.strip())
+                parsed = json_mod.loads(fixed)
+                if isinstance(parsed, dict):
+                    response = parsed
+            except (json_mod.JSONDecodeError, ValueError):
+                pass
+
+            # Attempt 2: Extract JSON object with regex
+            if not isinstance(response, dict):
+                match = _re.search(r'\{[\s\S]*\}', raw)
+                if match:
+                    try:
+                        fixed = claude._fix_json_newlines(match.group(0))
+                        parsed = json_mod.loads(fixed)
+                        if isinstance(parsed, dict):
+                            response = parsed
+                    except (json_mod.JSONDecodeError, ValueError):
+                        pass
+
+            # Last resort
+            if not isinstance(response, dict):
+                response = {
+                    'subject': f'{company_name or "company"} role',
+                    'body': raw,
+                    'ref_number': '',
+                }
+
+        # Check for banned words
+        body_text = response.get('body', '')
+        violations = _check_banned_words(body_text)
+
+        if not violations:
+            print(f"[leadership-email] ✅ Generation attempt {gen_attempt + 1} passed QA checks")
+            break
+        else:
+            generation_violations_log.append(violations)
+            violation_str = ', '.join(violations)
+            print(f"[leadership-email] ⛔ AUTO-REJECT attempt {gen_attempt + 1}: {violation_str}")
+            if gen_attempt < MAX_GENERATION_ATTEMPTS - 1:
+                print(f"[leadership-email] 🔄 Regenerating (attempt {gen_attempt + 2})...")
+            else:
+                print(f"[leadership-email] ⚠️ Max retries reached — using last output despite violations")
+
+    subject = response.get('subject', '')
+    body = response.get('body', '')
+
+    # ===== ENCODING CLEANUP — strip non-ASCII artifacts =====
+    def _clean_encoding(text):
+        """Replace non-ASCII with closest ASCII equivalent or strip."""
+        # Common replacements
+        replacements = {
+            '\u00df': 'ss',  # ß → ss
+            '\u2018': "'", '\u2019': "'",  # smart single quotes
+            '\u201c': '"', '\u201d': '"',  # smart double quotes
+            '\u2013': '-', '\u2014': '-',  # en-dash, em-dash
+            '\u2026': '...',  # ellipsis
+            '\u00a0': ' ',  # non-breaking space
+        }
+        for char, repl in replacements.items():
+            text = text.replace(char, repl)
+        # Strip any remaining non-ASCII
+        text = text.encode('ascii', 'ignore').decode('ascii')
+        return text
+
+    subject = _clean_encoding(subject)
+    body = _clean_encoding(body)
+
+    # FORCE subject line rules — never trust the AI
+    if subject:
+        import re as _re_subj
+        # 1. Strip "Re:", "Fwd:", "RE:", etc. — BANNED (fake reply threads)
+        subject = _re_subj.sub(r'^(re:\s*|fwd?:\s*)+', '', subject, flags=_re_subj.IGNORECASE).strip()
+        # 2. Strip emoji
+        subject = _re_subj.sub(r'[\U00010000-\U0010ffff]', '', subject, flags=_re_subj.UNICODE).strip()
+        # 3. Strip exclamation points
+        subject = subject.replace('!', '')
+        # 4. Strip numbers and metrics (e.g., "99.9%", "500K")
+        subject = _re_subj.sub(r'\b\d[\d,.%KkMmBb]*\b', '', subject).strip()
+        subject = _re_subj.sub(r'\s{2,}', ' ', subject).strip()
+        # 5. Strip parenthetical content (e.g., "(java)", "(ref 257494)")
+        subject = _re_subj.sub(r'\([^)]*\)', '', subject).strip()
+        # 6. Strip role title self-references
+        role_words_to_strip = ['associate', 'software', 'engineer', 'developer',
+                               'senior', 'junior', 'lead', 'principal', 'manager',
+                               'application', 'opportunity', 'position', 'role']
+        words = subject.split()
+        words = [w for w in words if w.lower().strip('.,;:') not in role_words_to_strip]
+        subject = ' '.join(words).strip()
+        # 7. Strip common filler words
+        filler_to_strip = ['at', 'the', 'a', 'an', 'for', 'about', 'regarding', 'quick',
+                           'intro', 'question', 'reaching', 'out']
+        # Only strip if resulting subject would still have 1+ words
+        filtered = [w for w in subject.split() if w.lower().strip('.,;:') not in filler_to_strip]
+        if filtered:
+            subject = ' '.join(filtered)
+        # 7.5. Strip stray dashes, hyphens, colons left over after word stripping
+        subject = _re_subj.sub(r'^[\s\-–—:,;.]+', '', subject).strip()
+        subject = _re_subj.sub(r'[\s\-–—:,;.]+$', '', subject).strip()
+        subject = _re_subj.sub(r'\s{2,}', ' ', subject).strip()
+        # 8. Force lowercase EXCEPT proper nouns (company name + known tech terms)
+        proper_nouns = set()
+        if company_name:
+            for w in company_name.split():
+                proper_nouns.add(w)
+        tech_proper = {'GBME', 'AWS', 'GCP', 'Azure', 'Kubernetes', 'Kafka', 'Docker',
+                       'Redis', 'PostgreSQL', 'MongoDB', 'Spring', 'React', 'Angular',
+                       'Node', 'Python', 'Java', 'Scotiabank', 'RBC', 'BMO', 'CIBC', 'TD',
+                       'API', 'CI', 'CD', 'DevOps', 'SRE', 'MLOps', 'AI', 'ML'}
+        proper_nouns.update(tech_proper)
+
+        # Build case-insensitive lookup: lowered → canonical
+        proper_lookup = {p.lower(): p for p in proper_nouns}
+
+        words = subject.split()
+        lowered = []
+        for w in words:
+            clean = w.strip('.,;:—-–?')
+            clean_lower = clean.lower()
+            if clean_lower in proper_lookup:
+                # Restore canonical casing from the proper nouns set
+                canonical = proper_lookup[clean_lower]
+                # Preserve any punctuation that was on the word
+                lowered.append(w.replace(clean, canonical))
+            else:
+                lowered.append(w.lower())
+        subject = ' '.join(lowered)
+
+        # 9. Truncate to 3 words max (tighter than before)
+        words = subject.split()
+        if len(words) > 3:
+            subject = ' '.join(words[:3])
+            print(f"[leadership-email] ✂️ Subject truncated to 3 words: {subject}")
+
+        # 10. Strip trailing punctuation
+        subject = subject.rstrip('.,;:—-–')
+
+        # 11. Dedup check — if this subject was already used, try to make it unique
+        if previously_used_subjects:
+            used_lower = [s.lower().strip() for s in previously_used_subjects]
+            if subject.lower().strip() in used_lower:
+                print(f"[leadership-email] ⚠️ Subject '{subject}' already used — needs manual review")
+
+        word_count_subj = len(subject.split())
+        print(f"[leadership-email] Subject enforced ({word_count_subj} words): {subject}")
+
+    if not body:
+        return jsonify({'error': 'Email generation failed — no body text returned'}), 500
+
+    # FORCE greeting — never trust the AI
+    import re as _re_greeting
+    body = _re_greeting.sub(
+        r'^\s*(Hi\s+\w+[,.]?|Hi\s+there[,.]?|Hi[,.]?|Hello\s+\w+[,.]?|Hello[,.]?|Hey\s+\w+[,.]?|Hey[,.]?|Dear\s+[^,\n]+[,.]?)\s*',
+        f'Hi {first_name},\n\n',
+        body,
+        count=1,
+        flags=_re_greeting.IGNORECASE
+    )
+    if not body.strip().lower().startswith(f'hi {first_name.lower()}'):
+        body = f'Hi {first_name},\n\n' + body.strip()
+
+    # Capitalize the first letter after the greeting line
+    greeting_end = f'Hi {first_name},\n\n'
+    if body.startswith(greeting_end) and len(body) > len(greeting_end):
+        rest = body[len(greeting_end):]
+        body = greeting_end + rest[0].upper() + rest[1:]
+
+    # FORCE single paragraph format — collapse multiple paragraphs after greeting
+    if greeting_end in body:
+        greeting_part = body[:body.index(greeting_end) + len(greeting_end)]
+        body_part = body[len(greeting_part):]
+        # Replace multiple newlines/blank lines with single space (one paragraph)
+        body_part = _re_greeting.sub(r'\n\s*\n', ' ', body_part)
+        # Also collapse single newlines within the paragraph
+        body_part = _re_greeting.sub(r'\n', ' ', body_part)
+        # Clean up multiple spaces
+        body_part = _re_greeting.sub(r'\s{2,}', ' ', body_part).strip()
+        body = greeting_part + body_part
+
+    print(f'[leadership-email] Greeting forced: Hi {first_name},')
+    print(f'[leadership-email] Body formatted as single paragraph')
+
+    # Step 2: Count words (exclude sign-off contact line)
+    def count_words(text):
+        lines = text.strip().split('\n')
+        body_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.lower() in ['sincerely,', 'best regards,', 'regards,',
+                                     'warm regards,', 'respectfully,', 'best,']:
+                break
+            body_lines.append(stripped)
+        return len(' '.join(body_lines).split())
+
+    ref_number = response.get('ref_number', '')
+    # Strip REFENUM placeholder — if AI couldn't find a real ref, don't include it
+    if ref_number and ref_number.strip().upper() == 'REFENUM':
+        ref_number = ''
+        print("[leadership-email] Stripped REFENUM placeholder — no real ref found")
+
+    current_count = count_words(body)
+
+    # Step 3: Adjustment loop — enforce 35-60 words (max 3 retries)
+    MAX_RETRIES = 3
+    for attempt in range(MAX_RETRIES):
+        if TARGET_MIN <= current_count <= TARGET_MAX:
+            break
+
+        print(f"[leadership-email] Body word count: {current_count}, target: {TARGET_MIN}-{TARGET_MAX}. Adjusting (attempt {attempt + 1})...")
+        adjust_msg = build_email_adjust_message(body, current_count, TARGET_MIN, TARGET_MAX)
+        adjust_result = claude.analyze(
+            LEADERSHIP_EMAIL_ADJUST_SYSTEM, adjust_msg,
+            max_tokens=1000, force_json=True,
+            model_override='productionHigh'
+        )
+
+        total_tokens += adjust_result.get('tokens_used', 0)
+        total_cost += adjust_result.get('cost_usd', 0.0)
+
+        if adjust_result.get('error'):
+            break
+
+        adj_response = adjust_result['response']
+        if isinstance(adj_response, dict) and adj_response.get('adjusted_body'):
+            body = _clean_encoding(adj_response['adjusted_body'])
+            current_count = count_words(body)
+            response['body'] = body
+        else:
+            break
+
+    print(f"[leadership-email] Final word count: {current_count}")
+    print(f"[leadership-email] Subject: {subject[:80]}")
+
+    # Step 3.5: Quality checks — warn if AI ignored prompt rules
+    body_lower = body.lower()
+    if 'whether' in body_lower and 'the same' in body_lower:
+        print("[leadership-email] ⚠️ WARNING: Body contains banned bridge pattern ('Whether X or Y, the same...')")
+    if 'maintained' in body_lower:
+        print("[leadership-email] ⚠️ WARNING: Body contains 'maintained'")
+    if 'ref refenum' in body_lower or '(ref refenum)' in body_lower:
+        # Strip it from the body text too
+        body = _re.sub(r'\s*\(ref\s*REFENUM\)', '', body, flags=_re.IGNORECASE)
+        body = _re.sub(r'\s*ref\s+REFENUM', '', body, flags=_re.IGNORECASE)
+        print("[leadership-email] ✂️ Stripped 'ref REFENUM' from body text")
+
+
+    SIGN_OFF_BLOCK = (
+        "\n\nBest regards,\n"
+        "Meet Patel\n"
+        "https://www.linkedin.com/in/meettpatel28/"
+    )
+
+    # Strip any sign-off fragments the AI might have included despite instructions
+    lines = body.rstrip().split('\n')
+    clean_lines = []
+    for line in lines:
+        stripped = line.strip().lower()
+        if stripped in ['best regards,', 'best regards', 'best,', 'regards,',
+                        'sincerely,', 'warm regards,', 'meet patel',
+                        '+1 (902) 322-3808', 'meet', 'patel', 'meet patel,']:
+            continue
+        if 'linkedin.com/in/meettpatel28' in stripped:
+            continue
+        if stripped.startswith('+1 (902)'):
+            continue
+        clean_lines.append(line)
+    body = '\n'.join(clean_lines).rstrip() + SIGN_OFF_BLOCK
+    print("[leadership-email] Sign-off appended (always)")
+
+    return jsonify({
+        'subject': subject,
+        'body': body,
+        'ref_number': ref_number if ref_number else None,
+        'word_count': current_count,
+        'signal_used': response.get('signal_used', ''),
+        'proof_point': response.get('proof_point', ''),
+        'proof_source': response.get('proof_source', ''),
+        'recipient_category': response.get('recipient_category', recipient_category or 'category_a'),
+        'skills_highlighted': response.get('skills_highlighted', []),
+        'metrics_used': response.get('metrics_used', []),
+        'company_name': company_name,
+        'role_title': role_title,
+        'recipient_name': recipient_name or '',
+        'recipient_title': recipient_title or '',
+        'tokens_used': total_tokens,
+        'cost_usd': total_cost,
+    })
+
+
+@tailor_bp.route('/api/download-leadership-email', methods=['POST'])
+@login_required
+def api_download_leadership_email_json():
+    """Download leadership email(s) as a structured JSON file for automation."""
+    from datetime import datetime
+
+    data = request.get_json()
+    company_name = data.get('company_name', '')
+    role_title = data.get('role_title', '')
+
+    # Support both multi-email (new) and single-email (backwards compat)
+    emails = data.get('emails', None)
+    if emails is None:
+        # Backwards compat: single email
+        body = data.get('body', '')
+        if not body:
+            return jsonify({'error': 'No email body provided'}), 400
+        emails = [{
+            'subject': data.get('subject', ''),
+            'body': body,
+            'ref_number': data.get('ref_number', 'REFENUM'),
+            'company_name': company_name,
+            'role_title': role_title,
+            'recipient_name': data.get('recipient_name', ''),
+            'recipient_email': data.get('recipient_email', ''),
+            'recipient_title': data.get('recipient_title', ''),
+            'recipient_category': data.get('recipient_category', 'category_a'),
+            'signal_used': data.get('signal_used', ''),
+            'word_count': data.get('word_count', 0),
+        }]
+
+    if not emails or len(emails) == 0:
+        return jsonify({'error': 'No emails provided'}), 400
+
+    # Add timestamps and clean up each email
+    for email in emails:
+        email['generated_at'] = datetime.now().isoformat()
+        # Strip REFENUM placeholder — don't include fake ref numbers in automation data
+        ref = email.get('ref_number', '')
+        if not ref or (isinstance(ref, str) and ref.strip().upper() == 'REFENUM'):
+            email.pop('ref_number', None)
+
+    # Build the output JSON
+    output = {
+        'company': company_name,
+        'role': role_title,
+        'generated_at': datetime.now().isoformat(),
+        'total_recipients': len(emails),
+        'emails': emails,
+    }
+
+    # Build filename: LastName_FirstName_Designation_Company
+    def _slug(text, max_len=25):
+        """Sanitize text into a safe filename slug."""
+        return ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in text.strip()).strip('_')[:max_len]
+
+    # Get recipient name from first email (or fall back to empty)
+    first_email = emails[0] if emails else {}
+    recipient_raw = first_email.get('recipient_name', '') or data.get('recipient_name', '')
+    name_parts = recipient_raw.strip().split()
+    if len(name_parts) >= 2:
+        first_name = _slug(name_parts[0])
+        last_name  = _slug(name_parts[-1])
+    elif len(name_parts) == 1:
+        first_name = _slug(name_parts[0])
+        last_name  = 'Unknown'
+    else:
+        first_name = 'Unknown'
+        last_name  = 'Unknown'
+
+    # Designation: use the RECIPIENT'S title (e.g. "HR Manager" → "HM", "Technical Recruiter" → "TR")
+    # Fall back to the applied-for role_title if recipient_title is empty
+    recipient_title_raw = (first_email.get('recipient_title', '') or data.get('recipient_title', '') or '').strip()
+    designation_raw = recipient_title_raw if recipient_title_raw else role_title.strip()
+    # Build initials from each word (capitalize each first letter)
+    initials = ''.join(w[0].upper() for w in designation_raw.split() if w)
+    designation = initials if initials else _slug(designation_raw, 20)
+
+    safe_company = _slug(company_name, 25) if company_name else 'Company'
+
+    filename = f"{last_name}_{first_name}_{designation}_{safe_company}.json"
+
+    import io
+    json_bytes = json_mod.dumps(output, indent=2, ensure_ascii=False).encode('utf-8')
+
+    return send_file(
+        io.BytesIO(json_bytes),
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=filename,
+    )

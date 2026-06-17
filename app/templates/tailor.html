@@ -29,6 +29,10 @@
             <label class="form-label">Role Title</label>
             <input type="text" id="role-title" class="form-input" placeholder="Software Engineer">
         </div>
+        <div class="form-group">
+            <label class="form-label">Job Location <span style="color: var(--text-muted); font-weight: normal; font-size: var(--text-xs);">(city)</span></label>
+            <input type="text" id="target-city" class="form-input" placeholder="e.g., Halifax, Toronto">
+        </div>
     </div>
     <div class="form-group">
         <label class="form-label">Job Description</label>
@@ -41,6 +45,15 @@
         <button class="btn btn-secondary" onclick="runCoverLetter()" id="btn-cover" style="display:none">
             💌 Generate Cover Letter
         </button>
+        <button class="btn btn-secondary" onclick="runLeadershipEmail()" id="btn-email" style="display:none">
+            📧 Generate Leadership Email
+        </button>
+    </div>
+    <div class="form-group mt-4" id="recipient-group" style="display:none">
+        <label class="form-label">Recipient Name <span style="color: var(--text-muted); font-weight: normal; font-size: var(--text-xs);">(optional — defaults to "Hiring Manager")</span></label>
+        <input type="text" id="recipient-name" class="form-input" placeholder="e.g., John Smith" style="max-width: 350px; margin-bottom: var(--space-2);">
+        <label class="form-label" style="margin-top: var(--space-2);">Recipient Email <span style="color: var(--text-muted); font-weight: normal; font-size: var(--text-xs);">(optional — included in downloaded JSON)</span></label>
+        <input type="email" id="recipient-email" class="form-input" placeholder="e.g., john.smith@company.com" style="max-width: 350px;">
     </div>
 </div>
 
@@ -79,13 +92,14 @@
     <div class="tabs">
         <button class="tab active" data-tailor-tab="latex">📝 LaTeX Output</button>
         <button class="tab" data-tailor-tab="cover">💌 Cover Letter</button>
+        <button class="tab" data-tailor-tab="email" id="tab-email" style="display:none">📧 Leadership Email</button>
     </div>
 
     <!-- LaTeX Output -->
     <div class="tailor-tab-content active" id="ttab-latex">
         <div class="card">
             <div class="flex-between mb-4">
-                <h3 class="card-title">Copy this into Overleaf</h3>
+                <h3 class="card-title">Edit LaTeX & Export</h3>
                 <div class="flex gap-4" style="flex-wrap: wrap;">
                     <button class="btn btn-sm btn-secondary" onclick="selectAllLatex()">🔘 Select All</button>
                     <button class="btn btn-sm btn-primary" onclick="copyLatex()">📋 Copy to Clipboard</button>
@@ -93,7 +107,7 @@
                     <button class="btn btn-sm btn-secondary" onclick="downloadDOCX()" id="btn-download-docx">📄 Download DOCX</button>
                 </div>
             </div>
-            <textarea id="latex-output" class="form-textarea" readonly
+            <textarea id="latex-output" class="form-textarea"
                       style="font-family: var(--font-mono); font-size: var(--text-sm); min-height: 500px; line-height: 1.5; background: var(--bg-tertiary); color: var(--text-primary); white-space: pre; overflow-x: auto;"></textarea>
         </div>
 
@@ -117,6 +131,15 @@
             </div>
         </div>
     </div>
+
+    <!-- Leadership Email -->
+    <div class="tailor-tab-content" id="ttab-email" style="display: none;">
+        <div class="card" id="leadership-email-output">
+            <div class="empty-state">
+                <p>Click "Generate Leadership Email" above to create a professional outreach email.</p>
+            </div>
+        </div>
+    </div>
 </div>
 
 {% endif %}
@@ -128,6 +151,7 @@
     let currentLatex = '';
     let currentAppId = null;
     let currentCoverLetterText = '';
+    let currentEmailData = null;
 
     // Tab switching
     document.querySelectorAll('[data-tailor-tab]').forEach(tab => {
@@ -145,6 +169,7 @@
 
         const company = document.getElementById('company-name').value.trim();
         const role = document.getElementById('role-title').value.trim();
+        const city = document.getElementById('target-city')?.value.trim() || '';
 
         showLoading('Running 3-step pipeline: ① Brutal Critique → ② Keyword Extraction → ③ Tailoring... This takes 30-60 seconds.');
         try {
@@ -156,6 +181,7 @@
                     resume_text: resumeText,
                     company_name: company,
                     role_title: role,
+                    target_city: city,
                 })
             });
             const data = await res.json();
@@ -169,6 +195,7 @@
 
             document.getElementById('tailor-results').style.display = 'block';
             document.getElementById('btn-cover').style.display = 'inline-flex';
+            document.getElementById('recipient-group').style.display = 'block';
 
             // Render LaTeX
             document.getElementById('latex-output').value = currentLatex;
@@ -364,6 +391,10 @@
 
             currentCoverLetterText = text;
 
+            // Show the leadership email button after cover letter is generated
+            document.getElementById('btn-email').style.display = 'inline-flex';
+            document.getElementById('tab-email').style.display = '';
+
             document.getElementById('cover-letter-output').innerHTML = `
                 <div class="flex-between mb-4">
                     <h3 class="card-title">Cover Letter${formatUsed ? ' — ' + formatUsed + ' Format' : ''}</h3>
@@ -373,7 +404,7 @@
                     </div>
                 </div>
                 ${metaHtml}
-                <div id="cl-text" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary)">${text}</div>
+                <div id="cl-text" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text;">${text}</div>
             `;
         } catch (e) {
             hideLoading();
@@ -382,14 +413,17 @@
     }
 
     async function downloadCoverLetterPDF() {
-        if (!currentCoverLetterText) return showToast('No cover letter to download.', 'error');
+        // Read from the editable DOM element so user edits are captured
+        const clEl = document.getElementById('cl-text');
+        const liveText = clEl ? clEl.innerText : currentCoverLetterText;
+        if (!liveText) return showToast('No cover letter to download.', 'error');
 
         showLoading('Generating PDF...');
         try {
             const res = await fetch('/tailor/api/download-cover-letter-pdf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cover_letter_text: currentCoverLetterText }),
+                body: JSON.stringify({ cover_letter_text: liveText }),
             });
 
             if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
@@ -450,13 +484,14 @@
     async function downloadPDF() {
         const latex = document.getElementById('latex-output').value;
         if (!latex) return showToast('No LaTeX output to compile.', 'error');
+        const company = document.getElementById('company-name')?.value.trim() || '';
 
         showLoading('Compiling PDF...');
         try {
             const res = await fetch('/tailor/api/download-pdf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ latex_code: latex }),
+                body: JSON.stringify({ latex_code: latex, company_name: company }),
             });
 
             if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
@@ -464,7 +499,9 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'tailored_resume.pdf';
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'Meet_Patel_Resume.pdf';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -485,13 +522,14 @@
     // ===== DOCX Download =====
     async function downloadDOCX() {
         if (!lastTailoredJSON) return showToast('No tailored resume data available.', 'error');
+        const company = document.getElementById('company-name')?.value.trim() || '';
 
         showLoading('Generating DOCX...');
         try {
             const res = await fetch('/tailor/api/download-docx', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ resume_json: lastTailoredJSON }),
+                body: JSON.stringify({ resume_json: lastTailoredJSON, company_name: company }),
             });
 
             if (res.ok && res.headers.get('Content-Type')?.includes('wordprocessingml')) {
@@ -499,7 +537,9 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'tailored_resume.docx';
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'Meet_Patel_Resume.docx';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -514,6 +554,167 @@
         } catch (e) {
             hideLoading();
             showToast('DOCX download failed: ' + e.message, 'error');
+        }
+    }
+
+    // ===== Leadership Email =====
+    async function runLeadershipEmail() {
+        const jd = document.getElementById('jd-input').value.trim();
+        const company = document.getElementById('company-name').value.trim();
+        const role = document.getElementById('role-title').value.trim();
+        const recipient = document.getElementById('recipient-name').value.trim();
+        const recipientEmail = document.getElementById('recipient-email')?.value.trim() || '';
+
+        showLoading('Generating leadership outreach email...');
+        try {
+            const res = await fetch('/tailor/api/leadership-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jd_text: jd,
+                    resume_text: resumeText,
+                    company_name: company,
+                    role_title: role,
+                    recipient_name: recipient,
+                    cover_letter_text: currentCoverLetterText,
+                })
+            });
+
+            if (!res.ok) {
+                hideLoading();
+                let errMsg = 'Server error (' + res.status + ')';
+                try {
+                    const errData = await res.json();
+                    if (errData && errData.error) errMsg = errData.error;
+                } catch(e) {}
+                return showToast(errMsg, 'error');
+            }
+
+            let data;
+            try {
+                data = await res.json();
+            } catch(e) {
+                hideLoading();
+                return showToast('Server returned invalid response', 'error');
+            }
+
+            hideLoading();
+
+            if (!data || data.error) {
+                return showToast((data && data.error) || 'Unknown error', 'error');
+            }
+
+            updateCost(data.cost_usd);
+
+            // Store email data for download
+            currentEmailData = data;
+            currentEmailData.recipient_email = recipientEmail; // attach the email address
+
+            // Switch to email tab
+            document.querySelectorAll('[data-tailor-tab]').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tailor-tab-content').forEach(c => c.style.display = 'none');
+            document.querySelector('[data-tailor-tab="email"]').classList.add('active');
+            document.getElementById('ttab-email').style.display = 'block';
+
+            const subject = data.subject || '';
+            const body = data.body || '';
+            const refNum = data.ref_number || 'REFENUM';
+            const wordCount = data.word_count || '';
+            const skills = data.skills_highlighted || [];
+            const metrics = data.metrics_used || [];
+
+            // Build meta info
+            let metaHtml = '<div style="margin-bottom: var(--space-4); padding: var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-sm);">';
+            if (wordCount) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Word Count:</strong> ${wordCount} <span style="color: ${wordCount >= 200 && wordCount <= 250 ? 'var(--accent-success)' : 'var(--accent-danger)'}">${wordCount >= 200 && wordCount <= 250 ? '✅ In range' : '⚠️ Out of range'}</span></div>`;
+            if (refNum) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Reference #:</strong> ${refNum === 'REFENUM' ? '<span style="color: var(--accent-warning)">⚠️ REFENUM (replace before sending)</span>' : refNum}</div>`;
+            if (skills.length) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Skills Highlighted:</strong> ${skills.join(', ')}</div>`;
+            if (metrics.length) metaHtml += `<div><strong>Metrics Used:</strong> ${metrics.join(', ')}</div>`;
+            metaHtml += '</div>';
+
+            // Render the email
+            document.getElementById('leadership-email-output').innerHTML = `
+                <div class="flex-between mb-4">
+                    <h3 class="card-title">📧 Leadership Email</h3>
+                    <div class="flex gap-4" style="flex-wrap: wrap;">
+                        <button class="btn btn-sm btn-primary" onclick="copyEmailText()" title="Copy email text to clipboard">📋 Copy</button>
+                        <button class="btn btn-sm btn-secondary" onclick="downloadEmailJSON()" title="Download as JSON for automation">💾 Download .json</button>
+                    </div>
+                </div>
+                ${metaHtml}
+                <div style="margin-bottom: var(--space-4); padding: var(--space-3); background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary)); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
+                    <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em;">Subject Line</div>
+                    <div id="email-subject" contenteditable="true" style="font-weight: 600; color: var(--text-primary); font-size: var(--text-base); outline: none; cursor: text;">${subject}</div>
+                </div>
+                <div id="email-body" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text;">${body}</div>
+            `;
+
+            showToast('Leadership email generated!', 'success');
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function copyEmailText() {
+        // Read from editable DOM elements so user edits are captured
+        const subjectEl = document.getElementById('email-subject');
+        const bodyEl = document.getElementById('email-body');
+        const subject = subjectEl ? subjectEl.innerText : (currentEmailData?.subject || '');
+        const body = bodyEl ? bodyEl.innerText : (currentEmailData?.body || '');
+        if (!subject && !body) return showToast('No email to copy.', 'error');
+        const fullText = `Subject: ${subject}\n\n${body}`;
+        navigator.clipboard.writeText(fullText)
+            .then(() => showToast('Email copied to clipboard!', 'success'))
+            .catch(() => showToast('Failed to copy — try selecting manually.', 'error'));
+    }
+
+    async function downloadEmailJSON() {
+        if (!currentEmailData) return showToast('No email to download.', 'error');
+
+        // Sync edits from DOM before download
+        const subjectEl = document.getElementById('email-subject');
+        const bodyEl = document.getElementById('email-body');
+        if (subjectEl) currentEmailData.subject = subjectEl.innerText.trim();
+        if (bodyEl) currentEmailData.body = bodyEl.innerText.trim();
+
+        showLoading('Preparing download...');
+        try {
+            const res = await fetch('/tailor/api/download-leadership-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    subject: currentEmailData.subject,
+                    body: currentEmailData.body,
+                    ref_number: currentEmailData.ref_number,
+                    company_name: currentEmailData.company_name,
+                    role_title: currentEmailData.role_title,
+                    recipient_name: currentEmailData.recipient_name,
+                    recipient_email: currentEmailData.recipient_email || '',
+                })
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('json')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'leadership_email.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                showToast('Email JSON downloaded!', 'success');
+            } else {
+                const data = await res.json();
+                hideLoading();
+                showToast(data.error || 'Download failed.', 'error');
+            }
+        } catch (e) {
+            hideLoading();
+            showToast('Download failed: ' + e.message, 'error');
         }
     }
 </script>

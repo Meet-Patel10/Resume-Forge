@@ -1241,6 +1241,7 @@
         const usedSignals = [];
         const usedSubjects = [];
         const usedBodies = [];
+        const usedProofs = [];
         let totalCost = 0;
 
         showLoading(`Generating cold outreach emails for ${recipients.length} recipient${recipients.length > 1 ? 's' : ''}...`);
@@ -1265,6 +1266,7 @@
                         previously_used_signals: usedSignals,
                         previously_used_subjects: usedSubjects,
                         previously_used_bodies: usedBodies,
+                        previously_used_proofs: usedProofs,
                     })
                 });
 
@@ -1292,6 +1294,7 @@
                     if (data.signal_used) usedSignals.push(data.signal_used);
                     if (data.subject) usedSubjects.push(data.subject);
                     if (data.body) usedBodies.push(data.body);
+                    if (data.proof_point) usedProofs.push(data.proof_point);
                     totalCost += data.cost_usd || 0;
                 } else {
                     showToast(`${r.name}: ${(data && data.error) || 'Unknown error'}`, 'error');

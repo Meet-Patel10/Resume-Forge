@@ -12,14 +12,14 @@ class BedrockClient:
         'productionHigh': {
             'model_id': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
             'provider': 'anthropic',
-            # Claude 3.5 Sonnet v2 pricing (per 1K tokens)
+            # Claude Sonnet 4.6 pricing (per 1K tokens)
             'input_cost_per_1k': 0.003,
             'output_cost_per_1k': 0.015,
         },
         'productionLow': {
-            'model_id': 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+            'model_id': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
             'provider': 'anthropic',
-            # Claude 3.5 Haiku pricing (per 1K tokens)
+            # Claude Haiku 4.5 pricing (per 1K tokens)
             'input_cost_per_1k': 0.001,
             'output_cost_per_1k': 0.005,
         },

@@ -1694,8 +1694,8 @@ def _generate_leadership_email_impl():
     recipient_category = data.get('recipient_category', '')
     cover_letter_text = data.get('cover_letter_text', '')
 
-    TARGET_MIN = 60
-    TARGET_MAX = 100
+    TARGET_MIN = 120
+    TARGET_MAX = 150
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
@@ -1710,13 +1710,14 @@ def _generate_leadership_email_impl():
     previously_used_signals = data.get('previously_used_signals', [])
     previously_used_subjects = data.get('previously_used_subjects', [])
     previously_used_bodies = data.get('previously_used_bodies', [])
+    previously_used_proofs = data.get('previously_used_proofs', [])
 
     total_tokens = 0
     total_cost = 0.0
 
     # ===== BANNED WORD CHECKER — enforced programmatically =====
     def _check_banned_words(text):
-        """Check if body contains banned proof patterns. Returns list of violations."""
+        """Check if body contains banned patterns. Returns list of violations."""
         violations = []
         text_lower = text.lower()
         # Banned verbs/words
@@ -1738,14 +1739,49 @@ def _generate_leadership_email_impl():
             violations.append('"Whether X or Y, the same..." (banned bridge sentence)')
         if 'root cause analysis' in text_lower:
             violations.append('"root cause analysis" (reactive, not building)')
-        # Banned application references
-        if 'i applied for' in text_lower or 'i applied to' in text_lower:
-            violations.append('"I applied for" (passive — ask must reference THEIR challenge, not your application)')
-        if 'my application' in text_lower:
-            violations.append('"my application" (never reference application status)')
-        # Banned generic asks
-        if 'would you be open to a 15-minute conversation?' in text_lower and text_lower.count('?') == 1:
-            violations.append('"Would you be open to a 15-minute conversation?" (too generic — ask must reference their specific challenge)')
+        # Banned AI inference language (new v3 — must sound human)
+        if 'tells me' in text_lower:
+            violations.append('"tells me" (AI inference language — use "I came across" style instead)')
+        if 'signals' in text_lower and ('your team' in text_lower or 'you are' in text_lower or "you're" in text_lower):
+            violations.append('"signals" (AI inference language — be straightforward)')
+        if 'means your team' in text_lower:
+            violations.append('"means your team" (AI inference language — be direct)')
+        # Banned cliché openers
+        if 'i hope this email finds you well' in text_lower:
+            violations.append('"I hope this email finds you well" (cliché opener)')
+        if 'i am writing to express' in text_lower:
+            violations.append('"I am writing to express" (cover letter language)')
+        if 'i believe i would be a great fit' in text_lower:
+            violations.append('"I believe I would be a great fit" (generic filler)')
+        # Banned false employment claims — candidate is a RECENT GRADUATE, not current Capgemini employee
+        if 'currently working at capgemini' in text_lower or 'currently work at capgemini' in text_lower:
+            violations.append('"currently working at Capgemini" (FALSE — candidate is a recent graduate, not a current employee)')
+        if "i'm currently a" in text_lower and 'capgemini' in text_lower:
+            violations.append('"I\'m currently a ... at Capgemini" (FALSE — use past tense: "At Capgemini, I built...")')
+        if 'i currently' in text_lower and 'capgemini' in text_lower:
+            violations.append('"I currently ... Capgemini" (FALSE — candidate previously worked there, use past tense)')
+        return violations
+
+    def _check_proof_similarity(body_text, used_proofs):
+        """Check if the proof in this email is too similar to previously used proofs."""
+        if not used_proofs:
+            return []
+        violations = []
+        body_lower = body_text.lower()
+        for prev_proof in used_proofs:
+            prev_lower = prev_proof.lower()
+            # Extract key metrics/phrases from previous proof
+            # If the same percentage or key metric appears in both, it's a duplicate
+            import re as _re_inner
+            prev_metrics = set(_re_inner.findall(r'\d+[%kK]?', prev_lower))
+            curr_metrics = set(_re_inner.findall(r'\d+[%kK]?', body_lower))
+            shared_metrics = prev_metrics & curr_metrics
+            # If they share a metric AND a key tech term, it's likely a duplicate
+            key_terms = ['ci/cd', 'jenkins', 'kubernetes', 'api', 'microservice', 'pipeline',
+                        'frontend', 'angular', 'automation', 'ml', 'bedrock', 'restful']
+            shared_terms = [t for t in key_terms if t in prev_lower and t in body_lower]
+            if shared_metrics and len(shared_terms) >= 2:
+                violations.append(f'Proof too similar to previous: shares metric(s) {shared_metrics} and terms {shared_terms}')
         return violations
 
     # Step 1: Generate email with AUTO-REJECT retry loop
@@ -1760,7 +1796,9 @@ def _generate_leadership_email_impl():
             recipient_title, recipient_category,
             previously_used_signals=previously_used_signals,
             previously_used_subjects=previously_used_subjects,
-            previously_used_bodies=previously_used_bodies
+            previously_used_bodies=previously_used_bodies,
+            previously_used_proofs=previously_used_proofs,
+            tailored_resume_text=resume_text
         )
 
         # On retry, prepend rejection feedback to force a different output
@@ -1829,6 +1867,10 @@ def _generate_leadership_email_impl():
         body_text = response.get('body', '')
         violations = _check_banned_words(body_text)
 
+        # Check for proof similarity with previously used proofs
+        proof_sim_violations = _check_proof_similarity(body_text, previously_used_proofs)
+        violations.extend(proof_sim_violations)
+
         if not violations:
             print(f"[leadership-email] ✅ Generation attempt {gen_attempt + 1} passed QA checks")
             break
@@ -1865,7 +1907,7 @@ def _generate_leadership_email_impl():
     subject = _clean_encoding(subject)
     body = _clean_encoding(body)
 
-    # FORCE subject line rules — never trust the AI
+    # FORCE subject line rules — clean up but preserve descriptive format
     if subject:
         import re as _re_subj
         # 1. Strip "Re:", "Fwd:", "RE:", etc. — BANNED (fake reply threads)
@@ -1874,65 +1916,17 @@ def _generate_leadership_email_impl():
         subject = _re_subj.sub(r'[\U00010000-\U0010ffff]', '', subject, flags=_re_subj.UNICODE).strip()
         # 3. Strip exclamation points
         subject = subject.replace('!', '')
-        # 4. Strip numbers and metrics (e.g., "99.9%", "500K")
-        subject = _re_subj.sub(r'\b\d[\d,.%KkMmBb]*\b', '', subject).strip()
-        subject = _re_subj.sub(r'\s{2,}', ' ', subject).strip()
-        # 5. Strip parenthetical content (e.g., "(java)", "(ref 257494)")
+        # 4. Strip parenthetical content (e.g., "(ref 257494)")
         subject = _re_subj.sub(r'\([^)]*\)', '', subject).strip()
-        # 6. Strip role title self-references
-        role_words_to_strip = ['associate', 'software', 'engineer', 'developer',
-                               'senior', 'junior', 'lead', 'principal', 'manager',
-                               'application', 'opportunity', 'position', 'role']
-        words = subject.split()
-        words = [w for w in words if w.lower().strip('.,;:') not in role_words_to_strip]
-        subject = ' '.join(words).strip()
-        # 7. Strip common filler words
-        filler_to_strip = ['at', 'the', 'a', 'an', 'for', 'about', 'regarding', 'quick',
-                           'intro', 'question', 'reaching', 'out']
-        # Only strip if resulting subject would still have 1+ words
-        filtered = [w for w in subject.split() if w.lower().strip('.,;:') not in filler_to_strip]
-        if filtered:
-            subject = ' '.join(filtered)
-        # 7.5. Strip stray dashes, hyphens, colons left over after word stripping
-        subject = _re_subj.sub(r'^[\s\-–—:,;.]+', '', subject).strip()
-        subject = _re_subj.sub(r'[\s\-–—:,;.]+$', '', subject).strip()
+        # 5. Clean up multiple spaces
         subject = _re_subj.sub(r'\s{2,}', ' ', subject).strip()
-        # 8. Force lowercase EXCEPT proper nouns (company name + known tech terms)
-        proper_nouns = set()
-        if company_name:
-            for w in company_name.split():
-                proper_nouns.add(w)
-        tech_proper = {'GBME', 'AWS', 'GCP', 'Azure', 'Kubernetes', 'Kafka', 'Docker',
-                       'Redis', 'PostgreSQL', 'MongoDB', 'Spring', 'React', 'Angular',
-                       'Node', 'Python', 'Java', 'Scotiabank', 'RBC', 'BMO', 'CIBC', 'TD',
-                       'API', 'CI', 'CD', 'DevOps', 'SRE', 'MLOps', 'AI', 'ML'}
-        proper_nouns.update(tech_proper)
-
-        # Build case-insensitive lookup: lowered → canonical
-        proper_lookup = {p.lower(): p for p in proper_nouns}
-
+        # 6. Truncate to 8 words max (descriptive but not a sentence)
         words = subject.split()
-        lowered = []
-        for w in words:
-            clean = w.strip('.,;:—-–?')
-            clean_lower = clean.lower()
-            if clean_lower in proper_lookup:
-                # Restore canonical casing from the proper nouns set
-                canonical = proper_lookup[clean_lower]
-                # Preserve any punctuation that was on the word
-                lowered.append(w.replace(clean, canonical))
-            else:
-                lowered.append(w.lower())
-        subject = ' '.join(lowered)
-
-        # 9. Truncate to 3 words max (tighter than before)
-        words = subject.split()
-        if len(words) > 3:
-            subject = ' '.join(words[:3])
-            print(f"[leadership-email] ✂️ Subject truncated to 3 words: {subject}")
-
-        # 10. Strip trailing punctuation
-        subject = subject.rstrip('.,;:—-–')
+        if len(words) > 8:
+            subject = ' '.join(words[:8])
+            print(f"[leadership-email] Subject truncated to 8 words: {subject}")
+        # 7. Strip trailing punctuation
+        subject = subject.rstrip('.,;:--')
 
         # 11. Dedup check — if this subject was already used, try to make it unique
         if previously_used_subjects:
@@ -1964,20 +1958,16 @@ def _generate_leadership_email_impl():
         rest = body[len(greeting_end):]
         body = greeting_end + rest[0].upper() + rest[1:]
 
-    # FORCE single paragraph format — collapse multiple paragraphs after greeting
+    # Clean up excessive blank lines (3+ → 2) but preserve paragraph breaks
     if greeting_end in body:
         greeting_part = body[:body.index(greeting_end) + len(greeting_end)]
         body_part = body[len(greeting_part):]
-        # Replace multiple newlines/blank lines with single space (one paragraph)
-        body_part = _re_greeting.sub(r'\n\s*\n', ' ', body_part)
-        # Also collapse single newlines within the paragraph
-        body_part = _re_greeting.sub(r'\n', ' ', body_part)
-        # Clean up multiple spaces
-        body_part = _re_greeting.sub(r'\s{2,}', ' ', body_part).strip()
-        body = greeting_part + body_part
+        # Collapse 3+ newlines to 2 (preserve paragraph breaks, remove excess)
+        body_part = _re_greeting.sub(r'\n{3,}', '\n\n', body_part)
+        body = greeting_part + body_part.strip()
 
     print(f'[leadership-email] Greeting forced: Hi {first_name},')
-    print(f'[leadership-email] Body formatted as single paragraph')
+    print(f'[leadership-email] Body formatted with paragraph breaks preserved')
 
     # Step 2: Count words (exclude sign-off contact line)
     def count_words(text):
@@ -2046,6 +2036,7 @@ def _generate_leadership_email_impl():
     SIGN_OFF_BLOCK = (
         "\n\nBest regards,\n"
         "Meet Patel\n"
+        "Halifax, NS\n"
         "https://www.linkedin.com/in/meettpatel28/"
     )
 

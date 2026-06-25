@@ -36,6 +36,9 @@
                 <a href="{{ url_for('applications.applications_page') }}" class="nav-link {% if request.endpoint and 'applications' in request.endpoint %}active{% endif %}">
                     <span class="nav-icon">📬</span> Applications
                 </a>
+                <a href="{{ url_for('followup.followup_page') }}" class="nav-link {% if request.endpoint and 'followup' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">📩</span> Follow-Up Emails
+                </a>
             </nav>
             <div style="padding: 0 var(--space-4); margin-top: auto; display: flex; flex-direction: column; gap: var(--space-3);">
                 <!-- Cost Tracker -->

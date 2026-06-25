@@ -28,6 +28,7 @@ def create_app(config_name=None):
     from app.routes.interview import interview_bp
 
     from app.routes.auth import auth_bp
+    from app.routes.followup import followup_bp
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(main_bp)
     app.register_blueprint(analyze_bp, url_prefix='/analyze')
@@ -35,6 +36,7 @@ def create_app(config_name=None):
     app.register_blueprint(master_resume_bp, url_prefix='/master-resume')
     app.register_blueprint(applications_bp, url_prefix='/applications')
     app.register_blueprint(interview_bp, url_prefix='/interview-prep')
+    app.register_blueprint(followup_bp, url_prefix='/followup')
 
     # 30-day session for 'remember me'
     app.permanent_session_lifetime = timedelta(days=30)

@@ -256,6 +256,15 @@ The ENTIRE resume must read like a real human wrote it. An experienced recruiter
 - Keep ALL JD keywords that you inject — just make the sentence around them sound natural
 - Keep the candidate's original action verbs when they're already human-sounding
 
+## PAGE LENGTH — EXACTLY 1 PAGE (CRITICAL)
+The resume will be rendered in LaTeX at 10pt on US Letter paper. It MUST fit on exactly 1 page — no overflow allowed.
+- When injecting keywords into bullets, be CONCISE: append 2-4 words max, not full clauses
+  - ✅ "Built REST APIs deployed on AWS" (3 words added — concise)
+  - ❌ "Built REST APIs leveraging cloud-native AWS infrastructure with Docker containerization and Kubernetes orchestration" (too long — will overflow)
+- Keep each bullet under 170 characters total, including any injected keywords
+- If a keyword cannot fit concisely into a bullet, place it in the Skills section instead — do NOT force it
+- Prioritize KEYWORD DENSITY over VERBOSITY — every word must earn its place on the page
+
 ## Output Format
 Respond ONLY with valid JSON in this exact structure:
 {

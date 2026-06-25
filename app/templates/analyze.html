@@ -250,6 +250,23 @@
 
     function renderCritique(c) {
         if (typeof c === 'string') {
+            // Try to parse as JSON first (backend may return JSON as string in edge cases)
+            try {
+                const parsed = JSON.parse(c);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    return renderCritique(parsed);
+                }
+            } catch (e) {
+                // Not JSON — check if it's an error message
+                if (c.includes('ResourceNotFoundException') || c.includes('end of its life')) {
+                    document.getElementById('critique-results').innerHTML = `<div class="card" style="border-left: 4px solid var(--accent-danger);">
+                        <h3 style="color: var(--accent-danger);">⚠️ Model Error</h3>
+                        <p>The AI model has been deprecated by AWS. Please update the model ID in <code>claude_client.py</code>.</p>
+                        <pre style="white-space:pre-wrap;color:var(--text-muted);font-size:var(--text-xs);margin-top:var(--space-3)">${c}</pre>
+                    </div>`;
+                    return;
+                }
+            }
             document.getElementById('critique-results').innerHTML = `<div class="card"><pre style="white-space:pre-wrap;color:var(--text-secondary)">${c}</pre></div>`;
             return;
         }
@@ -1377,14 +1394,20 @@
 
         // Subject line
         html += `
-            <div style="margin-bottom: var(--space-4); padding: var(--space-3); background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary)); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary);">
-                <div style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em;">Subject Line (1–4 words, lowercase)</div>
-                <div id="email-subject" contenteditable="true" style="font-weight: 600; color: var(--text-primary); font-size: var(--text-base); outline: none; cursor: text;">${subject}</div>
+            <div style="margin-bottom: var(--space-4); padding: var(--space-3); background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary)); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary); position: relative;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2);">
+                    <span style="font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Subject Line</span>
+                    <span style="font-size: var(--text-xs); color: var(--text-muted); opacity: 0.6;">✏️ Click to edit</span>
+                </div>
+                <div id="email-subject" contenteditable="true" style="font-weight: 600; color: var(--text-primary); font-size: var(--text-base); outline: none; cursor: text; padding: var(--space-2); border-radius: var(--radius-xs); border: 1px solid transparent; transition: border-color 0.2s, box-shadow 0.2s;" onfocus="this.style.borderColor='var(--accent-primary)'; this.style.boxShadow='0 0 0 2px rgba(99,102,241,0.15)';" onblur="this.style.borderColor='transparent'; this.style.boxShadow='none';" onmouseover="if(document.activeElement!==this) this.style.borderColor='var(--border-subtle)';" onmouseout="if(document.activeElement!==this) this.style.borderColor='transparent';">${subject}</div>
             </div>
         `;
 
-        // Body
-        html += `<div id="email-body" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text;">${body}</div>`;
+        html += `<div style="margin-bottom: var(--space-2); display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Email Body</span>
+            <span style="font-size: var(--text-xs); color: var(--text-muted); opacity: 0.6;">✏️ Click to edit</span>
+        </div>`;
+        html += `<div id="email-body" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text; transition: border-color 0.2s, box-shadow 0.2s;" onfocus="this.style.borderColor='var(--accent-primary)'; this.style.boxShadow='0 0 0 2px rgba(99,102,241,0.15)';" onblur="this.style.borderColor='var(--border-subtle)'; this.style.boxShadow='none';" onmouseover="if(document.activeElement!==this) this.style.borderColor='var(--accent-primary)';" onmouseout="if(document.activeElement!==this) this.style.borderColor='var(--border-subtle)';">${body}</div>`;
 
         // Footer
         html += `

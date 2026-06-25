@@ -31,8 +31,9 @@ Compare the tailored JSON against the master JSON and fix ONLY structural issues
 - Category names MAY be renamed to align with the JD's terminology (e.g., "Tools & Platforms" → "Cloud & DevOps") — this is expected and correct
 - If the tailor merged categories (fewer than master count), SPLIT them back to match the master count
 - If the tailor has more than 7, merge the extras into the most relevant existing category
-- All original master skill items must still be present in some category — none may be dropped
-- Items within each category may differ (the tailor adds/reorders items — that's fine)
+- The tailor INTENTIONALLY removed some master skills (Tier 3 irrelevant, competing technologies). Do NOT add these back. The tailor's skill curation is correct.
+- Only add back a master skill if it is DIRECTLY RELEVANT to the JD and the tailor appears to have dropped it accidentally
+- Items within each category may differ (the tailor adds JD skills, reorders, removes irrelevant ones — that's all correct)
 
 ### EXPERIENCE ENTRIES
 - Every experience entry in the master resume MUST appear in the output (same title, company, dates)
@@ -43,6 +44,8 @@ Compare the tailored JSON against the master JSON and fix ONLY structural issues
 
 ### PROJECT ENTRIES
 - Every project entry in the master resume MUST appear in the output
+- Each project MUST include its `tech_stack` field from the master resume — this is the technology list shown under the project name (e.g., "Python, Flask, SQLAlchemy, AWS Bedrock")
+- If a project has a `tech_stack` in the master JSON, it MUST appear in the output. Do NOT drop or omit `tech_stack` fields.
 - Bullet COUNT per project must match the master resume
 - Bullet TEXT may differ slightly — smart keyword injection may have added JD terms
 - KEEP the smart-injected bullets
@@ -63,9 +66,12 @@ The response must start with { and end with }
 
 ## WHAT NOT TO CHANGE
 - The SUMMARY text (intentionally rewritten by the tailor — keep it)
-- The SKILLS items within each category (the tailor added/reordered — keep it)
+- The SKILLS items within each category (the tailor added JD-specific skills and removed irrelevant ones — keep all changes)
+- Skills that were REMOVED by the tailor — they were removed because they are irrelevant to the JD or compete with JD-specified technologies. Do NOT re-add them.
+- Skills that were ADDED by the tailor — they are JD keywords. Do NOT remove them.
 - The EXPERIENCE bullet text (the tailor used smart keyword injection — keep it)
 - The PROJECT bullet text (the tailor used smart keyword injection — keep it)
+- Project `tech_stack` fields — MUST be preserved from the master. If the tailored JSON is missing them, copy from master.
 - Do NOT add or remove skill items — only fix category structure
 """
 

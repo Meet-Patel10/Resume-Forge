@@ -38,43 +38,52 @@ def sanitize_latex(text):
 
 
 def _estimate_lines(resume_data):
-    """Roughly estimate how many lines the resume will take at 10pt."""
+    r"""Estimate how many lines the resume will take at 10pt.
+
+    Uses conservative chars-per-line values calibrated to Computer Modern
+    at 10pt with 7.1in text width (~75 cpl for body, ~78 for \small,
+    ~70 for bold+items skill lines).  Accounts for itemize environment
+    overhead (topsep / begin-end spacing).
+    """
     lines = 0
 
     # header block (name + contact)
     lines += 3
 
-    # summary (roughly 1 line per 90 chars at 7.1in width)
+    # summary (\small text at 7.1in width ≈ 78 chars/line)
     summary = resume_data.get('summary', '')
     if summary:
         lines += 2  # section header + spacing
-        lines += max(1, len(summary) // 90 + 1)
+        lines += max(1, len(summary) // 78 + 1)
 
-    # skills (1 line per category, some wrap)
+    # skills — include bold category prefix in width calculation
     skills = resume_data.get('skills', [])
     if skills:
         lines += 2  # section header
         for group in skills:
+            category = group.get('category', '')
             items_text = ', '.join(group.get('items', []))
-            lines += max(1, len(items_text) // 80 + 1)
+            # "Category: item1, item2, ..." — bold prefix is ~20% wider
+            full_width = int(len(category) * 1.2) + 2 + len(items_text)
+            lines += max(1, full_width // 70 + 1)
 
-    # projects
+    # projects — each has a subheading + itemize environment
     projects = resume_data.get('projects', [])
     if projects:
-        lines += 2
+        lines += 2  # section header
         for proj in projects:
             lines += 2  # subheading (title + tech)
             for bullet in proj.get('bullets', []):
-                lines += max(1, len(bullet) // 85 + 1)
+                lines += max(1, len(bullet) // 75 + 1)
 
-    # experience
+    # experience — each has a subheading + itemize environment
     experience = resume_data.get('experience', [])
     if experience:
-        lines += 2
+        lines += 2  # section header
         for exp in experience:
             lines += 2  # subheading
             for bullet in exp.get('bullets', []):
-                lines += max(1, len(bullet) // 85 + 1)
+                lines += max(1, len(bullet) // 75 + 1)
 
     # certifications
     certs = resume_data.get('certifications', [])
@@ -84,11 +93,11 @@ def _estimate_lines(resume_data):
     # education
     education = resume_data.get('education', [])
     if education:
-        lines += 2
+        lines += 2  # section header
         for edu in education:
             lines += 2  # subheading
             if edu.get('details'):
-                lines += max(1, len(edu['details']) // 85 + 1)
+                lines += max(1, len(edu['details']) // 75 + 1)
 
     # other experience
     other_exp = resume_data.get('other_experience', [])
@@ -97,9 +106,54 @@ def _estimate_lines(resume_data):
         for exp in other_exp:
             lines += 2
             for bullet in exp.get('bullets', []):
-                lines += max(1, len(bullet) // 85 + 1)
+                lines += max(1, len(bullet) // 75 + 1)
 
     return lines
+
+
+def _trim_bullets_to_fit(resume_data, max_chars=155):
+    """Trim overlong bullets to enforce single-page output.
+
+    Cuts at the last natural break point (comma, semicolon, or ' and ')
+    before max_chars to preserve grammatical completeness.
+    """
+    trimmed_count = 0
+    for section_key in ('experience', 'projects', 'other_experience'):
+        entries = resume_data.get(section_key, [])
+        for entry in entries:
+            bullets = entry.get('bullets', [])
+            new_bullets = []
+            for bullet in bullets:
+                if len(bullet) > max_chars:
+                    cut = bullet[:max_chars]
+                    # Find the last natural break point
+                    last_comma = cut.rfind(',')
+                    last_semi = cut.rfind(';')
+                    last_and = cut.rfind(' and ')
+                    break_at = max(last_comma, last_semi, last_and)
+                    if break_at > max_chars * 0.6:
+                        bullet = bullet[:break_at].rstrip(' ,;')
+                    else:
+                        last_space = cut.rfind(' ')
+                        if last_space > max_chars * 0.6:
+                            bullet = bullet[:last_space].rstrip()
+                        else:
+                            bullet = cut.rstrip()
+                    trimmed_count += 1
+                new_bullets.append(bullet)
+            entry['bullets'] = new_bullets
+    if trimmed_count:
+        print(f"[latex] trimmed {trimmed_count} bullets to max {max_chars} chars")
+
+
+def _cap_skills_per_category(resume_data, max_per_cat=8):
+    """Cap the number of skills per category to prevent line overflow."""
+    skills = resume_data.get('skills', [])
+    for group in skills:
+        items = group.get('items', [])
+        if len(items) > max_per_cat:
+            group['items'] = items[:max_per_cat]
+            print(f"[latex] capped skills '{group.get('category','')[:20]}': {len(items)} → {max_per_cat}")
 
 
 def render_latex(resume_data):
@@ -113,8 +167,32 @@ def render_latex(resume_data):
 
     # estimate content and pick spacing tier
     est_lines = _estimate_lines(resume_data)
+    use_small_font = False
+    left_margin = '0.7in'
+    right_margin = '0.7in'
 
-    # letter paper at 10pt with 0.45in margins ≈ 62 usable lines
+    # Progressive content reduction for strict 1-page enforcement
+    if est_lines > 62:
+        import copy
+        resume_data = copy.deepcopy(resume_data)
+
+        # Pass 1: cap skills + trim bullets to 155 chars
+        _cap_skills_per_category(resume_data, max_per_cat=8)
+        _trim_bullets_to_fit(resume_data, max_chars=155)
+        est_lines = _estimate_lines(resume_data)
+        print(f"[latex] 1-page pass 1: est={est_lines}")
+
+        # Pass 2: still heavy — trim harder
+        if est_lines > 68:
+            _trim_bullets_to_fit(resume_data, max_chars=140)
+            est_lines = _estimate_lines(resume_data)
+            print(f"[latex] 1-page pass 2: est={est_lines}")
+
+    # Tier thresholds calibrated to actual LaTeX rendering capacity:
+    #   light/medium: ~60 usable lines (0.45in margins, no enlarge)
+    #   heavy:        ~62 lines (0.4in margins + 0.15in enlarge)
+    #   extreme:      ~66 lines (0.3in margins + 0.4in enlarge + 0.55in sides)
+    #   nuclear:      ~75 lines (0.25in margins + 0.5in enlarge + 0.5in sides + \small)
     if est_lines <= 52:
         # light content -- generous spacing
         section_before = '2pt'
@@ -126,7 +204,7 @@ def render_latex(resume_data):
         top_margin = '0.45in'
         bottom_margin = '0.45in'
         enlarge = ''
-    elif est_lines <= 60:
+    elif est_lines <= 58:
         # medium content -- tighter
         section_before = '2pt'
         section_after = '2pt'
@@ -137,7 +215,7 @@ def render_latex(resume_data):
         top_margin = '0.45in'
         bottom_margin = '0.45in'
         enlarge = ''
-    elif est_lines <= 68:
+    elif est_lines <= 63:
         # heavy content -- compress
         section_before = '2pt'
         section_after = '2pt'
@@ -148,22 +226,40 @@ def render_latex(resume_data):
         top_margin = '0.4in'
         bottom_margin = '0.4in'
         enlarge = r'\enlargethispage{0.15in}'
-    else:
-        # very heavy -- maximum compression
-        section_before = '2pt'
-        section_after = '2pt'
+    elif est_lines <= 68:
+        # extreme content -- aggressive compression + tighter side margins
+        section_before = '1pt'
+        section_after = '1pt'
         proj_entry_gap = '-2pt'
-        exp_entry_gap = '1pt'
-        edu_entry_gap = '1pt'
+        exp_entry_gap = '0pt'
+        edu_entry_gap = '0pt'
         section_gap = '0pt'
-        top_margin = '0.35in'
-        bottom_margin = '0.35in'
-        enlarge = r'\enlargethispage{0.3in}'
+        top_margin = '0.3in'
+        bottom_margin = '0.3in'
+        left_margin = '0.55in'
+        right_margin = '0.55in'
+        enlarge = r'\enlargethispage{0.4in}'
+    else:
+        # nuclear -- maximum single-page compression + font reduction
+        section_before = '1pt'
+        section_after = '1pt'
+        proj_entry_gap = '-3pt'
+        exp_entry_gap = '0pt'
+        edu_entry_gap = '0pt'
+        section_gap = '0pt'
+        top_margin = '0.25in'
+        bottom_margin = '0.25in'
+        left_margin = '0.5in'
+        right_margin = '0.5in'
+        enlarge = r'\enlargethispage{0.5in}'
+        use_small_font = True
 
     # ---- PREAMBLE (matches Meet_Patel_Resume_v4.tex exactly) ----
+    print(f"[latex] est_lines={est_lines}, tier={'light' if est_lines<=52 else 'medium' if est_lines<=60 else 'heavy' if est_lines<=68 else 'extreme' if est_lines<=76 else 'nuclear'}, margins=({top_margin},{bottom_margin},{left_margin},{right_margin})")
+
     latex = r"""\documentclass[10pt, letterpaper]{article}
 
-\usepackage[top=""" + top_margin + r""", bottom=""" + bottom_margin + r""", left=0.7in, right=0.7in]{geometry}
+\usepackage[top=""" + top_margin + r""", bottom=""" + bottom_margin + r""", left=""" + left_margin + r""", right=""" + right_margin + r"""]{geometry}
 \usepackage{enumitem}
 \usepackage[hidelinks]{hyperref}
 \usepackage{titlesec}
@@ -187,6 +283,8 @@ def render_latex(resume_data):
 """
     if enlarge:
         latex += enlarge + "\n"
+    if use_small_font:
+        latex += "\\small\n"
 
     # ---- HEADER (matches template: \\[0pt] + \vspace{-7pt}) ----
     name = s(header.get('name', 'Name'))

@@ -703,12 +703,25 @@ def api_tailor():
                     master_lower = master_summary.lower()
                     ai_lower = ai_summary.lower() if ai_summary else ''
 
+                    def _keyword_in_text(kw, text):
+                        """Word-boundary check: 'java' must NOT match 'javascript'.
+                        Uses regex \\b word boundaries for accurate matching.
+                        """
+                        kw_clean = kw.strip().lower()
+                        if not kw_clean:
+                            return False
+                        # For terms with special chars (c++, c#, .net, ci/cd), use escaped literal
+                        if any(c in kw_clean for c in ('+', '#', '.', '/')):
+                            pattern = r'(?:^|[\s,;|(])' + _re_inj.escape(kw_clean) + r'(?:$|[\s,;|)])'
+                        else:
+                            pattern = r'\b' + _re_inj.escape(kw_clean) + r'\b'
+                        return bool(_re_inj.search(pattern, text.lower()))
+
                     # prefer keywords the AI tried to inject (they're likely the best fits)
                     for term in jd_hard + jd_soft + jd_top:
-                        term_lower = term.lower()
-                        if term_lower not in master_lower:
+                        if not _keyword_in_text(term, master_lower):
                             # prioritise ones the AI also chose
-                            if ai_lower and term_lower in ai_lower:
+                            if ai_lower and _keyword_in_text(term, ai_lower):
                                 new_keywords.insert(0, term)  # front of list
                             else:
                                 new_keywords.append(term)
@@ -718,7 +731,7 @@ def api_tailor():
                         for kw in keyword_data.get('top_keywords', []):
                             if isinstance(kw, dict) and kw.get('resume_status') in ('missing', 'weak_match'):
                                 k = kw.get('keyword', '')
-                                if k and k.lower() not in master_lower and len(k.split()) <= 3:
+                                if k and not _keyword_in_text(k, master_lower) and len(k.split()) <= 3:
                                     new_keywords.append(k)
 
                     # deduplicate while preserving order
@@ -726,7 +739,7 @@ def api_tailor():
                     unique_kw = []
                     for k in new_keywords:
                         kl = k.lower()
-                        if kl not in seen and kl not in master_lower:
+                        if kl not in seen and not _keyword_in_text(k, master_lower):
                             seen.add(kl)
                             unique_kw.append(k)
 
@@ -860,9 +873,31 @@ def api_tailor():
                                     # enforce correct dates from DB
                                     if master_entry['dates']:
                                         ai_entry['dates'] = master_entry['dates']
-                                    # enforce bullet count — if AI added/removed bullets, restore from DB
-                                    if len(ai_entry.get('bullets', [])) != len(master_entry['bullets']):
-                                        ai_entry['bullets'] = master_entry['bullets']
+
+                                    # ---- SMART BULLET ENFORCEMENT ----
+                                    # Keep the AI's keyword-injected bullets when count matches.
+                                    # When count doesn't match (AI added/removed bullets),
+                                    # merge by position: keep AI version for each slot (keyword-injected),
+                                    # then pad/trim to match master count.
+                                    ai_bullets = ai_entry.get('bullets', [])
+                                    master_bullets = master_entry['bullets']
+
+                                    if len(ai_bullets) == len(master_bullets):
+                                        # Count matches — AI's keyword-injected bullets are kept as-is
+                                        print(f"[tailor] {master_entry['company']}: keeping {len(ai_bullets)} AI-injected bullets (count match)")
+                                    else:
+                                        # Count mismatch — merge by position to preserve injections
+                                        print(f"[tailor] {master_entry['company']}: bullet count mismatch (AI={len(ai_bullets)}, master={len(master_bullets)}), merging by position")
+                                        merged = []
+                                        for idx in range(len(master_bullets)):
+                                            if idx < len(ai_bullets):
+                                                # AI has a bullet for this slot — keep the AI's (keyword-injected) version
+                                                merged.append(ai_bullets[idx])
+                                            else:
+                                                # AI dropped this bullet — restore from master
+                                                merged.append(master_bullets[idx])
+                                        ai_entry['bullets'] = merged
+
                                     # grab location from AI (DB doesn't store it)
                                     if not master_entry['location']:
                                         master_entry['location'] = ai_entry.get('location', '')
@@ -890,21 +925,62 @@ def api_tailor():
                                 }
                             proj_by_name[key]['bullets'].append(b.original_text)
 
-                        # grab tech_stack and dates from AI output since DB bullets may not store them
+                        # ---- SMART PROJECT BULLET ENFORCEMENT ----
+                        # Keep AI's keyword-injected bullets, only enforce structure (name, count, tech_stack)
                         ai_projs = tailored_data.get('projects', [])
+                        matched_proj_keys = set()
+
                         for ai_proj in ai_projs:
                             ai_name = ai_proj.get('name', '').strip()
                             for key, master_proj in proj_by_name.items():
+                                if key in matched_proj_keys:
+                                    continue
                                 # match by project name (case-insensitive, partial match for long names)
                                 if (ai_name.lower() in master_proj['name'].lower() or
                                     master_proj['name'].lower() in ai_name.lower()):
-                                    if not master_proj['tech_stack'] and ai_proj.get('tech_stack'):
+
+                                    # Enforce project name from master
+                                    ai_proj['name'] = master_proj['name']
+
+                                    # Grab tech_stack from AI if master doesn't have it, else keep master's
+                                    if master_proj['tech_stack']:
+                                        ai_proj['tech_stack'] = master_proj['tech_stack']
+                                    elif ai_proj.get('tech_stack'):
                                         master_proj['tech_stack'] = ai_proj['tech_stack']
-                                    if not master_proj['dates'] and ai_proj.get('dates'):
+
+                                    # Same for dates
+                                    if master_proj['dates']:
+                                        ai_proj['dates'] = master_proj['dates']
+                                    elif ai_proj.get('dates'):
                                         master_proj['dates'] = ai_proj['dates']
+
+                                    # ---- Bullet enforcement: keep AI bullets, enforce count ----
+                                    ai_bullets = ai_proj.get('bullets', [])
+                                    master_bullets = master_proj['bullets']
+
+                                    if len(ai_bullets) == len(master_bullets):
+                                        # Count matches — keep AI's keyword-injected versions
+                                        print(f"[tailor] project '{master_proj['name']}': keeping {len(ai_bullets)} AI-injected bullets (count match)")
+                                    else:
+                                        # Count mismatch — merge by position
+                                        print(f"[tailor] project '{master_proj['name']}': bullet count mismatch (AI={len(ai_bullets)}, master={len(master_bullets)}), merging by position")
+                                        merged = []
+                                        for idx in range(len(master_bullets)):
+                                            if idx < len(ai_bullets):
+                                                merged.append(ai_bullets[idx])
+                                            else:
+                                                merged.append(master_bullets[idx])
+                                        ai_proj['bullets'] = merged
+
+                                    matched_proj_keys.add(key)
                                     break
 
-                        tailored_data['projects'] = list(proj_by_name.values())
+                        # Add any master projects that AI dropped entirely
+                        for key, master_proj in proj_by_name.items():
+                            if key not in matched_proj_keys:
+                                ai_projs.append(master_proj)
+
+                        tailored_data['projects'] = ai_projs
 
                 # certifications from DB (was missing before)
                 if master.education:
@@ -919,6 +995,16 @@ def api_tailor():
             print(f"[tailor] enforcement error (non-fatal): {e}")
 
     # step 4.5: structure validation agent — ensures JSON matches template format
+    # IMPORTANT: Save curated data BEFORE the validator runs — the validator
+    # replaces tailored_data entirely and may lose our curated skills/summary/header.
+    curated_skills = None
+    curated_summary = None
+    curated_header = None
+    if isinstance(tailored_data, dict):
+        curated_skills = tailored_data.get('skills', [])
+        curated_summary = tailored_data.get('summary', '')
+        curated_header = tailored_data.get('header', {})
+
     if isinstance(tailored_data, dict):
         try:
             from app.services.prompts.structure_validator import STRUCTURE_VALIDATOR_SYSTEM, build_validator_message
@@ -951,7 +1037,12 @@ def api_tailor():
                             exp_entries[key]['bullets'].append(b.original_text)
                         elif b.section_type == 'project' and b.is_active:
                             if b.company not in proj_entries:
-                                proj_entries[b.company] = {'name': b.company, 'bullets': []}
+                                proj_entries[b.company] = {
+                                    'name': b.company,
+                                    'tech_stack': b.tech_stack or '',
+                                    'dates': b.dates or '',
+                                    'bullets': [],
+                                }
                             proj_entries[b.company]['bullets'].append(b.original_text)
                     master_structure['experience'] = list(exp_entries.values())
                     master_structure['projects'] = list(proj_entries.values())
@@ -967,12 +1058,56 @@ def api_tailor():
                         total_cost += val_result.get('cost_usd', 0)
                         pipeline_steps.append('structure_validator')
                         print("[tailor] structure validation done — JSON fixed")
+
+                        # ---- RE-ENFORCE tech_stack & dates from master DB ----
+                        # The structure validator AI doesn't know about tech_stack,
+                        # so it drops it. Re-inject from master DB bullets.
+                        if master and master.bullets:
+                            proj_tech = {}  # project_name → {tech_stack, dates}
+                            for b in master.bullets:
+                                if b.section_type == 'project' and b.is_active and b.company:
+                                    if b.company not in proj_tech:
+                                        proj_tech[b.company] = {
+                                            'tech_stack': b.tech_stack or '',
+                                            'dates': b.dates or '',
+                                        }
+
+                            for proj in tailored_data.get('projects', []):
+                                proj_name = proj.get('name', '').strip()
+                                if proj_name and (not proj.get('tech_stack') or not proj.get('dates')):
+                                    # Try exact match first, then partial
+                                    for db_name, db_data in proj_tech.items():
+                                        if (proj_name.lower() in db_name.lower() or
+                                            db_name.lower() in proj_name.lower()):
+                                            if not proj.get('tech_stack') and db_data['tech_stack']:
+                                                proj['tech_stack'] = db_data['tech_stack']
+                                                print(f"[tailor] re-injected tech_stack for '{proj_name}': {db_data['tech_stack'][:50]}")
+                                            if not proj.get('dates') and db_data['dates']:
+                                                proj['dates'] = db_data['dates']
+                                                print(f"[tailor] re-injected dates for '{proj_name}': {db_data['dates']}")
+                                            break
                     else:
                         print(f"[tailor] structure validator returned unusable data, skipping")
                 else:
                     print(f"[tailor] structure validator error: {val_result['error']}")
         except Exception as e:
             print(f"[tailor] structure validator error (non-fatal): {e}")
+
+    # ---- RE-ENFORCE curated skills, summary & header after validator ----
+    # The structure validator replaces tailored_data entirely, which can
+    # wipe the carefully curated skills (Tier 1/2/3, competing tech suppression,
+    # dedup), the programmatically injected summary, and the location override.
+    # Force them all back.
+    if isinstance(tailored_data, dict):
+        if curated_skills:
+            tailored_data['skills'] = curated_skills
+            print(f"[tailor] re-enforced curated skills ({len(curated_skills)} categories)")
+        if curated_summary:
+            tailored_data['summary'] = curated_summary
+            print(f"[tailor] re-enforced curated summary ({len(curated_summary)} chars)")
+        if curated_header:
+            tailored_data['header'] = curated_header
+            print(f"[tailor] re-enforced header (location: {curated_header.get('location', 'n/a')})")
 
     # NOTE: External humanize API removed. Humanization rules are now baked
     # directly into the tailor prompt (RESUME_TAILOR_SYSTEM) so the AI produces

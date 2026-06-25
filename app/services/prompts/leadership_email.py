@@ -77,19 +77,27 @@ LEAD with your current project (ResumeForge) framed as a REAL-WORLD PROBLEM you 
 - Use PAST TENSE for Capgemini work if mentioned at all.
 
 #### ABOUT RESUMEFORGE (the candidate's current project — use this as primary proof):
-ResumeForge is an AI-powered platform that solves a real problem: job seekers spend 2-3 hours manually tailoring each resume, and most still get rejected by ATS systems. The candidate is building a full-stack solution that:
-- Uses AWS Bedrock (Claude AI) to analyze job descriptions and auto-tailor resumes with 95.98% classification accuracy
+ResumeForge is an AI-powered platform the candidate is actively building to solve a real-world problem: job seekers spend hours manually tailoring each resume for every application, and most still get filtered out by ATS systems. The candidate identified this gap and is building a full-stack solution that:
+- Uses AWS Bedrock (Claude AI) to analyze job descriptions and intelligently tailor resumes
 - Generates ATS-optimized LaTeX resumes, cover letters, and personalized cold outreach emails
-- Built with Python/Flask backend, PostgreSQL, Docker/Kubernetes deployment, and CI/CD pipelines
-- Includes a multi-step AI pipeline: brutal critique -> keyword gap analysis -> intelligent bullet rewriting -> ATS scoring -> LaTeX generation
-- Serves 200+ users with automated job application workflows
+- Built with Python/Flask backend, SQLAlchemy ORM, PostgreSQL database, and REST APIs
+- Implements a multi-step AI pipeline: JD analysis -> keyword extraction -> intelligent bullet rewriting -> ATS scoring -> LaTeX document generation
+- Includes Jinja2 templating, JavaScript frontend, and HTML/CSS interface
+
+#### CRITICAL: NO FABRICATED NUMBERS OR METRICS
+- Do NOT invent user counts (e.g., "200+ users", "500+ job seekers") — the project does not have public user metrics
+- Do NOT invent accuracy percentages (e.g., "95.98% accuracy", "99% match rate") — do not fabricate model performance numbers
+- Do NOT invent time savings (e.g., "saves 3 hours per application", "2-3 days") — do not make up efficiency claims
+- Do NOT invent any numbers at all for ResumeForge. Describe WHAT it does and WHY you are building it, not fabricated scale.
+- You MAY mention real numbers from the actual resume (e.g., Capgemini work experience metrics that already exist in the resume text)
+- Frame ResumeForge through the PROBLEM it solves and the TECHNICAL ARCHITECTURE, not fake metrics
 
 #### HOW TO FRAME RESUMEFORGE (pick 1-2 angles that are MOST relevant to the JD):
-- For SOFTWARE/BACKEND roles: "I'm building ResumeForge, a full-stack AI platform using Python/Flask and AWS Bedrock that automates resume tailoring — it processes job descriptions through a multi-step AI pipeline and generates ATS-optimized documents, serving 200+ users."
-- For DATA/ML roles: "I'm building ResumeForge, an AI-powered platform that uses NLP and classification models to analyze job descriptions and auto-tailor resumes, achieving 95.98% accuracy across skill-matching categories."
-- For CLOUD/DEVOPS roles: "I'm building ResumeForge, a production AI platform deployed on Docker/Kubernetes with CI/CD pipelines, AWS Bedrock integration, and PostgreSQL — handling automated document generation at scale."
-- For FRONTEND/FULL-STACK roles: "I'm building ResumeForge, a full-stack AI platform with a Flask backend and responsive frontend that orchestrates multi-step AI workflows for automated resume generation and job application tracking."
-- ALWAYS frame it as solving a REAL PROBLEM: "Job seekers spend hours tailoring resumes manually — I'm building an AI platform that automates this entire process."
+- For SOFTWARE/BACKEND roles: "I'm building ResumeForge, a full-stack AI platform using Python/Flask and AWS Bedrock that automates resume tailoring — it processes job descriptions through a multi-step AI pipeline and generates ATS-optimized documents."
+- For DATA/ML roles: "I'm building ResumeForge, an AI-powered platform that uses NLP to analyze job descriptions, extract key requirements, and intelligently tailor resumes to match — solving a real gap in how job seekers approach applications."
+- For CLOUD/DEVOPS roles: "I'm building ResumeForge, an AI platform integrating AWS Bedrock for inference, PostgreSQL for data persistence, and REST APIs — bringing together cloud services and backend engineering to automate document generation."
+- For FRONTEND/FULL-STACK roles: "I'm building ResumeForge, a full-stack AI platform with a Flask backend, JavaScript frontend, and Jinja2 templating that orchestrates multi-step AI workflows for automated resume generation and job application tracking."
+- ALWAYS frame it as solving a REAL PROBLEM: "I noticed job seekers spend hours tailoring resumes manually — so I'm building an AI platform that automates this entire process."
 
 #### Structure:
 - Start with ResumeForge as a problem-solution statement: "I'm currently building ResumeForge, an AI-powered platform that [solves X problem] using [relevant tech]."
@@ -162,7 +170,7 @@ Genuine, humble ask — NOT a sales pitch.
 ## STEP 5 — HARD RULES (never violate)
 1. Body: 3-4 paragraphs, 120-150 words. NOT including sign-off.
 2. ALWAYS start with "Hi [First Name]," — NEVER bare "Hi,"
-3. Include 1-2 metrics naturally within the proof paragraph.
+3. Do NOT invent or fabricate any numbers, metrics, user counts, or percentages for ResumeForge. You may only use metrics that ALREADY EXIST in the candidate's resume text.
 4. Proof verbs must be ACTIVE — NEVER passive.
 5. Subject: descriptive, clear, references the role. MUST be unique across all recipients at same company.
 6. NEVER include "Whether [A] or [B], the same..." bridge sentences.
@@ -171,6 +179,7 @@ Genuine, humble ask — NOT a sales pitch.
 9. DO NOT include any sign-off, name, phone, or LinkedIn.
 10. ALL characters must be typeable on a standard US keyboard. No special characters.
 11. Use paragraph breaks (blank lines) between paragraphs — NEVER a wall of text.
+12. NO FABRICATED NUMBERS. Do not write "200+ users", "500+ applicants", "95% accuracy", or ANY invented statistic. Describe what the project DOES and WHY, not fake scale.
 
 ## OUTPUT FORMAT
 Respond ONLY with valid JSON:
@@ -198,11 +207,13 @@ Respond ONLY with valid JSON:
 - [ ] Subject: clear, descriptive, references the role?
 - [ ] Subject: different from all previously used subjects?
 - [ ] Intro: simple, honest, mentions company + role? NOT a signal inference?
-- [ ] Proof: describes current/recent role + 2-3 capabilities relevant to THIS role?
-- [ ] Proof: active verbs, 1-2 metrics, from actual resume?
+- [ ] Proof: describes current project (ResumeForge) + capabilities relevant to THIS role?
+- [ ] Proof: active verbs, NO fabricated numbers, all facts from actual resume?
+- [ ] Proof: frames ResumeForge as solving a real-world problem, not inflated with fake metrics?
 - [ ] Why This Role: genuine enthusiasm about a specific aspect of THIS role?
 - [ ] Ask: humble, genuine, not a sales pitch?
 - [ ] NO "tells me" / "signals" / "means your team" JD inference language?
+- [ ] NO invented numbers (user counts, accuracy percentages, time savings)?
 - [ ] Body: 120-150 words, 3-4 paragraphs, NO sign-off?
 - [ ] All characters are plain ASCII?
 - [ ] Read aloud — does it sound like a person wrote this, not an AI?
@@ -368,14 +379,14 @@ ResumeForge is ALWAYS the primary proof. Pick the angle most relevant to the JD:
 2. Which ResumeForge capabilities use that SAME tech? (see list below)
 3. Frame ResumeForge through the lens of THEIR tech requirements.
 
-**ResumeForge tech angles you can use:**
-- Python/Flask backend -> "built a Python/Flask backend with multi-step AI pipeline"
-- AWS/Cloud -> "integrated AWS Bedrock for AI inference at scale"
-- Docker/Kubernetes/DevOps -> "deployed on Docker/Kubernetes with CI/CD pipelines"
-- Data/ML/NLP -> "built NLP classification models achieving 95.98% accuracy"
-- Full-stack -> "built a full-stack platform with Flask backend, responsive frontend, and PostgreSQL"
-- API development -> "designed RESTful APIs orchestrating multi-step AI workflows"
-- PostgreSQL/databases -> "designed PostgreSQL schemas for user data, application tracking, and analysis history"
+**ResumeForge tech angles you can use (NO fake numbers — describe capabilities, not fabricated metrics):**
+- Python/Flask backend -> "building a Python/Flask backend with a multi-step AI pipeline for automated resume tailoring"
+- AWS/Cloud -> "integrating AWS Bedrock for AI-powered job description analysis and resume optimization"
+- Docker/DevOps -> "building with CI/CD workflows, REST APIs, and cloud-native architecture"
+- Data/ML/NLP -> "using NLP to analyze job descriptions, extract requirements, and intelligently match candidate skills"
+- Full-stack -> "building a full-stack platform with Flask backend, JavaScript frontend, and PostgreSQL"
+- API development -> "designing RESTful APIs that orchestrate multi-step AI workflows for document generation"
+- PostgreSQL/databases -> "designing PostgreSQL schemas with SQLAlchemy for user data, application tracking, and analysis history"
 
 **MANDATORY: ALWAYS lead with ResumeForge. You may optionally add 1 sentence about Capgemini experience (past tense) if it adds relevant context.**
 
@@ -396,11 +407,11 @@ Before writing the ask, verify:
 Format: "Hi {first_name if first_name else '[Name]'}," followed by a blank line, then 3-4 paragraphs separated by blank lines.
 
 1. **Intro paragraph**: "I came across the [Role] role at [Company]..." — simple, honest, references the role.
-2. **Proof paragraph**: LEAD with ResumeForge as a real-world problem you are solving. Example: "I'm currently building ResumeForge, an AI-powered platform that automates resume tailoring for job seekers — it uses [relevant tech from JD] to [impressive capability], serving 200+ users. I also hold an MSc in Applied Computer Science and previously built [relevant thing] at Capgemini." — Pick the ResumeForge angle MOST relevant to the JD's tech stack.
+2. **Proof paragraph**: LEAD with ResumeForge as a real-world problem you are solving. Example: "I noticed job seekers spend hours tailoring resumes manually, so I'm building ResumeForge — an AI-powered platform using [relevant tech from JD] that analyzes job descriptions and auto-generates tailored resumes. I also hold an MSc in Applied Computer Science and previously [relevant thing] at Capgemini." — Pick the ResumeForge angle MOST relevant to the JD's tech stack. NO FAKE NUMBERS.
 3. **Why This Role paragraph**: "What excites me about this role is [specific aspect]..." or "My experience building [specific thing in ResumeForge] aligns well with [specific aspect of this role]."
 4. **Ask paragraph**: "I'd love to connect and learn more about the role and how I can contribute. Would you be open to a brief conversation?"
 
-REMINDER: Do NOT include sign-off, name, phone, LinkedIn. Do NOT write "Whether X or Y, the same..." bridge sentences. Do NOT use "tells me" / "signals" / "means your team" inference language. The system will AUTO-REJECT if "maintained", "incidents", or "SOPs" appear in your output.
+REMINDER: Do NOT include sign-off, name, phone, LinkedIn. Do NOT write "Whether X or Y, the same..." bridge sentences. Do NOT use "tells me" / "signals" / "means your team" inference language. Do NOT invent ANY numbers or metrics for ResumeForge. The system will AUTO-REJECT if "maintained", "incidents", or "SOPs" appear in your output.
 
 ---
 
@@ -421,7 +432,8 @@ CHECKLIST:
 - Subject: clear, descriptive, references the role (NOT cryptic 2-word spam-looking subjects)
 - Subject: completely different from any previously used subjects
 - Intro: simple "I came across..." style — NOT signal inference
-- Proof: 2-3 relevant capabilities from resume, active verbs, 1-2 metrics
+- Proof: ResumeForge framed as solving a real-world problem, relevant capabilities, active verbs
+- NO FABRICATED NUMBERS — no invented user counts, accuracy percentages, or time savings for ResumeForge
 - Why This Role: genuine enthusiasm about a specific aspect
 - Ask: humble, genuine, not a sales pitch
 - NO "tells me" / "signals" / "means your team"

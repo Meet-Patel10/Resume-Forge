@@ -51,7 +51,8 @@ _SKILL_SYNONYMS = {
     'continuous integration': ['ci/cd', 'ci cd', 'cicd'],
     'continuous deployment': ['ci/cd', 'ci cd', 'cicd'],
     'continuous delivery': ['ci/cd', 'ci cd', 'cicd'],
-    'ci/cd': ['continuous integration', 'continuous deployment'],
+    'ci/cd': ['continuous integration', 'continuous deployment', 'continuous delivery'],
+    'ci/cd pipelines': ['ci/cd', 'continuous integration', 'continuous deployment'],
     'source control': ['git', 'version control', 'github', 'gitlab', 'bitbucket'],
     'version control': ['git', 'source control', 'github', 'gitlab', 'bitbucket'],
     'nosql databases': ['nosql', 'mongodb', 'dynamodb', 'cassandra', 'redis', 'couchdb'],
@@ -70,26 +71,58 @@ _SKILL_SYNONYMS = {
     'data structures and algorithms': ['data structures', 'algorithms', 'dsa'],
     'data structures': ['data structures and algorithms', 'dsa'],
     'algorithms': ['data structures and algorithms', 'dsa'],
-    'rest apis': ['restful apis', 'restful', 'rest api', 'apis'],
-    'restful apis': ['rest apis', 'restful', 'rest api'],
+    'rest apis': ['restful apis', 'restful', 'rest api', 'apis', 'restful api'],
+    'restful apis': ['rest apis', 'restful', 'rest api', 'restful api'],
+    'restful api': ['rest apis', 'restful apis', 'rest api', 'restful'],
+    'rest api': ['rest apis', 'restful apis', 'restful api', 'restful'],
     'web services': ['rest apis', 'restful apis', 'api'],
     'cloud computing': ['aws', 'azure', 'gcp', 'cloud'],
     'cloud': ['aws', 'azure', 'gcp', 'cloud computing'],
+    'cloud services': ['aws', 'azure', 'gcp', 'cloud', 'cloud computing'],
     'amazon web services': ['aws'],
     'aws': ['amazon web services'],
-    'unit testing': ['junit', 'pytest', 'testing', 'test'],
+    'google cloud platform': ['gcp', 'google cloud'],
+    'gcp': ['google cloud platform', 'google cloud'],
+    'microsoft azure': ['azure'],
+    'azure': ['microsoft azure'],
+    'unit testing': ['junit', 'pytest', 'testing', 'test', 'unit tests'],
     'testing': ['unit testing', 'test', 'junit', 'pytest'],
-    'agile': ['agile/scrum', 'scrum', 'agile methodology', 'agile development'],
-    'scrum': ['agile', 'agile/scrum', 'agile methodology'],
+    'agile': ['agile/scrum', 'scrum', 'agile methodology', 'agile development', 'agile methodologies'],
+    'scrum': ['agile', 'agile/scrum', 'agile methodology', 'agile methodologies'],
     'agile methodologies': ['agile', 'scrum', 'agile/scrum'],
-    'etl': ['elt', 'data pipeline', 'data integration'],
+    'etl': ['elt', 'data pipeline', 'data integration', 'etl pipelines'],
+    'etl pipelines': ['etl', 'elt', 'data pipeline'],
     'elt': ['etl', 'data pipeline', 'data integration'],
-    'data pipeline': ['etl', 'elt', 'pipeline'],
+    'data pipeline': ['etl', 'elt', 'pipeline', 'data pipelines'],
+    'data pipelines': ['etl', 'elt', 'pipeline', 'data pipeline'],
     'infrastructure as code': ['terraform', 'iac', 'cloudformation'],
     'iac': ['terraform', 'infrastructure as code'],
     'devops': ['ci/cd', 'docker', 'kubernetes', 'jenkins'],
     'linux/unix': ['linux', 'unix', 'bash'],
     'scripting': ['bash', 'python', 'shell'],
+    # Common composite terms AI extracts that need decomposition
+    'python development': ['python'],
+    'java development': ['java'],
+    'sql databases': ['sql', 'mysql', 'postgresql', 'postgres'],
+    'react development': ['react', 'react.js'],
+    'angular development': ['angular'],
+    'node.js development': ['node.js', 'nodejs'],
+    'full stack development': ['full stack', 'fullstack', 'full-stack'],
+    'full-stack development': ['full stack', 'fullstack', 'full-stack'],
+    'fullstack': ['full stack', 'full-stack'],
+    'full stack': ['fullstack', 'full-stack'],
+    'front end': ['frontend', 'front-end'],
+    'frontend': ['front end', 'front-end'],
+    'front-end': ['frontend', 'front end'],
+    'back end': ['backend', 'back-end'],
+    'backend': ['back end', 'back-end'],
+    'back-end': ['backend', 'back end'],
+    'data analysis': ['data analytics', 'data analyst'],
+    'data analytics': ['data analysis', 'analytics'],
+    'data visualization': ['tableau', 'power bi', 'matplotlib', 'visualization'],
+    'api development': ['rest apis', 'restful apis', 'api', 'apis'],
+    'microservices architecture': ['microservices', 'micro-services'],
+    'microservices': ['microservices architecture', 'micro-services'],
 }
 
 
@@ -395,6 +428,103 @@ def _extract_job_titles(jd_text):
     return titles
 
 
+def _deduplicate_skills(raw_skills):
+    """Deduplicate AI-extracted hard skills to prevent denominator inflation.
+
+    The JD Analyzer often extracts the same skill in multiple forms:
+      - "Python", "Python programming", "Python (3.x)" → keep only "python"
+      - "CI/CD", "CI/CD Pipelines", "continuous integration" → keep only "ci/cd"
+      - "data pipeline management" when "data pipeline" exists → drop the longer one
+
+    Without dedup, the scorer denominator is inflated, dragging scores down even
+    when the resume has strong keyword coverage.
+    """
+    if not raw_skills:
+        return set()
+
+    # Step 1: Normalize — lowercase, strip, remove parenthetical suffixes
+    normalized = set()
+    for s in raw_skills:
+        term = s.lower().strip()
+        if not term:
+            continue
+        # Strip parenthetical: "python (3.x)" → "python"
+        term = re.sub(r'\s*\([^)]*\)\s*', '', term).strip()
+        if term:
+            normalized.add(term)
+
+    # Step 2: Remove qualifier-inflated duplicates
+    # If "python" and "python programming" both exist, drop the longer one
+    qualifier_words = {
+        'development', 'engineering', 'management', 'programming', 'design',
+        'architecture', 'solutions', 'technologies', 'services', 'systems',
+        'tools', 'platform', 'platforms', 'framework', 'frameworks',
+        'concepts', 'principles', 'practices', 'experience', 'proficiency',
+        'knowledge', 'skills', 'expertise', 'pipelines', 'pipeline',
+    }
+
+    to_remove = set()
+    sorted_skills = sorted(normalized, key=len)  # shortest first
+
+    for i, short in enumerate(sorted_skills):
+        if short in to_remove:
+            continue
+        short_words = set(short.split())
+        for long in sorted_skills[i + 1:]:
+            if long in to_remove:
+                continue
+            long_words = set(long.split())
+            # If the longer term is just the shorter term + qualifier words, drop it
+            extra = long_words - short_words
+            if short_words.issubset(long_words) and extra and extra.issubset(qualifier_words):
+                to_remove.add(long)
+
+    normalized -= to_remove
+
+    # Step 3: Collapse synonyms — if both "ci/cd" and "continuous integration"
+    # exist, keep only one (the shorter/more common form)
+    synonym_groups = [
+        {'ci/cd', 'continuous integration', 'continuous deployment', 'continuous delivery', 'ci/cd pipelines', 'cicd'},
+        {'aws', 'amazon web services', 'cloud computing', 'cloud services'},
+        {'gcp', 'google cloud platform', 'google cloud'},
+        {'azure', 'microsoft azure'},
+        {'rest apis', 'restful apis', 'restful api', 'rest api', 'api development', 'web services'},
+        {'docker', 'containers', 'containerization'},
+        {'kubernetes', 'k8s', 'container orchestration'},
+        {'agile', 'scrum', 'agile methodologies', 'agile methodology', 'agile/scrum', 'agile development'},
+        {'nosql', 'nosql databases'},
+        {'sql', 'relational databases', 'rdbms', 'sql databases'},
+        {'machine learning', 'ml'},
+        {'artificial intelligence', 'ai'},
+        {'oop', 'object-oriented programming', 'object oriented programming'},
+        {'frontend', 'front end', 'front-end'},
+        {'backend', 'back end', 'back-end'},
+        {'fullstack', 'full stack', 'full-stack', 'full stack development', 'full-stack development'},
+        {'etl', 'etl pipelines', 'elt'},
+        {'data pipeline', 'data pipelines'},
+        {'unit testing', 'testing'},
+        {'git', 'version control', 'source control'},
+        {'terraform', 'infrastructure as code', 'iac'},
+        {'data analysis', 'data analytics'},
+        {'devops', 'dev ops'},
+        {'linux', 'linux/unix', 'unix'},
+        {'microservices', 'microservices architecture', 'micro-services'},
+    ]
+
+    for group in synonym_groups:
+        present = normalized & group
+        if len(present) > 1:
+            # Keep the shortest term (most specific/common), remove the rest
+            keeper = min(present, key=len)
+            normalized -= (present - {keeper})
+
+    removed_count = len(set(s.lower().strip() for s in raw_skills)) - len(normalized)
+    if removed_count > 0:
+        print(f"[ats_scorer] dedup: removed {removed_count} duplicate skills, {len(normalized)} unique remain")
+
+    return normalized
+
+
 #
 #  Main scoring function
 #
@@ -404,6 +534,61 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
     jd_lower = _normalize(jd_text)
 
     # 1. HARD SKILLS MATCH (35%)
+    def _enhanced_skill_match(term, text):
+        """Enhanced skill matching that handles AI-extracted composite terms.
+
+        Handles cases like:
+        - 'CI/CD Pipelines' → matches 'CI/CD' in resume
+        - 'RESTful APIs' → matches 'REST APIs' or 'REST API'
+        - 'Python (3.x)' → matches 'Python'
+        - 'AWS/Azure' → matches if either 'AWS' or 'Azure' is present
+        """
+        term = term.strip().lower()
+        text = text.lower()
+
+        # 1. Direct word-boundary match (includes synonym check)
+        if _word_match(term, text):
+            return True
+
+        # 2. Strip parenthetical suffixes: 'Python (3.x)' → 'python'
+        stripped = re.sub(r'\s*\([^)]*\)\s*', '', term).strip()
+        if stripped and stripped != term and _word_match(stripped, text):
+            return True
+
+        # 3. For multi-word terms, check if the CORE term (without qualifiers) matches
+        # e.g., 'CI/CD Pipelines' → check 'ci/cd', 'data pipeline management' → check 'data pipeline'
+        qualifier_words = {'development', 'engineering', 'management', 'pipelines',
+                           'pipeline', 'services', 'architecture', 'framework',
+                           'frameworks', 'tools', 'systems', 'design', 'programming',
+                           'technologies', 'solutions', 'platform', 'platforms',
+                           'concepts', 'principles', 'practices', 'experience',
+                           'proficiency', 'knowledge', 'skills', 'expertise'}
+        if ' ' in term:
+            core_words = [w for w in term.split() if w not in qualifier_words and w not in STOP_WORDS]
+            if core_words:
+                core_term = ' '.join(core_words)
+                if core_term != term and _word_match(core_term, text):
+                    return True
+                # Also try each significant core word individually (for 3+ word terms)
+                if len(core_words) >= 2:
+                    if all(_word_match(w, text) for w in core_words if len(w) >= 3):
+                        return True
+
+        # 4. For slash-separated terms: 'AWS/Azure' → match if any component found
+        if '/' in term and not term.startswith('ci'):
+            parts = [p.strip() for p in term.split('/') if len(p.strip()) >= 2]
+            if any(_word_match(p, text) for p in parts):
+                return True
+
+        # 5. Hyphen variants: 'front-end' ↔ 'frontend' ↔ 'front end'
+        if '-' in term:
+            no_hyphen = term.replace('-', '')
+            spaced = term.replace('-', ' ')
+            if _word_match(no_hyphen, text) or _word_match(spaced, text):
+                return True
+
+        return False
+
     if keyword_matches:
         # Use AI-provided keyword list
         total_kw = len(keyword_matches)
@@ -418,11 +603,14 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
         }
     elif jd_analysis and jd_analysis.get('hard_skills'):
         # DYNAMIC PATH: Use AI-extracted hard skills from this specific JD
-        jd_skills = set(s.lower() for s in jd_analysis['hard_skills'])
+        # Deduplicate first to prevent inflated denominators
+        raw_count = len(jd_analysis['hard_skills'])
+        jd_skills = _deduplicate_skills(jd_analysis['hard_skills'])
+        print(f"[ats_scorer] hard skills: {raw_count} raw → {len(jd_skills)} after dedup")
         matched = []
         missing = []
         for term in sorted(jd_skills):
-            if _word_match(term, resume_lower):
+            if _enhanced_skill_match(term, resume_lower):
                 matched.append(term)
             else:
                 missing.append(term)
@@ -445,7 +633,7 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
         matched = []
         missing = []
         for term in sorted(jd_skills):
-            if _word_match(term, resume_lower):
+            if _enhanced_skill_match(term, resume_lower):
                 matched.append(term)
             else:
                 missing.append(term)
@@ -553,12 +741,31 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
 
     # 3. JOB TITLE MATCH (15%)
     # Strategy: exact phrase match → high score, individual word overlap → capped lower score
+    # Also checks the summary section specifically (where the AI injects the JD title)
     def _score_title(title_text, resume):
-        """Score a title: exact phrase = 100, close match = 85, word overlap capped at 70."""
+        """Score a title: exact phrase = 100, close match = 90, word overlap capped at 70."""
         title_norm = _normalize(title_text)
         # Check exact phrase first — this is what real ATS systems do
         if title_norm in resume:
             return 100
+
+        # Check common variations: 'Sr.' ↔ 'Senior', 'Jr.' ↔ 'Junior'
+        title_variants = [title_norm]
+        variant_map = {
+            'senior': 'sr.', 'sr.': 'senior', 'sr': 'senior',
+            'junior': 'jr.', 'jr.': 'junior', 'jr': 'junior',
+            'lead': 'principal', 'staff': 'senior',
+            'developer': 'engineer', 'engineer': 'developer',
+            'analyst': 'specialist', 'specialist': 'analyst',
+        }
+        for orig, replacement in variant_map.items():
+            if orig in title_norm:
+                title_variants.append(title_norm.replace(orig, replacement))
+
+        for variant in title_variants:
+            if variant in resume:
+                return 95
+
         # Check if all meaningful words present (close match)
         title_words = [w for w in title_norm.split() if w not in STOP_WORDS and len(w) >= 2]
         if not title_words:
@@ -567,8 +774,18 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
         if matched_words == len(title_words):
             return 90  # All words present but not as exact phrase
         if matched_words >= len(title_words) - 1 and len(title_words) > 2:
-            return 75  # Off by one word in a multi-word title
-        # Partial word match — cap at 70 to prevent "developer" in any resume from inflating
+            return 80  # Off by one word in a multi-word title
+        if matched_words >= len(title_words) - 1 and len(title_words) == 2:
+            return 75  # Off by one word in a 2-word title (e.g., "Data Analyst" → has "Data")
+
+        # Check developer/engineer swap: 'Software Developer' ↔ 'Software Engineer'
+        for orig, replacement in variant_map.items():
+            swapped_words = [replacement if w == orig else w for w in title_words]
+            swapped_matched = sum(1 for w in swapped_words if _word_match(w, resume))
+            if swapped_matched == len(swapped_words):
+                return 85
+
+        # Partial word match — cap at 70 to prevent "developer" alone from inflating
         return min((matched_words / len(title_words)) * 100, 70)
 
     if jd_analysis and jd_analysis.get('job_title'):
@@ -582,6 +799,26 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
             if v_score > title_score:
                 title_score = v_score
                 title_detail['match_found'] = v_score >= 60
+
+        # Also check if the title appears in the summary section specifically
+        # (the AI injects the JD title into the first sentence of the summary)
+        summary_section = ''
+        summary_idx = resume_lower.find('professional summary')
+        if summary_idx >= 0:
+            # Get text between summary header and next section header
+            next_section_idx = len(resume_lower)
+            for header in ['technical skills', 'professional experience', 'projects', 'education']:
+                idx = resume_lower.find(header, summary_idx + 20)
+                if idx >= 0 and idx < next_section_idx:
+                    next_section_idx = idx
+            summary_section = resume_lower[summary_idx:next_section_idx]
+
+        if summary_section:
+            summary_title_score = _score_title(ai_title, summary_section)
+            if summary_title_score > title_score:
+                title_score = summary_title_score
+                title_detail['match_found'] = True
+                title_detail['matched_in'] = 'summary'
 
         title_score = max(title_score, 15)  # Minimum floor
     else:
@@ -680,7 +917,6 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
     # 6. KEYWORD FREQUENCY (10%)
     if jd_analysis and jd_analysis.get('top_keywords'):
         # DYNAMIC PATH: Use AI-identified top keywords
-        # Use full-text substring matching for both single and multi-word terms
         top_jd_terms = [k.lower().strip() for k in jd_analysis['top_keywords']]
 
         freq_matched = 0
@@ -688,18 +924,35 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
         for term in top_jd_terms:
             # Primary: full word-boundary match in resume text
             found_count = _word_count(term, resume_lower)
-            # Secondary: for multi-word terms, check if all words appear
-            if found_count == 0 and ' ' in term:
-                term_words = term.split()
-                if all(_word_match(w, resume_lower) for w in term_words if len(w) >= 3):
-                    found_count = 1  # credit for having all component words
-            # Tertiary: for hyphenated or slash terms, check variants
+
+            # Secondary: use enhanced skill match (handles composites, synonyms, etc.)
             if found_count == 0:
-                variants = [term.replace('-', ' '), term.replace('/', ' '), term.replace('.', '')]
+                if _enhanced_skill_match(term, resume_lower):
+                    found_count = 1
+
+            # Tertiary: for multi-word terms, check if all significant words appear
+            if found_count == 0 and ' ' in term:
+                term_words = [w for w in term.split() if len(w) >= 3 and w not in STOP_WORDS]
+                if term_words and all(_word_match(w, resume_lower) for w in term_words):
+                    found_count = 1  # credit for having all component words
+
+            # Quaternary: for hyphenated or slash terms, check variants
+            if found_count == 0:
+                variants = [term.replace('-', ' '), term.replace('-', ''),
+                            term.replace('/', ' '), term.replace('.', '')]
                 for v in variants:
                     if v != term and _word_match(v, resume_lower):
                         found_count = 1
                         break
+
+            # Last resort: synonym check
+            if found_count == 0:
+                synonyms = _SKILL_SYNONYMS.get(term, [])
+                for syn in synonyms:
+                    if _word_match(syn, resume_lower):
+                        found_count = 1
+                        break
+
             if found_count > 0:
                 freq_matched += 1
                 freq_details.append({'term': term, 'resume_count': found_count})
@@ -711,6 +964,7 @@ def calculate_ats_score(resume_text, jd_text, keyword_matches=None, jd_analysis=
             'details': freq_details[:10],
             'source': 'dynamic_jd_analysis',
         }
+        print(f"[ats_scorer] keyword frequency: {freq_matched}/{len(top_jd_terms)} found ({frequency_score:.0f}%)")
     else:
         # STATIC FALLBACK: Top-8 unigram frequency
         jd_words = re.findall(r'[a-z][a-z+#./\-]+', jd_lower)

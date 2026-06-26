@@ -255,7 +255,7 @@ def render_latex(resume_data):
         use_small_font = True
 
     # ---- PREAMBLE (matches Meet_Patel_Resume_v4.tex exactly) ----
-    print(f"[latex] est_lines={est_lines}, tier={'light' if est_lines<=52 else 'medium' if est_lines<=60 else 'heavy' if est_lines<=68 else 'extreme' if est_lines<=76 else 'nuclear'}, margins=({top_margin},{bottom_margin},{left_margin},{right_margin})")
+    print(f"[latex] est_lines={est_lines}, tier={'light' if est_lines<=52 else 'medium' if est_lines<=58 else 'heavy' if est_lines<=63 else 'extreme' if est_lines<=68 else 'nuclear'}, margins=({top_margin},{bottom_margin},{left_margin},{right_margin})")
 
     latex = r"""\documentclass[10pt, letterpaper]{article}
 

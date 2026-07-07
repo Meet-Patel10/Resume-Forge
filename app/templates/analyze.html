@@ -872,6 +872,7 @@
                     company_name: company,
                     role_title: role,
                     application_id: currentAppId,
+                    target_city: document.getElementById('target-city')?.value.trim() || '',
                 })
             });
 
@@ -1280,6 +1281,7 @@
                         recipient_title: r.title,
                         recipient_category: r.category,
                         cover_letter_text: currentCoverLetterText,
+                        target_city: document.getElementById('target-city')?.value.trim() || '',
                         previously_used_signals: usedSignals,
                         previously_used_subjects: usedSubjects,
                         previously_used_bodies: usedBodies,

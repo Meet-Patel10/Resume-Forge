@@ -17,19 +17,14 @@ from app.services.prompts.followup_email import (
     build_followup_adjust_message,
 )
 
+from app.routes.tailor import _build_sign_off, _resolve_sign_off_location, _DEFAULT_LOCATION
+
 followup_bp = Blueprint('followup', __name__)
 bedrock = BedrockClient()
 
 # ========== Constants ==========
 TARGET_MIN = 80
 TARGET_MAX = 120
-
-SIGN_OFF_BLOCK = (
-    "\n\nBest regards,\n"
-    "Meet Patel\n"
-    "Halifax, NS\n"
-    "https://www.linkedin.com/in/meettpatel28/"
-)
 
 
 # ========== Shared Utilities ==========
@@ -124,6 +119,9 @@ def _strip_sign_off(body):
             continue
         if stripped.startswith('+1 (902)'):
             continue
+        # Strip any city/province line the AI may have auto-appended
+        if _re.match(r'^[a-z .\'-]+,\s*[a-z]{2}$', stripped):
+            continue
         clean_lines.append(line)
     return '\n'.join(clean_lines).rstrip()
 
@@ -161,6 +159,19 @@ def _generate_single_followup(original_email, company_name, role_title):
     first_name = recipient_name.strip().split()[0]
     total_tokens = 0
     total_cost = 0.0
+
+    # Extract location from original email's sign-off (line before LinkedIn URL)
+    original_location = _DEFAULT_LOCATION
+    if original_body:
+        orig_lines = original_body.strip().split('\n')
+        for idx, line in enumerate(orig_lines):
+            if 'linkedin.com/in/meettpatel28' in line.lower() and idx > 0:
+                candidate = orig_lines[idx - 1].strip()
+                # Should look like "City, Province" (e.g. "Ottawa, ON")
+                if _re.match(r'^[A-Za-z .\'-]+,\s*[A-Z]{2}$', candidate):
+                    original_location = candidate
+                    break
+    print(f"[followup-email] Location from original: {original_location}")
 
     print(f"\n[followup-email] === Generating follow-up for {recipient_name} ({recipient_title}) ===")
 
@@ -288,9 +299,9 @@ def _generate_single_followup(original_email, company_name, role_title):
     body = _re.sub(r'\s*\(ref\s*REFENUM\)', '', body, flags=_re.IGNORECASE)
     body = _re.sub(r'\s*ref\s+REFENUM', '', body, flags=_re.IGNORECASE)
 
-    # Append sign-off
-    body = body.rstrip() + SIGN_OFF_BLOCK
-    print(f"[followup-email] Sign-off appended")
+    # Append sign-off with location from original email
+    body = body.rstrip() + _build_sign_off(original_location)
+    print(f"[followup-email] Sign-off appended with location: {original_location}")
 
     # Final word count (for JSON output — count body excluding sign-off)
     final_body_for_count = _strip_sign_off(body)

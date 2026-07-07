@@ -22,6 +22,54 @@ import json as json_mod
 
 tailor_bp = Blueprint('tailor', __name__)
 
+# ─── Shared: city → province short code (for email sign-off) ───
+import re as _re
+
+_CITY_TO_PROVINCE = {
+    'toronto': 'ON', 'ottawa': 'ON', 'mississauga': 'ON', 'brampton': 'ON',
+    'hamilton': 'ON', 'london': 'ON', 'markham': 'ON', 'vaughan': 'ON',
+    'kitchener': 'ON', 'windsor': 'ON', 'richmond hill': 'ON', 'oakville': 'ON',
+    'burlington': 'ON', 'waterloo': 'ON', 'guelph': 'ON', 'barrie': 'ON',
+    'oshawa': 'ON', 'cambridge': 'ON', 'kanata': 'ON', 'pickering': 'ON',
+    'montreal': 'QC', 'quebec city': 'QC', 'laval': 'QC', 'gatineau': 'QC',
+    'sherbrooke': 'QC',
+    'vancouver': 'BC', 'surrey': 'BC', 'burnaby': 'BC', 'richmond': 'BC',
+    'victoria': 'BC', 'kelowna': 'BC', 'nanaimo': 'BC',
+    'calgary': 'AB', 'edmonton': 'AB', 'red deer': 'AB', 'lethbridge': 'AB',
+    'winnipeg': 'MB', 'brandon': 'MB',
+    'saskatoon': 'SK', 'regina': 'SK',
+    'halifax': 'NS', 'dartmouth': 'NS',
+    'saint john': 'NB', 'moncton': 'NB', 'fredericton': 'NB',
+    "st. john's": 'NL', 'charlottetown': 'PE',
+    'yellowknife': 'NT', 'whitehorse': 'YT', 'iqaluit': 'NU',
+}
+
+_DEFAULT_LOCATION = 'Halifax, NS'
+
+
+def _resolve_sign_off_location(city_input):
+    """Resolve a city name to 'City, Province' for the email sign-off line."""
+    if not city_input:
+        return _DEFAULT_LOCATION
+    city_lower = city_input.lower().strip()
+    province = _CITY_TO_PROVINCE.get(city_lower)
+    city_display = city_input.strip().title()
+    city_display = _re.sub(r"'S\b", "'s", city_display)
+    if province:
+        return f"{city_display}, {province}"
+    return f"{city_display}"
+
+
+def _build_sign_off(location=None):
+    """Build the sign-off block with the given location (defaults to Halifax, NS)."""
+    loc = location if location else _DEFAULT_LOCATION
+    return (
+        "\n\nBest regards,\n"
+        "Meet Patel\n"
+        f"{loc}\n"
+        "https://www.linkedin.com/in/meettpatel28/"
+    )
+
 
 @tailor_bp.route('/')
 @login_required
@@ -1299,16 +1347,23 @@ def _generate_cover_letter_impl():
     jd_text = data.get('jd_text', '')
     company_name = data.get('company_name', '')
     role_title = data.get('role_title', '')
+    target_city = data.get('target_city', '').strip()
     TARGET_WORDS = 330
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
+    # Resolve location for the cover letter header
+    header_location = None
+    if target_city:
+        header_location = _resolve_sign_off_location(target_city)
+        print(f"[cover-letter] Using target city for header: {header_location}")
+
     total_tokens = 0
     total_cost = 0.0
 
     # Step 1: Generate initial cover letter
-    user_message = build_cover_letter_message(resume_text, jd_text, company_name, role_title)
+    user_message = build_cover_letter_message(resume_text, jd_text, company_name, role_title, header_location=header_location)
     result = claude.analyze(COVER_LETTER_SYSTEM, user_message, max_tokens=2048, force_json=True)
 
     if result.get('error'):
@@ -1828,6 +1883,7 @@ def _generate_leadership_email_impl():
     recipient_title = data.get('recipient_title', '')
     recipient_category = data.get('recipient_category', '')
     cover_letter_text = data.get('cover_letter_text', '')
+    target_city = data.get('target_city', '').strip()
 
     TARGET_MIN = 120
     TARGET_MAX = 150
@@ -2168,12 +2224,9 @@ def _generate_leadership_email_impl():
         print("[leadership-email] ✂️ Stripped 'ref REFENUM' from body text")
 
 
-    SIGN_OFF_BLOCK = (
-        "\n\nBest regards,\n"
-        "Meet Patel\n"
-        "Halifax, NS\n"
-        "https://www.linkedin.com/in/meettpatel28/"
-    )
+    # Build sign-off with target city (if provided) instead of default Halifax
+    sign_off_location = _resolve_sign_off_location(target_city) if target_city else _DEFAULT_LOCATION
+    SIGN_OFF_BLOCK = _build_sign_off(sign_off_location)
 
     # Strip any sign-off fragments the AI might have included despite instructions
     lines = body.rstrip().split('\n')
@@ -2182,15 +2235,19 @@ def _generate_leadership_email_impl():
         stripped = line.strip().lower()
         if stripped in ['best regards,', 'best regards', 'best,', 'regards,',
                         'sincerely,', 'warm regards,', 'meet patel',
-                        '+1 (902) 322-3808', 'meet', 'patel', 'meet patel,']:
+                        '+1 (902) 322-3808', 'meet', 'patel', 'meet patel,',
+                        'halifax, ns', 'halifax ns']:
             continue
         if 'linkedin.com/in/meettpatel28' in stripped:
             continue
         if stripped.startswith('+1 (902)'):
             continue
+        # Strip any city/province line the AI may have auto-appended
+        if _re.match(r'^[a-z .\'-]+,\s*[a-z]{2}$', stripped):
+            continue
         clean_lines.append(line)
     body = '\n'.join(clean_lines).rstrip() + SIGN_OFF_BLOCK
-    print("[leadership-email] Sign-off appended (always)")
+    print(f"[leadership-email] Sign-off appended with location: {sign_off_location}")
 
     return jsonify({
         'subject': subject,

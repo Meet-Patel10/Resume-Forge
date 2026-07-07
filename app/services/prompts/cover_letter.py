@@ -211,10 +211,14 @@ Output ONLY valid JSON:
 """
 
 
-def build_cover_letter_message(resume_text, jd_text, company_name="", role_title=""):
+def build_cover_letter_message(resume_text, jd_text, company_name="", role_title="", header_location=None):
     """Build the user message for cover letter generation."""
     from datetime import datetime
     today = datetime.now().strftime('%B %d, %Y')  # e.g. "May 27, 2026"
+
+    location_instruction = ""
+    if header_location:
+        location_instruction = f'\n10. In the cover letter header, use "{header_location}" as the city/location — NOT the location from the resume.'
 
     return f"""## Company: {company_name if company_name else 'Not specified — infer from the JD'}
 ## Role: {role_title if role_title else 'Not specified — infer from the JD'}
@@ -237,7 +241,7 @@ CRITICAL REQUIREMENTS:
 6. Show WHY I want to join THIS company — reference something specific about their technical work.
 7. Write naturally like a human — use contractions, vary sentence length, no AI patterns.
 8. Place "{today}" on its own line just below the header, before the salutation.
-9. The BODY must be EXACTLY 330 words and MUST fit on ONE PAGE."""
+9. The BODY must be EXACTLY 330 words and MUST fit on ONE PAGE.{location_instruction}"""
 
 
 def build_adjust_message(body_text, current_count, target_count=330):

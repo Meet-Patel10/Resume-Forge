@@ -1160,13 +1160,9 @@
 
     // ===== Multi-Recipient Dynamic List =====
     let recipientCounter = 0;
-    const MAX_RECIPIENTS = 5;
 
     function addRecipientRow() {
         const list = document.getElementById('recipients-list');
-        if (list.children.length >= MAX_RECIPIENTS) {
-            return showToast(`Maximum ${MAX_RECIPIENTS} recipients per company.`, 'error');
-        }
         recipientCounter++;
         const idx = recipientCounter;
         const row = document.createElement('div');
@@ -1214,8 +1210,8 @@
         const list = document.getElementById('recipients-list');
         const btn = document.getElementById('add-recipient-btn');
         if (btn) {
-            btn.disabled = list.children.length >= MAX_RECIPIENTS;
-            btn.textContent = list.children.length >= MAX_RECIPIENTS ? 'Max 5 reached' : '+ Add Recipient';
+            btn.disabled = false;
+            btn.textContent = '+ Add Recipient';
         }
     }
 

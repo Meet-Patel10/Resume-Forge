@@ -112,38 +112,21 @@ def _estimate_lines(resume_data):
 
 
 def _trim_bullets_to_fit(resume_data, max_chars=155):
-    """Trim overlong bullets to enforce single-page output.
+    """LOG overlong bullets but DO NOT truncate them.
 
-    Cuts at the last natural break point (comma, semicolon, or ' and ')
-    before max_chars to preserve grammatical completeness.
+    Bullet text is written by the candidate and must be preserved in full.
+    1-page enforcement is handled entirely by LaTeX spacing/margins.
+    This function only prints warnings for debugging.
     """
-    trimmed_count = 0
+    long_count = 0
     for section_key in ('experience', 'projects', 'other_experience'):
         entries = resume_data.get(section_key, [])
         for entry in entries:
-            bullets = entry.get('bullets', [])
-            new_bullets = []
-            for bullet in bullets:
+            for bullet in entry.get('bullets', []):
                 if len(bullet) > max_chars:
-                    cut = bullet[:max_chars]
-                    # Find the last natural break point
-                    last_comma = cut.rfind(',')
-                    last_semi = cut.rfind(';')
-                    last_and = cut.rfind(' and ')
-                    break_at = max(last_comma, last_semi, last_and)
-                    if break_at > max_chars * 0.6:
-                        bullet = bullet[:break_at].rstrip(' ,;')
-                    else:
-                        last_space = cut.rfind(' ')
-                        if last_space > max_chars * 0.6:
-                            bullet = bullet[:last_space].rstrip()
-                        else:
-                            bullet = cut.rstrip()
-                    trimmed_count += 1
-                new_bullets.append(bullet)
-            entry['bullets'] = new_bullets
-    if trimmed_count:
-        print(f"[latex] trimmed {trimmed_count} bullets to max {max_chars} chars")
+                    long_count += 1
+    if long_count:
+        print(f"[latex] {long_count} bullets exceed {max_chars} chars (preserved in full — using LaTeX compression)")
 
 
 def _cap_skills_per_category(resume_data, max_per_cat=8):
@@ -172,21 +155,22 @@ def render_latex(resume_data):
     right_margin = '0.7in'
 
     # Progressive content reduction for strict 1-page enforcement
+    # NOTE: We NEVER trim bullet text — only cap skills to save lines
     if est_lines > 62:
         import copy
         resume_data = copy.deepcopy(resume_data)
 
-        # Pass 1: cap skills + trim bullets to 155 chars
+        # Only cap skills — DO NOT trim bullets
         _cap_skills_per_category(resume_data, max_per_cat=8)
-        _trim_bullets_to_fit(resume_data, max_chars=155)
+        _trim_bullets_to_fit(resume_data, max_chars=155)  # logging only, no truncation
         est_lines = _estimate_lines(resume_data)
-        print(f"[latex] 1-page pass 1: est={est_lines}")
+        print(f"[latex] 1-page pass 1 (skills capped): est={est_lines}")
 
-        # Pass 2: still heavy — trim harder
+        # Pass 2: if still heavy, cap skills harder
         if est_lines > 68:
-            _trim_bullets_to_fit(resume_data, max_chars=140)
+            _cap_skills_per_category(resume_data, max_per_cat=6)
             est_lines = _estimate_lines(resume_data)
-            print(f"[latex] 1-page pass 2: est={est_lines}")
+            print(f"[latex] 1-page pass 2 (skills capped to 6): est={est_lines}")
 
     # Tier thresholds calibrated to actual LaTeX rendering capacity:
     #   light/medium: ~60 usable lines (0.45in margins, no enlarge)
@@ -275,8 +259,8 @@ def render_latex(resume_data):
 
 \newcommand{\resumeItem}[1]{\item\small{#1}}
 \newcommand{\resumeSubheading}[4]{
-  \textbf{#1} \hfill \textit{\small #2} \\
-  \textit{\small #3} \hfill \textit{\small #4}
+  \textbf{#3} \hfill \textit{\small #4} \\
+  \textit{\small #1} \hfill \textit{\small #2}
 }
 
 \begin{document}
@@ -392,7 +376,7 @@ def render_latex(resume_data):
             tech = s(proj.get('tech_stack', ''))
             dates = s(proj.get('dates', ''))
 
-            latex += "\n\\resumeSubheading{" + proj_name + "}{" + dates + "}{" + tech + "}{}\n"
+            latex += "\n\\resumeSubheading{" + tech + "}{" + dates + "}{" + proj_name + "}{}\n"
             latex += "\\begin{itemize}[leftmargin=1.5em, itemsep=0pt, topsep=2pt]\n"
             for bullet in proj.get('bullets', []):
                 latex += "  \\resumeItem{" + s(bullet) + "}\n"

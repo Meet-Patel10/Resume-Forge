@@ -54,13 +54,21 @@ You do NOT have internet access. You ONLY have the job description text and the 
 
 ### FORMAT: Greeting + 3-4 SHORT paragraphs with blank lines between them.
 
-### Paragraph 1: Introduction (1-2 sentences)
-- Simple, honest opener: "I came across the [Role] role at [Company] and wanted to reach out" or "I recently came across the [Role] role at [Company], and it stood out given my experience with [relevant area]."
-- If you have a job reference number, include it naturally: "the [Role] role (JR100049) at [Company]"
+### Paragraph 1: Introduction (2-3 sentences)
+- MUST include TWO things: (1) that you applied through the company's portal, and (2) why you're reaching out directly
+- The "I already applied" signal is MANDATORY — it proves you went through the proper process and tells the recipient exactly what you want
+- If you have a job reference number, include it: "I recently applied for the [Role] role (JR100049) at [Company] through your careers portal"
+- If no reference number: "I recently applied for the [Role] role at [Company] and wanted to reach out directly"
+- Add ONE sentence about WHY you're reaching out to THIS person — e.g., "Given your role leading the [team/area], I thought you'd be the right person to connect with."
 - Must mention the company BY NAME and the exact role title
 - Do NOT try to "infer" hidden signals from the JD — just be straightforward
 
+#### GOOD intro examples:
+- "I recently applied for the Data Engineer role at Shopify through your careers portal and wanted to reach out directly. Given your work leading the data platform team, I thought you'd be the best person to connect with."
+- "I submitted my application for the Software Engineer position (JR-4821) at IBM and wanted to introduce myself."
+
 #### BANNED intro patterns:
+- "I came across the role" WITHOUT mentioning you applied — sounds like you haven't committed
 - "[Company] running X tells me Y" — sounds robotic
 - "[Company] [verb]ing X alongside Y signals Z" — AI analysis language
 - "I hope this email finds you well" — cliche
@@ -127,12 +135,36 @@ Explain what EXCITES you about THIS specific role at THIS company. This is the e
 - "My experience across both application development and cloud infrastructure aligns well with building and supporting high-quality AI-powered platforms."
 
 ### Paragraph 4: Ask (1-2 sentences)
-Genuine, humble ask — NOT a sales pitch.
-- "I'd love to connect and learn more about the role and how I can contribute. Would you be open to a brief conversation?"
-- "I'd love the opportunity to connect and learn more about the team. Would you be open to a quick conversation?"
+The ask MUST be specific, low-friction, and give the recipient an easy path to reply. The best asks can be answered in one sentence or less.
+
+#### THE THREE PROVEN ASK PATTERNS (use ONE based on recipient level):
+
+**Pattern A — "Confirm Fit" (for Hiring Managers / Team Leads):**
+- "If my background looks like a match, I'd welcome the chance to connect. Either way, I appreciate you taking a look."
+- "If my experience aligns with what you're looking for, I'd love to connect briefly."
+- WHY IT WORKS: Low pressure. The action is just "look me up in the ATS" — takes 10 seconds. No calendar commitment.
+
+**Pattern B — "Redirect" (for Directors / VPs / Senior Leaders):**
+- "Are you the right person to connect with about this role, or would you recommend someone on the team? I'd appreciate being pointed in the right direction."
+- "If there's someone on your team better suited to discuss this role, I'd appreciate the introduction."
+- WHY IT WORKS: Gives them an easy out (redirect you) which paradoxically makes them MORE likely to reply. Both possible responses ("yes, that's me" or "talk to Sarah") open a conversation.
+
+**Pattern C — "Interest-Based Question" (for Recruiters / Talent Acquisition):**
+- "Is the [Role] position still actively being filled? I'd love to discuss how my experience with [specific skill from JD] aligns."
+- "I'd appreciate any insight on whether my background fits what you're looking for."
+- WHY IT WORKS: It's a genuine question with a yes/no answer. Easy to reply to.
+
+#### CRITICAL ASK RULES:
+- The ask must be answerable in ONE SENTENCE OR LESS by the recipient
+- NEVER ask for calendar time in a first email (no "15 minutes", no "brief call", no "quick chat")
+- NEVER use a generic ask that could be pasted into any email unchanged
+- The ask must connect back to the fact that you ALREADY APPLIED
 
 #### BANNED ask patterns:
-- "Would you be open to a 15-minute conversation?" alone — too transactional
+- "Would you be open to a brief conversation?" — generic, every AI email says this
+- "Would you be open to a 15-minute conversation?" — asks for calendar time from a stranger
+- "I'd love to connect and learn more" — vague, doesn't say what you want
+- "Would you be open to a quick chat?" — same generic pattern with different words
 - Any ask that sounds like you're booking a sales call
 
 ## STEP 3 — TONE RULES
@@ -157,15 +189,23 @@ Genuine, humble ask — NOT a sales pitch.
 
 ## STEP 4 — DIFFERENTIATION BY RECIPIENT LEVEL
 
-### Category A — Hiring Manager / Team Lead / Recruiter:
-- Intro: Reference the specific role
-- Proof: Technical — name systems, tech, architecture
-- Why: Connect your tech experience to their specific needs
+### Category A — Hiring Manager / Team Lead:
+- Intro: "I applied for [Role] through your portal" + why you're reaching out to THEM specifically
+- Proof: Technical — name systems, tech, architecture relevant to the JD
+- Why: Connect your tech experience to their specific needs from the JD
+- Ask: Use Pattern A ("Confirm Fit") — "If my background looks like a match, I'd welcome the chance to connect."
 
 ### Category B — Director / VP / Associate Partner:
-- Intro: Reference the role with a strategic angle
+- Intro: "I applied for [Role]" + strategic framing of why this role interests you
 - Proof: Outcomes-focused — reliability, throughput, business impact
 - Why: Connect your outcomes to their business challenges
+- Ask: Use Pattern B ("Redirect") — "Are you the right person to connect with, or would you recommend someone on the team?"
+
+### Category C — Recruiter / Talent Acquisition:
+- Intro: "I submitted my application for [Role]" + brief highlight of strongest qualification
+- Proof: Quick, relevant — name the top 2-3 matching skills from the JD
+- Why: Brief — what excites you about the role or team
+- Ask: Use Pattern C ("Interest-Based Question") — "Is this role still being actively filled?"
 
 ## STEP 5 — HARD RULES (never violate)
 1. Body: 3-4 paragraphs, 120-150 words. NOT including sign-off.
@@ -191,7 +231,8 @@ Respond ONLY with valid JSON:
   "signal_used": "<what drew you to write this email — the specific aspect of the role>",
   "proof_source": "<'project' or 'work_experience' or 'both'>",
   "proof_point": "<the key proof sentence>",
-  "recipient_category": "<'category_a' or 'category_b'>",
+  "recipient_category": "<'category_a' or 'category_b' or 'category_c'>",
+  "ask_pattern": "<'confirm_fit' or 'redirect' or 'interest_question'>",
   "skills_highlighted": ["<JD-aligned skills>"],
   "metrics_used": ["<metrics used>"]
 }
@@ -399,19 +440,26 @@ Before writing the proof paragraph, verify:
 - [ ] Does it say "I'm currently working at Capgemini"? -> REJECT. Use past tense or omit.
 - [ ] Does it use ACTIVE verbs (built, designed, architected, scaled, developed, building)? -> PASS.
 Before writing the intro, verify:
-- [ ] Does it use "tells me", "signals", or "means your team"? -> REJECT. Use "I came across" style.
+- [ ] Does it mention that you APPLIED through the portal/careers page? -> If missing, REJECT. The "I applied" signal is MANDATORY.
+- [ ] Does it use "tells me", "signals", or "means your team"? -> REJECT. Use direct language.
 Before writing the ask, verify:
-- [ ] Does it sound like a sales calendar-booking pitch? -> REJECT. Make it genuine and humble.
+- [ ] Does it ask for calendar time ("15 minutes", "brief call", "quick chat", "brief conversation")? -> REJECT. Use a low-friction ask.
+- [ ] Can the recipient reply in ONE sentence or less? -> If not, simplify the ask.
+- [ ] Could this ask be pasted into any email unchanged? -> If yes, REJECT. Make it specific.
 
 ### STEP D — WRITE THE EMAIL (3-4 paragraphs, 120-150 words, NO sign-off)
 Format: "Hi {first_name if first_name else '[Name]'}," followed by a blank line, then 3-4 paragraphs separated by blank lines.
 
-1. **Intro paragraph**: "I came across the [Role] role at [Company]..." — simple, honest, references the role.
+1. **Intro paragraph**: "I recently applied for the [Role] role at [Company] through your careers portal and wanted to reach out directly." + ONE sentence on why you're reaching out to THIS person. The "I applied" signal is MANDATORY.
 2. **Proof paragraph**: LEAD with ResumeForge as a real-world problem you are solving. Example: "I noticed job seekers spend hours tailoring resumes manually, so I'm building ResumeForge — an AI-powered platform using [relevant tech from JD] that analyzes job descriptions and auto-generates tailored resumes. I also hold an MSc in Applied Computer Science and previously [relevant thing] at Capgemini." — Pick the ResumeForge angle MOST relevant to the JD's tech stack. NO FAKE NUMBERS.
 3. **Why This Role paragraph**: "What excites me about this role is [specific aspect]..." or "My experience building [specific thing in ResumeForge] aligns well with [specific aspect of this role]."
-4. **Ask paragraph**: "I'd love to connect and learn more about the role and how I can contribute. Would you be open to a brief conversation?"
+4. **Ask paragraph**: Choose based on recipient level:
+   - Hiring Manager/Team Lead: "If my background looks like a match, I'd welcome the chance to connect. Either way, I appreciate you taking a look."
+   - Director/VP: "Are you the right person to connect with about this role, or would you recommend someone on the team?"
+   - Recruiter: "Is the [Role] position still actively being filled? I'd love to discuss how my experience aligns."
+   NEVER use: "Would you be open to a brief conversation?" or "I'd love to connect and learn more" — these are generic and get ignored.
 
-REMINDER: Do NOT include sign-off, name, phone, LinkedIn. Do NOT write "Whether X or Y, the same..." bridge sentences. Do NOT use "tells me" / "signals" / "means your team" inference language. Do NOT invent ANY numbers or metrics for ResumeForge. The system will AUTO-REJECT if "maintained", "incidents", or "SOPs" appear in your output.
+REMINDER: Do NOT include sign-off, name, phone, LinkedIn. Do NOT write "Whether X or Y, the same..." bridge sentences. Do NOT use "tells me" / "signals" / "means your team" inference language. Do NOT invent ANY numbers or metrics for ResumeForge. The intro MUST mention you already applied. The system will AUTO-REJECT if "maintained", "incidents", or "SOPs" appear in your output.
 
 ---
 

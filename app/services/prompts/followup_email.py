@@ -27,12 +27,12 @@ The candidate previously sent a cold outreach email to this person about a speci
 - Use PAST TENSE for Capgemini if mentioned at all.
 
 ## ABOUT RESUMEFORGE (candidate's current project — use as primary NEW value):
-ResumeForge is an AI-powered platform that solves a real problem: job seekers spend 2-3 hours manually tailoring each resume, and most still get rejected by ATS systems. The candidate is building:
-- AWS Bedrock (Claude AI) integration to analyze job descriptions and auto-tailor resumes with 95.98% classification accuracy
+ResumeForge is an AI-powered platform that solves a real problem: job seekers spend hours manually tailoring each resume for every application, and most still get filtered out by ATS systems. The candidate is building:
+- AWS Bedrock (Claude AI) integration to analyze job descriptions and auto-tailor resumes
 - ATS-optimized LaTeX resume generation, cover letters, and personalized cold outreach emails
 - Python/Flask backend, PostgreSQL, Docker/Kubernetes deployment, CI/CD pipelines
-- Multi-step AI pipeline: brutal critique -> keyword gap analysis -> intelligent bullet rewriting -> ATS scoring -> LaTeX generation
-- Serving 200+ users with automated job application workflows
+- Multi-step AI pipeline: JD analysis -> keyword extraction -> intelligent bullet rewriting -> ATS scoring -> LaTeX generation
+- CRITICAL: Do NOT invent user counts, accuracy percentages, or time savings. Describe WHAT ResumeForge does and WHY, not fabricated scale.
 
 ## STEP 1 — SUBJECT LINE
 
@@ -49,13 +49,14 @@ ResumeForge is an AI-powered platform that solves a real problem: job seekers sp
 
 ### FORMAT: Greeting + 2-3 SHORT paragraphs with blank lines between them.
 
-### Paragraph 1: Brief Reference (1-2 sentences)
-Acknowledge the original email briefly — don't summarize it.
-- "I reached out last week about the [Role] at [Company] and wanted to follow up."
-- "Following up on my email about the [Role] position — I know you're busy, so I'll keep this brief."
+### Paragraph 1: Brief Reference + Application Reminder (1-2 sentences)
+Acknowledge the original email AND remind them you applied — they may not have read your first email.
+- "I recently reached out about the [Role] role at [Company] — I applied through your careers portal and wanted to check in."
+- "Following up on my email about the [Role] position — I submitted my application and wanted to touch base briefly."
 - Do NOT start with "I hope this email finds you well" — BANNED
 - Do NOT copy-paste from the original email
 - Use the recipient's first name in the greeting
+- The "I applied" reminder is MANDATORY — it anchors the email to a concrete action the recipient can look up
 
 ### Paragraph 2: NEW Value (2-3 sentences)
 This is what makes or breaks the follow-up. Add something the original email DIDN'T cover.
@@ -69,12 +70,28 @@ This is what makes or breaks the follow-up. Add something the original email DID
 
 #### CRITICAL: READ the original email body and provide DIFFERENT proof. If the original mentioned Jenkins/Docker, talk about AI pipeline. If the original mentioned AI/ML, talk about cloud infrastructure. NEVER repeat the same proof.
 
-### Paragraph 3: Soft Ask (1-2 sentences)
-Respectful, not pushy.
-- "I'd appreciate any guidance on next steps, or the chance to connect briefly."
-- "Would you have a few minutes for a quick conversation? I'd love to learn more about the team."
-- "Even a brief pointer on where my application stands would be helpful."
-- Do NOT say "Would you be open to a 15-minute conversation?" — too transactional for a follow-up
+### Paragraph 3: Low-Friction Ask (1-2 sentences)
+The ask must be answerable in ONE SENTENCE by the recipient. NEVER ask for calendar time in a follow-up.
+
+#### PROVEN ASK PATTERNS BY RECIPIENT LEVEL:
+
+**For Hiring Managers / Team Leads:**
+- "If my application is still being considered, I'd welcome the chance to connect."
+- "If my background looks like a fit, I'd appreciate the opportunity to chat."
+
+**For Directors / VPs / Senior Leaders:**
+- "If there's someone on your team I should connect with about this role, I'd appreciate the pointer."
+- "Would you be able to point me toward the right person to discuss this role with?"
+
+**For Recruiters / Talent Acquisition:**
+- "Is this position still being actively filled? I'd appreciate any update on where things stand."
+- "Any insight on the timeline for this role would be really helpful."
+
+#### BANNED ask patterns in follow-ups:
+- "Would you have a few minutes for a quick conversation?" — asks for calendar time from someone who already ignored you
+- "I'd appreciate any guidance on next steps, or the chance to connect briefly" — vague, doesn't say what you want
+- "Even a brief pointer on where my application stands" — too passive
+- Any ask that sounds desperate or entitled to a reply
 
 ## STEP 3 — TONE RULES
 - **Respectful of their time** — acknowledge they're busy, don't demand attention
@@ -94,6 +111,8 @@ Respectful, not pushy.
 8. "Just following up" as the entire first paragraph — lazy, INSTANT REJECT
 9. "I wanted to circle back" — corporate cliché, REJECT
 10. "Per my last email" — passive-aggressive, REJECT
+11. Any fabricated numbers for ResumeForge ("200+ users", "95% accuracy", etc.) — REJECT
+12. Asking for calendar time ("15 minutes", "quick call", "brief conversation") — REJECT
 
 ## OUTPUT FORMAT
 Return ONLY valid JSON with these fields:
@@ -152,6 +171,13 @@ def build_followup_email_message(
 4. Keep it 80-120 words (body only, no sign-off).
 5. Use 2-3 paragraphs with blank lines between them.
 6. Do NOT include sign-off, name, phone, or LinkedIn.
+7. Paragraph 1 MUST mention you applied through the portal — the "I applied" signal is MANDATORY.
+8. Paragraph 3 (Ask) — use the correct pattern for the recipient level:
+   - Recruiter/Talent Acquisition: "Is this position still being actively filled?" or "Any insight on the timeline?"
+   - Hiring Manager/Team Lead: "If my application is still being considered, I'd welcome the chance to connect."
+   - VP/Director: "If there's someone on your team I should connect with, I'd appreciate the pointer."
+   NEVER use: "Would you be open to a brief conversation?" or "quick chat" — these are generic and get ignored.
+9. Do NOT invent ANY numbers or metrics for ResumeForge. No user counts, no accuracy percentages.
 
 ### WRITE THE FOLLOW-UP NOW (JSON format):"""
 

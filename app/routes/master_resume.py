@@ -1,5 +1,5 @@
 import json
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session, current_app
 from app.routes.auth import login_required
 from app import db
 from app.models.master_resume import MasterResume
@@ -117,8 +117,16 @@ def upload_resume():
         return jsonify({'error': 'No file selected'}), 400
 
     try:
-        from app.services.claude_client import claude
         from app.services.prompts.master_parser import MASTER_PARSER_SYSTEM
+
+        # Select AI provider based on APP_ENV
+        app_env = current_app.config.get('APP_ENV', 'testing').strip()
+        if app_env == 'nvidia':
+            from app.services.claude_client import nvidia as ai_client
+            print("[master-resume] Using NVIDIA Llama-3.3-Nemotron for parser")
+        else:
+            from app.services.claude_client import claude as ai_client
+            print(f"[master-resume] Using AWS Bedrock/Claude for parser (APP_ENV={app_env})")
 
         # 1. Extract raw text from file
         result = parse_resume_file(file)
@@ -126,7 +134,7 @@ def upload_resume():
 
         # 2. Parse text into structured JSON using AI
         user_message = f"Here is the raw resume text:\n\n{raw_text}"
-        ai_result = claude.analyze(MASTER_PARSER_SYSTEM, user_message, force_json=True)
+        ai_result = ai_client.analyze(MASTER_PARSER_SYSTEM, user_message, force_json=True)
 
         if ai_result.get('error'):
             return jsonify({'error': f"AI parsing failed: {ai_result['error']}"}), 500
@@ -193,12 +201,20 @@ def ats_check():
     # This ensures the same scoring logic used by the tailor pipeline
     jd_analysis = None
     try:
-        from app.services.claude_client import claude
+        # Select AI provider based on APP_ENV
+        app_env = current_app.config.get('APP_ENV', 'testing').strip()
+        if app_env == 'nvidia':
+            from app.services.claude_client import nvidia as ai_client
+            print("[master-resume] Using NVIDIA Llama-3.3-Nemotron for JD analyzer")
+        else:
+            from app.services.claude_client import claude as ai_client
+            print(f"[master-resume] Using AWS Bedrock/Claude for JD analyzer (APP_ENV={app_env})")
+            
         from app.services.prompts.jd_analyzer import JD_ANALYZER_SYSTEM, build_jd_analysis_message
         import json as json_mod
 
         jd_msg = build_jd_analysis_message(resume_text, jd_text)
-        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000, force_json=True)
+        jd_result = ai_client.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000, force_json=True)
         if not jd_result.get('error'):
             jd_analysis = jd_result['response']
             if isinstance(jd_analysis, str):

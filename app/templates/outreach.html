@@ -1,0 +1,547 @@
+{% extends "base.html" %}
+{% block title %}Outreach Emails{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>📧 Outreach Email Generator</h2>
+    <p class="text-muted">Upload your resume &amp; cover letter, paste the JD, and generate professional cold outreach emails.</p>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); align-items: start;">
+    <!-- ===== LEFT PANEL: INPUTS ===== -->
+    <div>
+        <!-- Resume Upload -->
+        <div class="card mb-4">
+            <h3 class="card-title mb-4">📄 Resume</h3>
+            <div id="resume-drop-zone" class="drop-zone" ondrop="handleDrop(event, 'resume')" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+                <input type="file" id="resume-file-input" accept=".pdf,.docx,.doc,.txt" onchange="handleFileSelect(this, 'resume')" style="display:none;">
+                <div class="drop-zone-content" id="resume-drop-content">
+                    <span style="font-size: 2rem;">📂</span>
+                    <p style="margin: var(--space-2) 0 0; font-weight: 500;">Drag &amp; drop your resume here</p>
+                    <p class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">PDF, DOCX, or TXT — or <a href="#" onclick="document.getElementById('resume-file-input').click(); return false;" style="color: var(--accent-primary);">browse files</a></p>
+                </div>
+            </div>
+            <div id="resume-file-info" style="display:none; margin-top: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-sm);">
+                <span id="resume-file-name"></span>
+                <button class="btn btn-sm" onclick="clearFile('resume')" style="float: right; padding: 2px 8px; font-size: var(--text-xs); background: var(--accent-danger); color: white;">✕</button>
+            </div>
+            <details style="margin-top: var(--space-3);">
+                <summary style="font-size: var(--text-xs); color: var(--text-muted); cursor: pointer;">Or paste resume text manually</summary>
+                <textarea id="resume-text-input" class="form-textarea mt-2" placeholder="Paste your full resume text here..." style="min-height: 120px; font-size: var(--text-sm);"></textarea>
+            </details>
+        </div>
+
+        <!-- Cover Letter Upload -->
+        <div class="card mb-4">
+            <h3 class="card-title mb-4">💌 Cover Letter</h3>
+            <div id="cover-letter-drop-zone" class="drop-zone" ondrop="handleDrop(event, 'cover-letter')" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+                <input type="file" id="cover-letter-file-input" accept=".pdf,.docx,.doc,.txt" onchange="handleFileSelect(this, 'cover-letter')" style="display:none;">
+                <div class="drop-zone-content" id="cover-letter-drop-content">
+                    <span style="font-size: 2rem;">📂</span>
+                    <p style="margin: var(--space-2) 0 0; font-weight: 500;">Drag &amp; drop your cover letter here</p>
+                    <p class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">PDF, DOCX, or TXT — or <a href="#" onclick="document.getElementById('cover-letter-file-input').click(); return false;" style="color: var(--accent-primary);">browse files</a></p>
+                </div>
+            </div>
+            <div id="cover-letter-file-info" style="display:none; margin-top: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-sm);">
+                <span id="cover-letter-file-name"></span>
+                <button class="btn btn-sm" onclick="clearFile('cover-letter')" style="float: right; padding: 2px 8px; font-size: var(--text-xs); background: var(--accent-danger); color: white;">✕</button>
+            </div>
+            <details style="margin-top: var(--space-3);">
+                <summary style="font-size: var(--text-xs); color: var(--text-muted); cursor: pointer;">Or paste cover letter text manually</summary>
+                <textarea id="cover-letter-text-input" class="form-textarea mt-2" placeholder="Paste your cover letter text here..." style="min-height: 120px; font-size: var(--text-sm);"></textarea>
+            </details>
+        </div>
+
+        <!-- Job Description -->
+        <div class="card mb-4">
+            <h3 class="card-title mb-4">📋 Job Description</h3>
+            <textarea id="jd-input" class="form-textarea" placeholder="Paste the full job description here..." style="min-height: 180px;"></textarea>
+        </div>
+
+        <!-- Company / Role / City -->
+        <div class="card mb-4">
+            <h3 class="card-title mb-4">🏢 Job Details</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3);">
+                <div>
+                    <label class="form-label">Company Name *</label>
+                    <input type="text" id="company-name" class="form-input" placeholder="e.g., Stripe">
+                </div>
+                <div>
+                    <label class="form-label">Role Title *</label>
+                    <input type="text" id="role-title" class="form-input" placeholder="e.g., Software Engineer">
+                </div>
+            </div>
+            <div style="margin-top: var(--space-3);">
+                <label class="form-label">Target City <span class="text-muted" style="font-weight: 400;">(for sign-off)</span></label>
+                <input type="text" id="target-city" class="form-input" placeholder="e.g., Toronto (defaults to Halifax)">
+            </div>
+        </div>
+
+        <!-- Recipients -->
+        <div class="card mb-4">
+            <div class="flex-between mb-4">
+                <h3 class="card-title">👤 Recipients</h3>
+                <button id="add-recipient-btn" class="btn btn-sm btn-secondary" onclick="addRecipientRow()">+ Add Recipient</button>
+            </div>
+            <div id="recipients-list" style="display: flex; flex-direction: column; gap: var(--space-2);"></div>
+        </div>
+
+        <!-- Generate Button -->
+        <button class="btn btn-primary" onclick="runOutreachEmails()" style="width: 100%; padding: var(--space-3); font-size: var(--text-base); font-weight: 700;">
+            📧 Generate Outreach Emails
+        </button>
+    </div>
+
+    <!-- ===== RIGHT PANEL: OUTPUT ===== -->
+    <div>
+        <div class="card" id="email-output-card">
+            <div class="empty-state" id="email-empty-state">
+                <span style="font-size: 3rem; display: block; margin-bottom: var(--space-3);">📧</span>
+                <p>Upload your resume &amp; cover letter, paste the JD, add recipient(s), and click Generate.</p>
+                <p class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-2);">Each email is unique per recipient — deduplication is automatic.</p>
+            </div>
+            <div id="email-output" style="display: none;"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .drop-zone {
+        border: 2px dashed var(--border-subtle);
+        border-radius: var(--radius-md);
+        padding: var(--space-6);
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+        background: var(--bg-secondary);
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+        border-color: var(--accent-primary);
+        background: rgba(99, 102, 241, 0.05);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+    .drop-zone.has-file {
+        border-color: var(--accent-success);
+        border-style: solid;
+        background: rgba(34, 197, 94, 0.03);
+    }
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // ===== File handling =====
+    const selectedFiles = { resume: null, 'cover-letter': null };
+
+    function handleDragOver(e) {
+        e.preventDefault();
+        e.currentTarget.classList.add('drag-over');
+    }
+    function handleDragLeave(e) {
+        e.currentTarget.classList.remove('drag-over');
+    }
+    function handleDrop(e, type) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file) setFile(type, file);
+    }
+    function handleFileSelect(input, type) {
+        const file = input.files[0];
+        if (file) setFile(type, file);
+    }
+    function setFile(type, file) {
+        const validExts = ['.pdf', '.docx', '.doc', '.txt'];
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (!validExts.includes(ext)) {
+            showToast(`Unsupported format: ${ext}. Use PDF, DOCX, or TXT.`, 'error');
+            return;
+        }
+        selectedFiles[type] = file;
+        document.getElementById(`${type}-drop-zone`).classList.add('has-file');
+        document.getElementById(`${type}-drop-content`).innerHTML = `
+            <span style="font-size: 2rem;">✅</span>
+            <p style="margin: var(--space-2) 0 0; font-weight: 600; color: var(--accent-success);">${file.name}</p>
+            <p class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">${(file.size / 1024).toFixed(1)} KB — Click or drag to replace</p>
+        `;
+        document.getElementById(`${type}-file-info`).style.display = 'flex';
+        document.getElementById(`${type}-file-info`).style.alignItems = 'center';
+        document.getElementById(`${type}-file-info`).style.justifyContent = 'space-between';
+        document.getElementById(`${type}-file-name`).textContent = `📎 ${file.name}`;
+    }
+    function clearFile(type) {
+        selectedFiles[type] = null;
+        document.getElementById(`${type}-file-input`).value = '';
+        document.getElementById(`${type}-drop-zone`).classList.remove('has-file');
+        const emoji = type === 'resume' ? '📄' : '💌';
+        const label = type === 'resume' ? 'resume' : 'cover letter';
+        document.getElementById(`${type}-drop-content`).innerHTML = `
+            <span style="font-size: 2rem;">📂</span>
+            <p style="margin: var(--space-2) 0 0; font-weight: 500;">Drag & drop your ${label} here</p>
+            <p class="text-muted" style="font-size: var(--text-xs); margin-top: var(--space-1);">PDF, DOCX, or TXT — or <a href="#" onclick="document.getElementById('${type}-file-input').click(); return false;" style="color: var(--accent-primary);">browse files</a></p>
+        `;
+        document.getElementById(`${type}-file-info`).style.display = 'none';
+    }
+
+    // Click on drop zone = open file picker
+    document.getElementById('resume-drop-zone').addEventListener('click', function(e) {
+        if (e.target.tagName !== 'A') document.getElementById('resume-file-input').click();
+    });
+    document.getElementById('cover-letter-drop-zone').addEventListener('click', function(e) {
+        if (e.target.tagName !== 'A') document.getElementById('cover-letter-file-input').click();
+    });
+
+    // ===== Multi-Recipient =====
+    let recipientCounter = 0;
+
+    function addRecipientRow() {
+        const list = document.getElementById('recipients-list');
+        recipientCounter++;
+        const idx = recipientCounter;
+        const row = document.createElement('div');
+        row.className = 'recipient-row';
+        row.id = `recipient-row-${idx}`;
+        row.style.cssText = 'display: flex; gap: var(--space-2); align-items: flex-end; padding: var(--space-2) var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);';
+        row.innerHTML = `
+            <div style="flex: 1.2; min-width: 140px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Name *</label>
+                <input type="text" class="form-input rcpt-name" placeholder="e.g., Sarah Chen" style="font-size: var(--text-sm);">
+            </div>
+            <div style="flex: 1.5; min-width: 160px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Email</label>
+                <input type="email" class="form-input rcpt-email" placeholder="e.g., sarah@company.com" style="font-size: var(--text-sm);">
+            </div>
+            <div style="flex: 1.2; min-width: 140px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Title</label>
+                <input type="text" class="form-input rcpt-title" placeholder="e.g., Eng Manager" style="font-size: var(--text-sm);">
+            </div>
+            <div style="flex: 0.8; min-width: 120px;">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); display: block; margin-bottom: 2px;">Level</label>
+                <select class="form-input rcpt-category" style="padding: var(--space-2); font-size: var(--text-sm);">
+                    <option value="category_a">Manager / Lead</option>
+                    <option value="category_b">Director / VP</option>
+                    <option value="category_c">Recruiter</option>
+                </select>
+            </div>
+            <button type="button" onclick="removeRecipientRow('recipient-row-${idx}')" class="btn btn-sm" style="background: var(--accent-danger); color: white; padding: 6px 10px; border-radius: var(--radius-sm); flex-shrink: 0; margin-bottom: 1px;" title="Remove">✕</button>
+        `;
+        list.appendChild(row);
+    }
+
+    function removeRecipientRow(rowId) {
+        const list = document.getElementById('recipients-list');
+        const row = document.getElementById(rowId);
+        if (row && list.children.length > 1) {
+            row.remove();
+        } else if (list.children.length <= 1) {
+            showToast('At least one recipient is required.', 'error');
+        }
+    }
+
+    function getRecipients() {
+        const rows = document.querySelectorAll('#recipients-list .recipient-row');
+        const recipients = [];
+        rows.forEach(row => {
+            const name  = row.querySelector('.rcpt-name').value.trim();
+            const email = row.querySelector('.rcpt-email')?.value.trim() || '';
+            const title = row.querySelector('.rcpt-title').value.trim();
+            const category = row.querySelector('.rcpt-category').value;
+            if (name) {
+                recipients.push({ name, email, title, category });
+            }
+        });
+        return recipients;
+    }
+
+    // Add first recipient row on load
+    addRecipientRow();
+
+    // ===== Email Generation =====
+    let currentEmailDataList = [];
+    let activeEmailIdx = 0;
+
+    async function runOutreachEmails() {
+        const jd = document.getElementById('jd-input').value.trim();
+        const company = document.getElementById('company-name').value.trim();
+        const role = document.getElementById('role-title').value.trim();
+        const city = document.getElementById('target-city').value.trim();
+
+        if (!jd) return showToast('Please paste the job description.', 'error');
+        if (!company) return showToast('Please enter the company name.', 'error');
+        if (!role) return showToast('Please enter the role title.', 'error');
+
+        // Check resume source
+        const hasResumeFile = selectedFiles.resume !== null;
+        const hasResumeText = document.getElementById('resume-text-input').value.trim();
+        if (!hasResumeFile && !hasResumeText) {
+            return showToast('Please upload a resume file or paste resume text.', 'error');
+        }
+
+        const recipients = getRecipients();
+        if (recipients.length === 0) {
+            return showToast('At least one recipient name is required. Find actual names on LinkedIn — no name = no email.', 'error');
+        }
+        const emptyNames = recipients.filter(r => !r.name);
+        if (emptyNames.length > 0) {
+            return showToast('Every recipient must have a name. Find the actual person\'s name on LinkedIn first.', 'error');
+        }
+
+        currentEmailDataList = [];
+        activeEmailIdx = 0;
+        const usedSignals = [];
+        const usedSubjects = [];
+        const usedBodies = [];
+        const usedProofs = [];
+        let totalCost = 0;
+
+        showLoading(`Generating cold outreach emails for ${recipients.length} recipient${recipients.length > 1 ? 's' : ''}...`);
+
+        try {
+            for (let i = 0; i < recipients.length; i++) {
+                const r = recipients[i];
+                showLoading(`Generating email ${i + 1} of ${recipients.length} — ${r.name}...`);
+
+                // Build FormData for multipart upload
+                const formData = new FormData();
+
+                // Resume: file or text
+                if (hasResumeFile) {
+                    formData.append('resume_file', selectedFiles.resume);
+                } else {
+                    formData.append('resume_text', hasResumeText);
+                }
+
+                // Cover letter: file or text
+                if (selectedFiles['cover-letter']) {
+                    formData.append('cover_letter_file', selectedFiles['cover-letter']);
+                } else {
+                    const clText = document.getElementById('cover-letter-text-input').value.trim();
+                    if (clText) formData.append('cover_letter_text', clText);
+                }
+
+                formData.append('jd_text', jd);
+                formData.append('company_name', company);
+                formData.append('role_title', role);
+                formData.append('recipient_name', r.name);
+                formData.append('recipient_title', r.title || '');
+                formData.append('recipient_category', r.category || 'category_a');
+                formData.append('target_city', city);
+                formData.append('previously_used_signals', JSON.stringify(usedSignals));
+                formData.append('previously_used_subjects', JSON.stringify(usedSubjects));
+                formData.append('previously_used_bodies', JSON.stringify(usedBodies));
+                formData.append('previously_used_proofs', JSON.stringify(usedProofs));
+
+                const res = await fetch('/outreach/api/generate', {
+                    method: 'POST',
+                    body: formData,
+                    // No Content-Type header — browser sets it with boundary for FormData
+                });
+
+                if (!res.ok) {
+                    let errMsg = `Failed for ${r.name} (${res.status})`;
+                    try {
+                        const errData = await res.json();
+                        if (errData && errData.error) errMsg = errData.error;
+                    } catch(e) {}
+                    showToast(errMsg, 'error');
+                    continue;
+                }
+
+                const data = await res.json();
+                if (data && data.body) {
+                    data._recipient = r;
+                    currentEmailDataList.push(data);
+                    if (data.signal_used) usedSignals.push(data.signal_used);
+                    if (data.subject) usedSubjects.push(data.subject);
+                    if (data.body) usedBodies.push(data.body);
+                    if (data.proof_point) usedProofs.push(data.proof_point);
+                    totalCost += data.cost_usd || 0;
+                } else {
+                    showToast(`${r.name}: ${(data && data.error) || 'Unknown error'}`, 'error');
+                }
+            }
+
+            hideLoading();
+
+            if (currentEmailDataList.length === 0) {
+                return showToast('No emails were generated. Check errors above.', 'error');
+            }
+
+            updateCost(totalCost);
+            renderEmailResults();
+            showToast(`Generated ${currentEmailDataList.length} unique email${currentEmailDataList.length > 1 ? 's' : ''}!`, 'success');
+        } catch (e) {
+            hideLoading();
+            showToast('API error: ' + e.message, 'error');
+        }
+    }
+
+    function renderEmailResults() {
+        document.getElementById('email-empty-state').style.display = 'none';
+        const container = document.getElementById('email-output');
+        container.style.display = 'block';
+        let html = '';
+
+        // Recipient tabs (only show if multiple)
+        if (currentEmailDataList.length > 1) {
+            html += '<div style="display: flex; gap: var(--space-1); margin-bottom: var(--space-4); flex-wrap: wrap;">';
+            currentEmailDataList.forEach((d, i) => {
+                const name = d._recipient?.name || `Recipient ${i + 1}`;
+                const firstName = name.split(' ')[0];
+                html += `<button class="btn btn-sm ${i === activeEmailIdx ? 'btn-primary' : 'btn-secondary'}" onclick="switchEmailTab(${i})" style="font-size: var(--text-xs);">${firstName}</button>`;
+            });
+            html += '</div>';
+        }
+
+        // Action buttons
+        html += `
+            <div class="flex-between mb-4">
+                <h3 class="card-title">📧 Cold Outreach Email${currentEmailDataList.length > 1 ? ` (${activeEmailIdx + 1}/${currentEmailDataList.length})` : ''}</h3>
+                <div class="flex gap-4" style="flex-wrap: wrap;">
+                    <button class="btn btn-sm btn-primary" onclick="copyEmailText()" title="Copy this email">📋 Copy</button>
+                    <button class="btn btn-sm btn-secondary" onclick="downloadEmailJSON()" title="Download all emails as JSON">${currentEmailDataList.length > 1 ? '💾 Download All (.json)' : '💾 Download .json'}</button>
+                </div>
+            </div>
+        `;
+
+        const data = currentEmailDataList[activeEmailIdx];
+        const subject = data.subject || '';
+        const body = data.body || '';
+        const refNum = data.ref_number || 'REFENUM';
+        const wordCount = data.word_count || '';
+        const signalUsed = data.signal_used || '';
+        const proofPoint = data.proof_point || '';
+        const catLabel = data.recipient_category === 'category_b' ? 'Director-level (strategic)' :
+                         data.recipient_category === 'category_c' ? 'Recruiter (quick qualification)' :
+                         'Manager-level (technical)';
+        const skills = data.skills_highlighted || [];
+        const metrics = data.metrics_used || [];
+        const recipientName = data._recipient?.name || '';
+        const recipientTitle = data._recipient?.title || '';
+
+        // Meta info
+        let metaHtml = '<div style="margin-bottom: var(--space-4); padding: var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-sm);">';
+        metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>To:</strong> ${recipientName}${recipientTitle ? ', ' + recipientTitle : ''}</div>`;
+        if (wordCount) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Word Count:</strong> ${wordCount} (body only) <span style="color: ${wordCount <= 180 ? 'var(--accent-success)' : 'var(--accent-danger)'}">${wordCount <= 180 ? '✅ Within target' : '⚠️ Over target'}</span></div>`;
+        metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Level:</strong> ${catLabel}</div>`;
+        if (refNum && refNum !== 'REFENUM') metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Ref #:</strong> ${refNum}</div>`;
+        if (signalUsed) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>🎯 Signal:</strong> ${signalUsed}</div>`;
+        if (proofPoint) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>📊 Proof:</strong> ${proofPoint}</div>`;
+        if (skills.length) metaHtml += `<div style="margin-bottom: var(--space-2);"><strong>Skills:</strong> ${skills.join(', ')}</div>`;
+        if (metrics.length) metaHtml += `<div><strong>Metrics:</strong> ${metrics.join(', ')}</div>`;
+        metaHtml += '</div>';
+        html += metaHtml;
+
+        // Subject line (editable)
+        html += `
+            <div style="margin-bottom: var(--space-4); padding: var(--space-3); background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary)); border-radius: var(--radius-sm); border-left: 3px solid var(--accent-primary); position: relative;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2);">
+                    <span style="font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Subject Line</span>
+                    <span style="font-size: var(--text-xs); color: var(--text-muted); opacity: 0.6;">✏️ Click to edit</span>
+                </div>
+                <div id="email-subject" contenteditable="true" style="font-weight: 600; color: var(--text-primary); font-size: var(--text-base); outline: none; cursor: text; padding: var(--space-2); border-radius: var(--radius-xs); border: 1px solid transparent; transition: border-color 0.2s, box-shadow 0.2s;" onfocus="this.style.borderColor='var(--accent-primary)'; this.style.boxShadow='0 0 0 2px rgba(99,102,241,0.15)';" onblur="this.style.borderColor='transparent'; this.style.boxShadow='none';">${subject}</div>
+            </div>
+        `;
+
+        // Body (editable)
+        html += `<div style="margin-bottom: var(--space-2); display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Email Body</span>
+            <span style="font-size: var(--text-xs); color: var(--text-muted); opacity: 0.6;">✏️ Click to edit</span>
+        </div>`;
+        html += `<div id="email-body" contenteditable="true" style="white-space: pre-wrap; line-height: 1.8; color: var(--text-secondary); padding: var(--space-4); background: var(--bg-primary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); outline: none; min-height: 200px; cursor: text; transition: border-color 0.2s, box-shadow 0.2s;" onfocus="this.style.borderColor='var(--accent-primary)'; this.style.boxShadow='0 0 0 2px rgba(99,102,241,0.15)';" onblur="this.style.borderColor='var(--border-subtle)'; this.style.boxShadow='none';">${body}</div>`;
+
+        // Footer
+        html += `
+            <div style="margin-top: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-tertiary); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text-muted);">
+                <strong>Structure:</strong> Hook (JD inference) → Proof (1 metric) → Bridge (domain transfer) → Ask (15-min chat) — Under 180 words, unique angle per recipient.
+            </div>
+        `;
+
+        container.innerHTML = html;
+    }
+
+    function switchEmailTab(idx) {
+        syncEditsToData();
+        activeEmailIdx = idx;
+        renderEmailResults();
+    }
+
+    function syncEditsToData() {
+        if (currentEmailDataList.length === 0) return;
+        const subjectEl = document.getElementById('email-subject');
+        const bodyEl = document.getElementById('email-body');
+        if (subjectEl) currentEmailDataList[activeEmailIdx].subject = subjectEl.innerText.trim();
+        if (bodyEl) currentEmailDataList[activeEmailIdx].body = bodyEl.innerText.trim();
+    }
+
+    function copyEmailText() {
+        if (currentEmailDataList.length === 0) return showToast('No email to copy.', 'error');
+        syncEditsToData();
+        const data = currentEmailDataList[activeEmailIdx];
+        const subjectEl = document.getElementById('email-subject');
+        const bodyEl = document.getElementById('email-body');
+        const subject = subjectEl ? subjectEl.innerText : (data.subject || '');
+        const body = bodyEl ? bodyEl.innerText : (data.body || '');
+        const fullText = `Subject: ${subject}\n\n${body}`;
+        navigator.clipboard.writeText(fullText)
+            .then(() => showToast(`Email for ${data._recipient?.name || 'recipient'} copied!`, 'success'))
+            .catch(() => showToast('Failed to copy — try selecting manually.', 'error'));
+    }
+
+    async function downloadEmailJSON() {
+        if (currentEmailDataList.length === 0) return showToast('No emails to download.', 'error');
+        syncEditsToData();
+
+        showLoading('Preparing download...');
+        try {
+            const allEmails = currentEmailDataList.map(d => ({
+                subject: d.subject,
+                body: d.body,
+                ref_number: d.ref_number,
+                company_name: d.company_name,
+                role_title: d.role_title,
+                recipient_name: d._recipient?.name || d.recipient_name || '',
+                recipient_email: d._recipient?.email || d.recipient_email || '',
+                recipient_title: d._recipient?.title || d.recipient_title || '',
+                recipient_category: d.recipient_category,
+                signal_used: d.signal_used || '',
+                word_count: d.word_count || 0,
+            }));
+
+            const res = await fetch('/outreach/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    emails: allEmails,
+                    company_name: allEmails[0]?.company_name || '',
+                    role_title: allEmails[0]?.role_title || '',
+                })
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('json')) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const disposition = res.headers.get('Content-Disposition');
+                const match = disposition && disposition.match(/filename="?([^"]+)"?/);
+                a.download = match ? match[1] : 'outreach_emails.json';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                hideLoading();
+                showToast(`Downloaded ${allEmails.length} email${allEmails.length > 1 ? 's' : ''} as JSON!`, 'success');
+            } else {
+                const data = await res.json();
+                hideLoading();
+                showToast(data.error || 'Download failed.', 'error');
+            }
+        } catch (e) {
+            hideLoading();
+            showToast('Download failed: ' + e.message, 'error');
+        }
+    }
+</script>
+{% endblock %}

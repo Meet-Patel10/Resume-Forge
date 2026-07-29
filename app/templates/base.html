@@ -36,10 +36,18 @@
                 <a href="{{ url_for('applications.applications_page') }}" class="nav-link {% if request.endpoint and 'applications' in request.endpoint %}active{% endif %}">
                     <span class="nav-icon">📬</span> Applications
                 </a>
-                <a href="{{ url_for('followup.followup_page') }}" class="nav-link {% if request.endpoint and 'followup' in request.endpoint %}active{% endif %}">
+                <a href="{{ url_for('followup.followup_page') }}" class="nav-link {% if request.endpoint and request.endpoint.startswith('followup.') %}active{% endif %}">
                     <span class="nav-icon">📩</span> Follow-Up Emails
                 </a>
+                <a href="{{ url_for('second_followup.second_followup_page') }}" class="nav-link {% if request.endpoint and request.endpoint.startswith('second_followup.') %}active{% endif %}">
+                    <span class="nav-icon">📩</span> 2nd Follow-Up
+                </a>
+                <a href="{{ url_for('outreach.outreach_page') }}" class="nav-link {% if request.endpoint and 'outreach' in request.endpoint %}active{% endif %}">
+                    <span class="nav-icon">📧</span> Outreach Emails
+                </a>
             </nav>
+
+
             <div style="padding: 0 var(--space-4); margin-top: auto; display: flex; flex-direction: column; gap: var(--space-3);">
                 <!-- Cost Tracker -->
                 <div class="card" style="padding: var(--space-3); text-align: center;">

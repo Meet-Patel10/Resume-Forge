@@ -250,7 +250,7 @@ def render_latex(resume_data):
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 
-\titleformat{\section}{\large\bfseries\uppercase}{}{0em}{}[\titlerule]
+\titleformat{\section}{\fontsize{11pt}{12pt}\bfseries\uppercase}{}{0em}{}[\titlerule]
 \titlespacing{\section}{0pt}{""" + section_before + r"""}{""" + section_after + r"""}
 
 \setlength{\parindent}{0pt}
@@ -297,8 +297,15 @@ def render_latex(resume_data):
     latex += "  {\\LARGE \\textbf{" + name + "}} \\\\[0pt]\n"
     latex += "  \\small\n"
     latex += "  " + contact_line + "\n"
+
+    # Target Role Headline (Option 1 — injected by title_injection_mode='headline')
+    target_role = header.get('target_role', '')
+    if target_role and target_role.lower() not in ('null', 'none', ''):
+        latex += "  \\\\[2pt]\n"
+        latex += "  {\\small\\textit{" + s(target_role) + "}}\n"
+
     latex += "\\end{center}\n"
-    latex += "\\vspace{-7pt}\n"
+    latex += "\\vspace{-10pt}\n"
 
     # ---- SUMMARY (matches template: \small + blank line + text) ----
     summary = resume_data.get('summary', '')

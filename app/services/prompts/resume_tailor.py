@@ -5,72 +5,9 @@ The tailored resume should READ like the master resume — same voice, same stru
 
 ---
 
-## SECTION 1: SUMMARY — HONEST POSITIONING (NOT A KEYWORD LIST)
+## SECTION 1: SUMMARY — DO NOT CHANGE (LOCKED)
 
-The summary tells the recruiter who this candidate ACTUALLY IS. It is NOT a keyword dumping ground. Follow these 5 steps IN ORDER:
-
-### STEP A — Pull only the must-haves from the JD
-- Identify ONLY the requirements that REPEAT or sit in the "must-have" / "required" section of the JD.
-- NOT every word in the posting — the 3-4 things they clearly care about most.
-- If a skill appears once in a "nice-to-have" list, it is NOT a must-have.
-- Weight matters: the FIRST requirement listed is what they care about MOST. Don't waste summary space on bonus/nice-to-have items.
-
-### STEP B — Filter each one through a provability test (HARD FILTER)
-- For EVERY must-have from Step A, search the Experience and Projects bullets.
-- Ask: "Is there a SPECIFIC BULLET POINT on this page that proves the candidate has done this?"
-- If YES → it can go in the summary.
-- If NO (the skill would ONLY exist in the summary) → it DOES NOT go in the summary. Period.
-- The summary should POINT AT evidence already on the page, not introduce new claims.
-- This is a HARD filter — no exceptions, no "close enough", no inferring.
-- Example: JD wants "React" but the candidate's experience bullets only mention Angular/Vue.js → do NOT put React in the summary. The candidate's real frontend experience is Angular/Vue.js.
-- Example: JD wants "Node.js" but no bullet mentions Node.js → do NOT put Node.js in the summary.
-
-### STEP C — Write the summary as honest positioning (2-3 sentences max)
-- **Sentence 1**: Who you are + how much experience + in what domain. Ground this in the candidate's STRONGEST, MOST RECENT, MOST SUBSTANTIAL experience — not in what the JD wants.
-  - If the candidate is primarily a backend engineer, say "backend engineer" — don't write "full-stack engineer" just because the JD says full-stack.
-  - Mention the actual domain: "production connected-vehicle platform" not "enterprise environments".
-  - Include 1-2 REAL technologies the candidate actually used most: "building Spring Boot microservices" not "leveraging modern frameworks".
-- **Sentence 2**: The candidate's single strongest proof point that MAPS to what the JD actually needs — with a concrete detail (company name, number, or specific outcome).
-  - This must reference something a recruiter can FIND in the Experience or Projects section.
-- **Optional Sentence 3 (ONLY if needed for honest bridging)**: If the candidate's core experience doesn't fully match the JD, use this sentence to honestly bridge the gap.
-  - Example: "Frontend experience includes Vue.js and React Native UI work, and I've since built a full end-to-end web application with a JavaScript frontend solo."
-  - This sentence reframes the gap as growth, not by lying about skills.
-- Do NOT exceed 3 sentences. The summary is a paragraph, not a page.
-
-### STEP D — Bridge honestly for missing skills (CRITICAL)
-- If the JD wants something the candidate genuinely does NOT have, DO NOT claim it.
-- Instead, reframe the candidate's REAL strength as an asset:
-  - JD wants "React" but candidate has Angular/Vue.js → write about frontend framework experience with Vue.js/Angular, do NOT claim React.
-  - JD wants "Node.js" but candidate's backend is Java/Spring Boot → write about backend API experience, do NOT claim Node.js.
-  - JD wants "AWS EC2/SQS" but candidate only used AWS Bedrock → do NOT imply infrastructure experience; mention the specific AWS service used.
-- Overclaiming the fit doesn't get you further — it just sets up a harder interview.
-- The honest pitch is always better: "strong backend engineer who wants to grow into full-stack" beats "full-stack engineer" when every bullet is backend work.
-
-### STEP E — Read-aloud test + template pattern detection
-- Read the summary out loud. If it doesn't sound like a sentence a real person would say, it's a template artifact — rewrite it.
-- **BANNED PATTERNS** (if you see these in your output, you have FAILED — rewrite immediately):
-  - "...including X, Y, and Z. Experienced with A, B, and C." ← this is the #1 AI template pattern. BANNED.
-  - "...with expertise in [comma-separated list of 5+ technologies]" ← keyword list disguised as a sentence. BANNED.
-  - "...specializing in [broad domain], [broad domain], and [broad domain]" ← too generic. BANNED.
-  - "...seeking a challenging role to leverage..." ← meaningless filler. BANNED.
-  - "...proficient in [list]. Experienced in [list]." ← two lists is not a summary. BANNED.
-- If the summary has more than 4 technology names, it's a keyword list — rewrite.
-- If the summary could apply to any engineer by swapping out the tech names, it's generic — rewrite.
-
-### SUMMARY EXAMPLES:
-✅ GOOD: "Software engineer with two years of experience building and maintaining backend microservices for a production connected-vehicle platform at Capgemini — designing REST APIs, improving CI/CD pipelines, and troubleshooting distributed production systems. Frontend experience includes React Native and Vue.js UI work at Alian Software, and I've since built a full end-to-end project (Flask, AWS Bedrock, JavaScript frontend) solo."
-✅ GOOD: "Backend engineer with hands-on experience maintaining three Spring Boot microservices processing vehicle events across US and European production environments at Capgemini. Managed ~40 production incidents monthly including root cause analysis, SLA monitoring, and cross-team coordination with L1/L3 support and BMW engineers."
-❌ BAD: "Results-driven software engineer with expertise in Java, Python, AWS, Docker, Kubernetes, CI/CD, microservices, RESTful APIs, Agile, and cloud-native development seeking a challenging role to leverage skills."
-❌ BAD: "Dynamic and detail-oriented professional specializing in full-stack development, DevOps, cloud computing, and distributed systems with strong problem-solving and communication skills."
-❌ BAD: "Software engineer with experience including API design, scalability and JavaScript. Experienced with TypeScript, React and Node.js." ← Template pattern: "including X, Y and Z. Experienced with A, B and C."
-
-### WHAT THE SUMMARY MUST NOT DO:
-- DO NOT list more than 4 technologies
-- DO NOT use filler phrases: "results-driven", "detail-oriented", "dynamic", "passionate", "leveraging", "proficient in"
-- DO NOT claim skills not provable in the Experience or Projects sections
-- DO NOT use the "including X, Y, and Z. Experienced with A, B, and C." template pattern
-- DO NOT claim tools the candidate has never used (if no bullet mentions Node.js, the summary cannot mention Node.js)
-- DO NOT exceed 3 sentences
+The summary section is completely LOCKED. You MUST copy the original summary from the Master Resume character-for-character without any changes. DO NOT rewrite it, DO NOT optimize it, DO NOT add keywords to it. Your output summary must exactly match the input summary.
 
 ## SMART KEYWORD EXTRACTION: 4-FILTER METHOD (MANDATORY — DO THIS BEFORE ANY TAILORING)
 
@@ -353,7 +290,7 @@ Result: "Designed responsive front-end interfaces using React and TypeScript for
 
 ## COVERAGE TARGETS (GUIDED BY 4-FILTER KEYWORD PLAN)
 - **Skills section**: ONLY keywords that survived all 4 filters with keyword_type = "HARD_SKILL" or "TOOL_PLATFORM" and match_level = "STRONG_MATCH" or "PARTIAL_MATCH". Must be CONSISTENT with Experience section.
-- **Summary**: 2-3 sentences following the 5-step method. Only keywords with "RESUME_SUMMARY" in placement_targets AND backed by a bullet. Honest positioning, NO template patterns.
+- **Summary**: LOCKED. Do not change.
 - **Experience**: Only keywords with "RESUME_EXPERIENCE_BULLETS" in placement_targets, injected contextually — max 1-3 words appended per bullet. Titles are IMMUTABLE. Max 4 mentions of any keyword across the entire resume.
 - **Projects**: NO changes — exact copy from master resume
 - **Education**: NO changes — exact copy from master resume
@@ -369,11 +306,100 @@ When adding JD keywords, use the EXACT term from the JD:
 - If JD says "CI/CD" → write "CI/CD", NOT "automated deployment"
 - If JD says "machine learning" → write "machine learning", NOT "ML" (unless JD uses both)
 
-## GRAMMAR & SPELLING — MANDATORY
-- Fix spelling errors ONLY if they exist in the original (e.g., "recieve" → "receive")
-- When injecting keywords, ensure the resulting sentence is grammatically correct
-- Use PAST TENSE for all completed work, PRESENT TENSE only for current roles
-- Professional tone — no first person ("I", "my", "we")
+## GRAMMAR & SPELLING — MANDATORY FINAL-PASS AUDIT (ZERO-TOLERANCE)
+
+Your output resume MUST be free of ALL grammatical errors and spelling mistakes. This is non-negotiable. A single typo or grammar error makes the resume look unprofessional and can trigger an instant rejection from a human reviewer.
+
+### MANDATORY CHECKS — Run these on EVERY line of output before finalizing:
+
+**1. SPELLING CHECK (ZERO TOLERANCE)**
+- Scan every word in every bullet, the summary, every skill name, every project description.
+- Common resume misspellings to watch for:
+  - "recieve" → "receive", "occured" → "occurred", "seperate" → "separate"
+  - "enviroment" → "environment", "managment" → "management"
+  - "developement" → "development", "maintainence" → "maintenance"
+  - "implimented" → "implemented", "achived" → "achieved"
+  - "intergration" → "integration", "accross" → "across"
+  - "utilzing" → "utilizing", "optmized" → "optimized"
+  - "scaleable" → "scalable", "deploied" → "deployed"
+- If the master resume contains a misspelling, FIX IT in the output. Do not preserve typos.
+- Technology names must use correct capitalization: "JavaScript" not "Javascript", "TypeScript" not "Typescript", "GitHub" not "Github", "PostgreSQL" not "Postgresql", "MongoDB" not "Mongodb", "Node.js" not "node.js", "macOS" not "MacOS".
+
+**2. GRAMMAR CHECK (ZERO TOLERANCE)**
+- **Articles**: Check every use of "a" vs "an". Use "an" before vowel sounds: "an API", "an ML pipeline", "an AWS service". Use "a" before consonant sounds: "a REST API", "a user", "a university".
+  - COMMON ERROR: "a application" → "an application", "a engineer" → "an engineer", "a API" → "an API"
+- **Subject-verb agreement**: Singular subjects take singular verbs. "The system processes" not "The system process".
+- **Tense consistency**:
+  - ALL past roles: PAST TENSE ("Developed", "Built", "Managed")
+  - Current role ONLY: PRESENT TENSE ("Develop", "Build", "Manage")
+  - Do NOT mix tenses within a single experience entry.
+- **Parallel structure**: Bullet points in the same section should follow the same grammatical pattern. If bullets start with past-tense verbs, ALL bullets start with past-tense verbs.
+- **Dangling modifiers**: "Using Docker, the application was deployed" → "Deployed the application using Docker"
+- **Run-on sentences**: Each bullet should be one clear statement. No comma splices.
+- **Preposition errors**: "resulted in" not "resulted to", "responsible for" not "responsible of", "collaborated with" not "collaborated along"
+
+**3. PUNCTUATION CHECK**
+- No trailing periods on bullet points (resume convention — bullets are fragments, not sentences)
+- Consistent use of Oxford comma within a single bullet if listing items
+- No double spaces
+- Proper use of hyphens in compound adjectives: "cloud-based" not "cloud based" (when used before a noun)
+
+**4. INJECTED KEYWORD GRAMMAR**
+- When you append keywords to existing bullets, re-read the FULL resulting sentence to verify it is grammatically correct.
+  - ✅ "Built REST APIs using Spring Boot with microservices architecture"
+  - ❌ "Built REST APIs using Spring Boot microservices architecture with" (dangling preposition)
+  - ❌ "Built REST APIs, microservices architecture, Spring Boot" (comma-separated keyword dump — not a sentence)
+- Every injected keyword must flow naturally in the sentence. If adding a keyword creates an awkward or ungrammatical sentence, do NOT add it — put it in the Skills section instead.
+
+**5. FINAL READ-THROUGH**
+- Before outputting the JSON, mentally read every bullet point, the summary, and every skill category name.
+- If ANY line contains a spelling error, grammar mistake, or awkward phrasing, FIX IT.
+- A resume with perfect grammar and 5 fewer keywords beats a resume with 5 more keywords and grammar errors. Quality over quantity.
+
+## NEGATIVE PHRASES & CLICHÉS — BANNED (ZERO TOLERANCE)
+
+Your output MUST NOT contain any of the following clichés, buzzwords, or negative phrases. These are resume filler that hiring managers and ATS systems flag as low-quality. If any appear in the master resume bullets, REPLACE them with concrete, specific action verbs or remove them entirely.
+
+### BANNED PHRASES (if you write any of these, you have FAILED):
+- "results-driven" → REMOVE (show results with metrics instead)
+- "detail-oriented" → REMOVE (prove it with a specific bullet)
+- "dynamic" → REMOVE
+- "self-starter" → REMOVE
+- "team player" → Replace with specific collaboration: "Collaborated with 3-person team to..."
+- "go-getter" → REMOVE
+- "think outside the box" → REMOVE
+- "synergy" / "synergize" → REMOVE
+- "leverage" (as a verb) → Replace with "use", "apply", or "implement"
+- "passionate about" → REMOVE
+- "proven track record" → Replace with specific achievement
+- "strong work ethic" → REMOVE
+- "responsible for" → Replace with action verb: "Managed", "Owned", "Led"
+- "duties included" → Replace with action verb
+- "hardworking" → REMOVE
+- "excellent communication skills" → Replace with specific: "Presented to stakeholders", "Wrote technical documentation"
+- "highly motivated" → REMOVE
+- "fast learner" → REMOVE (prove it with ramp-up time instead)
+- "proactive" → REMOVE
+- "innovative" → REMOVE (show the innovation in the bullet)
+- "strategic thinker" → REMOVE
+- "results-oriented" → REMOVE
+- "out-of-the-box" → REMOVE
+- "value-add" / "value-added" → REMOVE
+- "best-in-class" → REMOVE
+- "cutting-edge" → REMOVE
+- "game-changer" → REMOVE
+- "guru" / "ninja" / "rockstar" → REMOVE
+- "seasoned professional" → REMOVE
+- "assisted with" → Replace with stronger verb: "Supported", "Contributed to", "Executed"
+- "helped" → Replace with specific action: "Facilitated", "Enabled", "Coordinated"
+- "various" / "numerous" → Replace with specific count or name: "5 microservices", "AWS, Docker, Kubernetes"
+- "etc." → REMOVE (list the actual items)
+- "and more" → REMOVE (list the actual items)
+
+### CLICHÉ DETECTION RULE:
+- Before outputting, scan EVERY bullet point and the summary for any phrase from the banned list above.
+- If found: replace with a concrete, specific alternative OR remove the phrase entirely.
+- A bullet with a cliché is WORSE than a bullet without one — clichés make the resume look template-generated.
 
 ## ZERO HALLUCINATION — ABSOLUTE RULE
 You are tailoring an existing resume, NOT inventing a new one. Every single claim in your output must trace back to something the candidate ACTUALLY wrote in the master resume.
@@ -439,9 +465,10 @@ Respond ONLY with valid JSON in this exact structure:
     "email": "<EXACT copy>",
     "linkedin": "<EXACT copy or null>",
     "github": "<EXACT copy or null>",
-    "tagline": "<EXACT copy or null>"
+    "tagline": "<EXACT copy or null>",
+    "target_role": "<Target Role headline if title_injection_mode is 'headline', otherwise null>"
   },
-  "summary": "<2-3 sentences following the 5-step method — honest positioning, provable claims only, NO template patterns>",
+  "summary": "<EXACT copy of the summary from the master resume. DO NOT CHANGE A SINGLE WORD.>",
   "skills": [
     {
       "category": "<e.g. Languages, Frameworks & Libraries, Tools & Platforms, Concepts>",
@@ -520,7 +547,7 @@ Respond ONLY with valid JSON in this exact structure:
 - Education: COPY EXACTLY — DO NOT modify
 - Certifications: COPY EXACTLY — DO NOT modify
 - Skills section: POPULATED FROM 4-FILTER KEYWORD PLAN. Only keywords that survived all 4 filters with keyword_type = "HARD_SKILL" or "TOOL_PLATFORM". Suppress competing technologies UNLESS they appear in Experience bullets. ZERO duplicates. ZERO unbacked claims.
-- Summary: 2-3 sentences, honest positioning. Only keywords with "RESUME_SUMMARY" in placement_targets AND backed by a bullet. BANNED: "including X, Y and Z. Experienced with A, B and C." pattern.
+- Summary: LOCKED. Must be an exact copy of the Master Resume summary.
 - Action verbs: KEEP the original action verb from each bullet — do NOT change it
 - Experience entries in STRICT reverse-chronological order (same as master resume)
 - Skills-Experience CONSISTENCY: If a technology appears in Experience bullets, it MUST remain in Skills. If NO bullet backs a skill, it MUST NOT appear in Skills.
@@ -583,7 +610,9 @@ def _extract_summary(resume_text):
 
 
 def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
-                         critique_data=None, keyword_data=None, jd_analysis=None):
+                         critique_data=None, keyword_data=None, jd_analysis=None,
+                         rag_context=None, title_injection_mode='none',
+                         role_title=''):
     """Assemble the user message for the tailor prompt with all context."""
     # figure out section order so we can tell the AI to preserve it
     section_order = _detect_section_order(resume_text)
@@ -730,19 +759,58 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
         all_hard = jd_analysis['hard_skills']
         hard_skills_directive = f"\n\n## JD HARD SKILLS REFERENCE (PROVABILITY REQUIRED)\nThe following {len(all_hard)} skills were extracted from the JD. Add each to the Skills section ONLY IF the candidate has a bullet in Experience or Projects that proves they actually used it. If a skill has NO backing bullet, do NOT add it — list it in keywords_skipped instead:\n" + ", ".join(all_hard)
 
+    # Build RAG context block (if RAG enhancement was successful)
+    rag_context_block = ""
+    if rag_context and isinstance(rag_context, str) and len(rag_context) > 50:
+        rag_context_block = f"\n\n{rag_context}"
+
     # extract original summary to give AI explicit injection base
     original_summary = _extract_summary(resume_text)
     summary_directive = ""
     if original_summary:
         summary_directive = f"""
 
-## ORIGINAL SUMMARY (REFERENCE ONLY — DO NOT COPY-PASTE)
+## ORIGINAL SUMMARY (LOCKED)
 The candidate's current summary is:
 \"{original_summary}\"
 
-Your task: Write a NEW 2-3 sentence summary following the 5-step method (Steps A through E in the system prompt). Ground it in the candidate's ACTUAL experience, not in what the JD wants. Use honest positioning. Every technology mentioned must be backed by an Experience or Projects bullet. Do NOT use the template pattern "including X, Y and Z. Experienced with A, B and C." — that is BANNED.
+Your task: You MUST copy this summary character-for-character into the tailored resume. DO NOT change a single word. The summary section is LOCKED."""
 
-**CRITICAL: Experience job titles are IMMUTABLE. The JD role title goes in the summary ONLY, never in Experience entries.**"""
+    # Build title injection directive
+    title_injection_directive = ""
+    title_injection_rule = ""
+    if title_injection_mode == 'headline' and role_title:
+        title_injection_directive = f"""
+
+## TITLE INJECTION — TARGET ROLE HEADLINE
+The user has selected Option 1: Target Role Headline.
+You MUST add a "target_role" field to the header JSON with the EXACT job title from the JD: "{role_title}"
+This will be rendered as a centered headline below the contact info on the resume.
+Do NOT modify the candidate's name or contact details. Just add this one field.
+"""
+        title_injection_rule = f'13. TARGET ROLE HEADLINE: Set header.target_role to "{role_title}" (exact JD title).'
+    elif title_injection_mode == 'clarify' and role_title:
+        title_injection_directive = f"""
+
+## TITLE INJECTION — CLARIFYING TITLES IN EXPERIENCE
+The user has selected Option 2: Clarifying Titles.
+For each role in the Experience section where the responsibilities plausibly align with the target job "{role_title}":
+- Append a parenthetical to the title using one of these patterns:
+  Pattern A: "[ORIGINAL_TITLE] ({role_title} responsibilities)"
+  Pattern B: "[ORIGINAL_TITLE] (Role equivalent to {role_title})"
+  Pattern C: "[ORIGINAL_TITLE] ([Short Functional Description] – equivalent to {role_title})"
+
+Rules:
+- The ORIGINAL title must remain at the start, unchanged.
+- Parenthetical must be 15 words or fewer.
+- Do NOT add seniority words (Senior, Lead, Manager) unless already in the original title.
+- Only modify titles where responsibilities plausibly align — leave other titles unchanged.
+- Do NOT add any new experience entries.
+- Set header.target_role to null (no headline for this option).
+
+IMPORTANT: This OVERRIDES the immutable titles rule for this specific modification ONLY. The original title text before the parenthetical must still be character-for-character identical.
+"""
+        title_injection_rule = f'13. CLARIFYING TITLES: For aligned experience entries, append "(Role equivalent to {role_title})" or similar parenthetical to the title. Original title text before parenthetical is still immutable.'
 
     return f"""## Target Job Description
 {jd_text}
@@ -754,17 +822,100 @@ Your task: Write a NEW 2-3 sentence summary following the 5-step method (Steps A
 {jd_context}
 {critique_context}
 {keyword_context}
+{rag_context_block}
 {hard_skills_directive}
+{title_injection_directive}
 
 TAILOR this resume for the job above. STRICT RULES:
 1. 4-FILTER KEYWORD EXTRACTION: Run all 4 filters (Priority → Role-Definition → Honesty/Match → Density/Placement) BEFORE tailoring any section. Only keywords that survive all 4 filters get placed.
-2. SUMMARY: Follow the 5-step method (Steps A-E). Write 2-3 sentences max. Ground it in the candidate's ACTUAL strongest experience. Every technology must be backed by a bullet. BANNED pattern: "including X, Y and Z. Experienced with A, B and C."
+2. SUMMARY: The summary section is LOCKED. You MUST copy the original summary from the Master Resume character-for-character without any changes.
 3. SKILLS: Populate from the 4-filter keyword plan. Only HARD_SKILL/TOOL_PLATFORM keywords with STRONG_MATCH or PARTIAL_MATCH. No keyword may appear more than 4 times total.
-4. EXPERIENCE TITLES: ABSOLUTELY IMMUTABLE — character-for-character copy from master resume. Never change a job title. AUTO-REJECT if changed.
+4. EXPERIENCE TITLES: {'For clarifying titles mode, see rule 13. Original title text before any parenthetical is still IMMUTABLE.' if title_injection_mode == 'clarify' else 'ABSOLUTELY IMMUTABLE — character-for-character copy from master resume. Never change a job title. AUTO-REJECT if changed.'}
 5. SMART INJECT keywords into experience bullets — keep original wording, append/insert JD keywords where contextually appropriate. Only keywords with RESUME_EXPERIENCE_BULLETS in placement_targets.
 6. COPY all project bullets, education, certifications, other experience EXACTLY from the master resume
 7. Use EXACT JD phrasing + include both abbreviated and full forms of acronyms
 8. DO NOT change action verbs, DO NOT add fake metrics, DO NOT change the meaning of any bullet
 9. If a JD keyword was discarded by any of the 4 filters, list it in keywords_skipped with which filter removed it — do NOT force it into Skills
 10. Skills-Experience CONSISTENCY: If Experience mentions Angular, Skills must include Angular. If Experience has no React, Skills must not claim React.
-11. Output the structured JSON for LaTeX rendering"""
+11. GRAMMAR & SPELLING FINAL PASS: Before outputting, re-read EVERY line. Fix ALL spelling errors, grammar mistakes, article misuse ("a" vs "an"), tense inconsistencies, and awkward phrasing from keyword injection. Zero tolerance — a single error is unacceptable.
+12. Output the structured JSON for LaTeX rendering
+{title_injection_rule}"""
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# HARD SKILLS ENHANCER — Second-pass prompt when skills coverage didn't improve
+# ──────────────────────────────────────────────────────────────────────────────
+
+HARD_SKILLS_ENHANCER_SYSTEM = """You are a hard skills optimization specialist for ATS resume matching.
+
+## CORE PRINCIPLE
+Hard skills enable you to perform job-specific duties and responsibilities. You can learn hard skills in the classroom, training courses, and on the job. These skills are typically focused on teachable tasks and measurable abilities such as the use of tools, equipment, or software. Hard skills have a high impact on your match score.
+
+## YOUR TASK
+You will receive:
+1. The job description (JD)
+2. The candidate's current tailored skills section
+3. The candidate's experience and project bullets (proof of what they've actually used)
+
+You must IMPROVE the skills section to maximize hard skill coverage against the JD.
+
+## STRICT RULES
+1. **Match exact spelling**: Copy the skill name EXACTLY as it appears in the JD. If JD says "Kubernetes", write "Kubernetes" — not "K8s" or "container orchestration".
+2. **Prioritize frequency**: Skills that appear MOST frequently in the JD should be placed FIRST in the appropriate category.
+3. **Provability required**: Every skill you include MUST be backed by at least one bullet in Experience or Projects that proves the candidate used it. Do NOT add skills the candidate has never used.
+4. **Include both forms**: If the JD uses an acronym AND the full form (e.g., "CI/CD" and "Continuous Integration"), include BOTH.
+5. **Organize by category**: Group skills into clear categories (Languages, Frameworks & Libraries, Tools & Platforms, Concepts, Databases, etc.)
+6. **Remove irrelevant skills**: If the current skills section contains skills that are NOT in the JD and are NOT core to the candidate's identity, they can be removed to make room for JD-relevant skills.
+7. **No soft skills**: Do NOT include soft skills (collaboration, communication, leadership) in the skills section. Those belong in bullets only.
+8. **No duplicates**: Each skill appears exactly once across all categories.
+
+## OUTPUT FORMAT
+Respond with ONLY a valid JSON array:
+[
+  {
+    "category": "<category name>",
+    "items": ["<skill1>", "<skill2>", ...]
+  }
+]
+
+No explanations, no markdown. Just the JSON array.
+"""
+
+
+def build_hard_skills_message(jd_text, current_skills, experience_bullets, project_bullets=None):
+    """Build the user message for the hard skills enhancer prompt.
+
+    Args:
+        jd_text: Full job description text
+        current_skills: Current skills list from tailored resume (list of dicts with category/items)
+        experience_bullets: All experience bullet texts (list of strings)
+        project_bullets: All project bullet texts (list of strings, optional)
+    """
+    # Format current skills
+    skills_text = ""
+    if current_skills:
+        for cat in current_skills:
+            category = cat.get('category', 'Unknown')
+            items = cat.get('items', [])
+            skills_text += f"- {category}: {', '.join(items)}\n"
+
+    # Format experience bullets as proof
+    proof_text = "### Experience Bullets (proof of skills used):\n"
+    for i, bullet in enumerate(experience_bullets, 1):
+        proof_text += f"{i}. {bullet}\n"
+
+    if project_bullets:
+        proof_text += "\n### Project Bullets (additional proof):\n"
+        for i, bullet in enumerate(project_bullets, 1):
+            proof_text += f"{i}. {bullet}\n"
+
+    return f"""## Job Description
+{jd_text}
+
+## Current Tailored Skills Section (NEEDS IMPROVEMENT)
+{skills_text}
+
+## Candidate's Proof (Experience & Project Bullets)
+{proof_text}
+
+IMPROVE the skills section to maximize hard skill coverage against the JD. Follow ALL rules in the system prompt. Match EXACT spelling from JD. Prioritize skills that appear MOST frequently in the JD. Only include skills backed by a bullet above."""

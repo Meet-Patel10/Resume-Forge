@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, session
+from flask import Blueprint, render_template, request, jsonify, session, current_app
 from app.routes.auth import login_required
 from app import db
 from app.models.master_resume import MasterResume
@@ -31,9 +31,20 @@ def api_critique():
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
+    
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        from app.services.claude_client import nvidia as ai_client
+        print("[analyze] Using NVIDIA Llama-3.3-Nemotron")
+    else:
+        from app.services.claude_client import claude as ai_client
+        print(f"[analyze] Using AWS Bedrock/Claude (APP_ENV={app_env})")
+
+
+
     # Get critique from Claude
     user_message = build_critique_message(resume_text, jd_text)
-    result = claude.analyze(BRUTAL_CRITIC_SYSTEM, user_message, max_tokens=4096, force_json=True)
+    result = ai_client.analyze(BRUTAL_CRITIC_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -70,8 +81,16 @@ def api_keywords():
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        from app.services.claude_client import nvidia as ai_client
+        print("[analyze] Using NVIDIA Llama-3.3-Nemotron for keywords")
+    else:
+        from app.services.claude_client import claude as ai_client
+        print(f"[analyze] Using AWS Bedrock/Claude for keywords (APP_ENV={app_env})")
+
     user_message = build_keyword_message(resume_text, jd_text)
-    result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, user_message, max_tokens=4096, force_json=True)
+    result = ai_client.analyze(KEYWORD_EXTRACTOR_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -109,8 +128,16 @@ def api_gap_fill():
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
 
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        from app.services.claude_client import nvidia as ai_client
+        print("[analyze] Using NVIDIA Llama-3.3-Nemotron for gap fill")
+    else:
+        from app.services.claude_client import claude as ai_client
+        print(f"[analyze] Using AWS Bedrock/Claude for gap fill (APP_ENV={app_env})")
+
     user_message = build_gap_message(resume_text, jd_text, keyword_gaps)
-    result = claude.analyze(GAP_FILLER_SYSTEM, user_message, max_tokens=4096, force_json=True)
+    result = ai_client.analyze(GAP_FILLER_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500

@@ -58,10 +58,18 @@ class BedrockClient:
 
     def _get_model_config(self):
         """Get model config based on APP_ENV.
-        Valid values: 'productionHigh', 'productionLow', 'testing'
+        Valid values: 'productionHigh', 'productionLow', 'testing', 'nvidia'
+        When APP_ENV='nvidia', Bedrock falls back to 'testing' for any non-tailoring
+        routes that still use the Bedrock client directly.
         """
         env = current_app.config.get('APP_ENV', 'testing')  # preserve camelCase — do NOT lowercase
-        if env not in self.MODELS:
+        if env == 'nvidia':
+            # APP_ENV=nvidia means the main pipeline uses NvidiaClient.
+            # If Bedrock is still called (e.g., from analyze/interview routes),
+            # fall back to the cheapest model silently.
+            env = 'testing'
+            print("[bedrock] APP_ENV=nvidia — Bedrock fallback to 'testing' for this route")
+        elif env not in self.MODELS:
             print(f"[bedrock] Unknown APP_ENV '{env}', defaulting to 'testing'. Valid: {list(self.MODELS.keys())}")
             env = 'testing'
         return self.MODELS[env], env
@@ -300,7 +308,7 @@ class NvidiaClient:
 
     MODELS = {
         'generation': {
-            'model_id': 'nvidia/llama-3.3-nemotron-super-49b-v1',
+            'model_id': 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
             'api_key_name': 'NVIDIA_NEMOTRON_API_KEY',
             'default_api_key': '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',
             'provider': 'nvidia',
@@ -344,65 +352,82 @@ class NvidiaClient:
         """Send a prompt to NVIDIA NIM API, return parsed response + token/cost info.
 
         Uses the same interface as BedrockClient.analyze() for drop-in compatibility.
+        Retries up to 3 times on timeout errors (cold-start on serverless infra).
         """
-        try:
-            model_cfg = self.MODELS['generation']
-            model_id = model_cfg['model_id']
-            api_key = self._get_api_key('generation')
+        import time as _time
 
-            print(f"[nvidia] Using {model_id}")
+        model_cfg = self.MODELS['generation']
+        model_id = model_cfg['model_id']
+        api_key = self._get_api_key('generation')
 
-            headers = {
-                'Authorization': f'Bearer {api_key}',
-                'Content-Type': 'application/json',
-            }
+        print(f"[nvidia] Using {model_id}")
 
-            # Build messages (OpenAI-compatible format)
-            messages = [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_message},
-            ]
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        }
 
-            # Prefill technique for JSON forcing
-            if force_json:
-                messages.append({'role': 'assistant', 'content': '{'})
+        # Build messages (OpenAI-compatible format)
+        # For JSON forcing, add explicit instruction (prefill doesn't work on reasoning models)
+        sys_prompt = system_prompt
+        if force_json:
+            sys_prompt += "\n\nCRITICAL: You MUST respond with ONLY a valid JSON object. Start with { and end with }. No explanations, no markdown fences, no text outside the JSON."
 
-            body = {
-                'model': model_id,
-                'messages': messages,
-                'max_tokens': max_tokens,
-                'temperature': temperature,
-                'stream': False,
-            }
+        messages = [
+            {'role': 'system', 'content': sys_prompt},
+            {'role': 'user', 'content': user_message},
+        ]
 
-            response = self.session.post(
-                f"{self.NVIDIA_BASE_URL}/chat/completions",
-                headers=headers,
-                json=body,
-                timeout=120,
-            )
+        body = {
+            'model': model_id,
+            'messages': messages,
+            'max_tokens': max_tokens,
+            'temperature': temperature,
+            'stream': False,
+        }
 
-            if response.status_code != 200:
-                error_text = response.text[:500]
-                print(f"[nvidia] HTTP {response.status_code}: {error_text}")
-                return {
-                    'error': f"HTTP {response.status_code}: {error_text}",
-                    'response': None,
-                    'tokens_used': 0,
-                    'cost_usd': 0,
-                }
+        # Retry with increasing timeouts for cold-start tolerance
+        max_retries = 3
+        timeouts = [120, 180, 240]  # seconds — escalating for cold-start
 
-            data = response.json()
-            return self._parse_response(data, model_cfg, force_json)
+        for attempt in range(max_retries):
+            try:
+                timeout = timeouts[min(attempt, len(timeouts) - 1)]
+                response = self.session.post(
+                    f"{self.NVIDIA_BASE_URL}/chat/completions",
+                    headers=headers,
+                    json=body,
+                    timeout=timeout,
+                )
 
-        except Exception as e:
-            print(f"[nvidia] Error: {e}")
-            return {
-                'error': str(e),
-                'response': None,
-                'tokens_used': 0,
-                'cost_usd': 0,
-            }
+                if response.status_code != 200:
+                    error_text = response.text[:500]
+                    print(f"[nvidia] HTTP {response.status_code}: {error_text}")
+                    return {
+                        'error': f"HTTP {response.status_code}: {error_text}",
+                        'response': None,
+                        'tokens_used': 0,
+                        'cost_usd': 0,
+                    }
+
+                data = response.json()
+                return self._parse_response(data, model_cfg, force_json)
+
+            except Exception as e:
+                is_timeout = 'timed out' in str(e).lower() or 'timeout' in str(e).lower()
+                if is_timeout and attempt < max_retries - 1:
+                    wait = 5 * (attempt + 1)  # 5s, 10s backoff
+                    print(f"[nvidia] Timeout on attempt {attempt + 1}/{max_retries}, retrying in {wait}s (cold-start likely)...")
+                    _time.sleep(wait)
+                    continue
+                else:
+                    print(f"[nvidia] Error (attempt {attempt + 1}/{max_retries}): {e}")
+                    return {
+                        'error': str(e),
+                        'response': None,
+                        'tokens_used': 0,
+                        'cost_usd': 0,
+                    }
 
     def embed(self, texts, input_type='query'):
         """Generate embeddings using NVIDIA Nemotron embedding model.
@@ -475,7 +500,12 @@ class NvidiaClient:
             }
 
     def _parse_response(self, data, model_cfg, force_json=False):
-        """Parse NVIDIA NIM API response (OpenAI-compatible format)."""
+        """Parse NVIDIA NIM API response.
+
+        Handles two response formats:
+        1. Standard: content in message.content
+        2. Reasoning model (v1.5): content is null, response in message.reasoning_content
+        """
         choices = data.get('choices', [])
         if not choices:
             return {
@@ -485,12 +515,32 @@ class NvidiaClient:
                 'cost_usd': 0,
             }
 
-        raw_text = choices[0].get('message', {}).get('content', '')
+        message = choices[0].get('message', {})
 
-        # When force_json is enabled, the assistant prefill was '{' so
-        # prepend it if the model's continuation doesn't start with '{'
-        if force_json and raw_text and not raw_text.strip().startswith('{'):
-            raw_text = '{' + raw_text
+        # Try content first (standard format), then reasoning_content (reasoning model)
+        raw_text = message.get('content') or ''
+        if not raw_text:
+            # Reasoning model: actual output is in reasoning_content
+            raw_text = message.get('reasoning_content') or message.get('reasoning') or ''
+            if raw_text:
+                print(f"[nvidia] Using reasoning_content ({len(raw_text)} chars)")
+
+        if not raw_text:
+            return {
+                'error': 'No content in response (both content and reasoning_content are empty)',
+                'response': None,
+                'tokens_used': 0,
+                'cost_usd': 0,
+            }
+
+        # For JSON forcing: extract JSON from reasoning output
+        # The reasoning model may wrap JSON in thinking text
+        if force_json:
+            # Try to find a JSON object in the text
+            brace_start = raw_text.find('{')
+            brace_end = raw_text.rfind('}')
+            if brace_start != -1 and brace_end > brace_start:
+                raw_text = raw_text[brace_start:brace_end + 1]
 
         # Token usage
         usage = data.get('usage', {})
@@ -503,7 +553,7 @@ class NvidiaClient:
             (output_tokens / 1000) * model_cfg.get('output_cost_per_1k', 0)
         )
 
-        # Try to parse as JSON (reuse BedrockClient's helper via composition)
+        # Try to parse as JSON
         parsed = self._try_parse_json(raw_text)
 
         return {
@@ -565,6 +615,60 @@ class NvidiaClient:
             return json.loads(fixed)
         except (json.JSONDecodeError, ValueError):
             return raw_text
+
+    def warmup(self):
+        """Send a tiny request to NVIDIA NIM to pre-warm the GPU instance.
+
+        This forces the serverless infrastructure to allocate a GPU and load
+        the model into memory BEFORE any real user request arrives. Runs in
+        a background thread so it doesn't block app startup.
+
+        Typical cold-start: 60-180s. After warmup, subsequent requests
+        complete in 2-10s.
+        """
+        import threading
+
+        def _ping():
+            try:
+                model_cfg = self.MODELS['generation']
+                model_id = model_cfg['model_id']
+                api_key = self._get_api_key('generation')
+
+                headers = {
+                    'Authorization': f'Bearer {api_key}',
+                    'Content-Type': 'application/json',
+                }
+
+                # Minimal request: 1 token output, trivial prompt
+                body = {
+                    'model': model_id,
+                    'messages': [
+                        {'role': 'user', 'content': 'Hi'}
+                    ],
+                    'max_tokens': 1,
+                    'temperature': 0,
+                    'stream': False,
+                }
+
+                print(f"[nvidia-warmup] Sending warmup ping to {model_id}...")
+                response = self.session.post(
+                    f"{self.NVIDIA_BASE_URL}/chat/completions",
+                    headers=headers,
+                    json=body,
+                    timeout=300,  # 5 min — generous for cold-start
+                )
+
+                if response.status_code == 200:
+                    print(f"[nvidia-warmup] ✅ GPU warm — model loaded and ready")
+                else:
+                    print(f"[nvidia-warmup] ⚠️ HTTP {response.status_code}: {response.text[:200]}")
+
+            except Exception as e:
+                print(f"[nvidia-warmup] ⚠️ Warmup failed (non-fatal): {e}")
+
+        thread = threading.Thread(target=_ping, daemon=True, name='nvidia-warmup')
+        thread.start()
+        print("[nvidia-warmup] Background warmup thread started")
 
 
 # Singleton instance — NVIDIA NIM (Llama-3.3-Nemotron + Nemotron-3-embed)

@@ -17,7 +17,7 @@ from app.services.prompts.followup_email import (
     build_followup_adjust_message,
 )
 
-from app.routes.tailor import _build_sign_off, _resolve_sign_off_location, _DEFAULT_LOCATION
+from app.services.email_core import build_sign_off as _build_sign_off, resolve_sign_off_location as _resolve_sign_off_location, _DEFAULT_LOCATION
 
 followup_bp = Blueprint('followup', __name__)
 bedrock = BedrockClient()
@@ -291,6 +291,68 @@ def _generate_single_followup(original_email, company_name, role_title):
             word_count = _count_words(body)
             print(f"[followup-email] Adjusted word count: {word_count}")
 
+    # Step 2.5: RAG Quality Audit
+    from app.services.email_auditor import audit_email as _audit_email, build_audit_rejection_feedback
+
+    MAX_AUDIT_RETRIES = 2
+    for audit_attempt in range(MAX_AUDIT_RETRIES):
+        audit_result = _audit_email(
+            email_body=body,
+            jd_text='',  # Follow-ups don't have separate JD text
+            resume_text='',  # Follow-ups don't have separate resume text
+            recipient_name=recipient_name,
+            recipient_title=recipient_title,
+            recipient_category=recipient_category,
+            email_type='followup',
+        )
+        total_tokens += audit_result.tokens_used
+        total_cost += audit_result.cost_usd
+
+        if audit_result.passed:
+            print(f"[followup-email] ✅ RAG audit passed on attempt {audit_attempt + 1}")
+            break
+        else:
+            print(f"[followup-email] ❌ RAG audit FAILED on attempt {audit_attempt + 1}")
+            if audit_attempt < MAX_AUDIT_RETRIES - 1:
+                audit_feedback = build_audit_rejection_feedback(audit_result)
+                print(f"[followup-email] 🔄 Regenerating with audit feedback...")
+
+                regen_message = audit_feedback + build_followup_email_message(
+                    original_email_body=original_body,
+                    original_subject=original_subject,
+                    company_name=company_name,
+                    role_title=role_title,
+                    recipient_name=recipient_name,
+                    recipient_title=recipient_title,
+                    recipient_category=recipient_category,
+                )
+
+                regen_result = bedrock.analyze(
+                    system_prompt=FOLLOWUP_EMAIL_SYSTEM,
+                    user_message=regen_message,
+                    max_tokens=1024,
+                    temperature=0.5,
+                    force_json=True,
+                    model_override='productionHigh',
+                )
+                total_tokens += regen_result.get('tokens_used', 0)
+                total_cost += regen_result.get('cost_usd', 0.0)
+
+                regen_response = regen_result.get('response', {})
+                if isinstance(regen_response, str):
+                    try:
+                        regen_response = json.loads(regen_response)
+                    except json.JSONDecodeError:
+                        pass
+
+                if isinstance(regen_response, dict) and regen_response.get('body'):
+                    body = _clean_body(regen_response['body'])
+                    subject = regen_response.get('subject', subject)
+                    word_count = _count_words(body)
+                    print(f"[followup-email] Regenerated body ({word_count} words)")
+            else:
+                print(f"[followup-email] ⚠️ Max audit retries reached — using last output")
+
     # Step 3: Final cleanup
     # Strip any sign-off the AI included
     body = _strip_sign_off(body)
@@ -308,6 +370,7 @@ def _generate_single_followup(original_email, company_name, role_title):
     final_word_count = _count_words(final_body_for_count)
     print(f"[followup-email] Final word count: {final_word_count}")
     print(f"[followup-email] Subject: {subject[:80]}")
+
 
     return {
         'subject': subject,

@@ -35,6 +35,23 @@
             <input type="text" id="target-city" class="form-input" placeholder="e.g., Halifax, Toronto">
         </div>
     </div>
+    <div class="form-group" style="margin-top: var(--space-2);">
+        <label class="form-label">Job Title Injection <span style="color: var(--text-muted); font-weight: normal; font-size: var(--text-xs);">(how to place the JD title on your resume)</span></label>
+        <div style="display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--bg-secondary); border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <label style="display: flex; align-items: flex-start; gap: var(--space-2); cursor: pointer; font-size: var(--text-sm);">
+                <input type="radio" name="title-injection" value="none" checked style="margin-top: 3px;">
+                <span><strong>None</strong> — don't inject job title <span style="color: var(--text-muted);">(default)</span></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: var(--space-2); cursor: pointer; font-size: var(--text-sm);">
+                <input type="radio" name="title-injection" value="headline" style="margin-top: 3px;">
+                <span><strong>Target Role Headline</strong> — adds "Target Role: [JD Title]" below your contact info</span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: var(--space-2); cursor: pointer; font-size: var(--text-sm);">
+                <input type="radio" name="title-injection" value="clarify" style="margin-top: 3px;">
+                <span><strong>Clarifying Titles</strong> — appends "(Role equivalent to [JD Title])" to matching experience entries</span>
+            </label>
+        </div>
+    </div>
     <div class="form-group">
         <textarea id="jd-input" class="form-textarea tall" placeholder="Paste the full job description here..."></textarea>
     </div>
@@ -716,6 +733,7 @@
         const company = document.getElementById('company-name').value.trim();
         const role = document.getElementById('role-title').value.trim();
         const city = document.getElementById('target-city')?.value.trim() || '';
+        const titleInjection = document.querySelector('input[name="title-injection"]:checked')?.value || 'none';
 
         showLoading('Running 4-step pipeline: ① Critique → ② Keywords → ③ Tailor → ④ Humanize... This takes 60-90 seconds.');
         try {
@@ -728,6 +746,7 @@
                     company_name: company,
                     role_title: role,
                     target_city: city,
+                    title_injection_mode: titleInjection,
                 })
             });
             const data = await res.json();

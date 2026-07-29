@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, session, send_file
+from flask import Blueprint, render_template, request, jsonify, session, send_file, current_app
 from app.routes.auth import login_required
 from app import db
 from app.models.master_resume import MasterResume
@@ -12,13 +12,13 @@ from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, COVER_LETTER_
 from app.services.prompts.brutal_critic import BRUTAL_CRITIC_SYSTEM, build_critique_message
 from app.services.prompts.keyword_extractor import KEYWORD_EXTRACTOR_SYSTEM, build_keyword_message
 from app.services.prompts.jd_analyzer import JD_ANALYZER_SYSTEM, build_jd_analysis_message
-from app.services.prompts.leadership_email import (
-    LEADERSHIP_EMAIL_SYSTEM, LEADERSHIP_EMAIL_ADJUST_SYSTEM,
-    build_leadership_email_message, build_email_adjust_message
-)
+
+
 from app.services.latex_engine import render_latex
 from app.services.ats_scorer import calculate_ats_score
 import json as json_mod
+from flask import current_app
+
 
 tailor_bp = Blueprint('tailor', __name__)
 
@@ -92,7 +92,16 @@ def api_rewrite_bullets():
         return jsonify({'error': 'Bullets and job description are required'}), 400
 
     user_message = build_bullet_message(bullets, jd_text, role_context)
-    result = claude.analyze(BULLET_REWRITER_SYSTEM, user_message, max_tokens=4096, force_json=True)
+    
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        from app.services.claude_client import nvidia as ai_client
+        print("[bullet-rewriter] Using NVIDIA Llama-3.3-Nemotron")
+    else:
+        from app.services.claude_client import claude as ai_client
+        print(f"[bullet-rewriter] Using AWS Bedrock/Claude (APP_ENV={app_env})")
+
+    result = ai_client.analyze(BULLET_REWRITER_SYSTEM, user_message, max_tokens=4096, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -115,6 +124,7 @@ def api_tailor():
     role_title = data.get('role_title', '')
     keyword_analysis = data.get('keyword_analysis', '')
     target_city = data.get('target_city', '').strip()
+    title_injection_mode = data.get('title_injection_mode', 'none').strip()
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
@@ -188,11 +198,20 @@ def api_tailor():
     total_cost = 0.0
     pipeline_steps = []
 
+    # Select AI provider based on APP_ENV
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        from app.services.claude_client import nvidia as ai_client
+        print("[tailor] Using NVIDIA Llama-3.3-Nemotron for all pipeline steps")
+    else:
+        ai_client = claude
+        print(f"[tailor] Using AWS Bedrock for all pipeline steps (APP_ENV={app_env})")
+
     # step 0: parse the JD for skills, requirements, etc.
     jd_analysis = None
     try:
         jd_msg = build_jd_analysis_message(resume_text, jd_text)
-        jd_result = claude.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000, force_json=True)
+        jd_result = ai_client.analyze(JD_ANALYZER_SYSTEM, jd_msg, max_tokens=3000, force_json=True)
         if not jd_result.get('error'):
             jd_analysis = jd_result['response']
             if isinstance(jd_analysis, str):
@@ -220,7 +239,7 @@ def api_tailor():
     critique_data = None
     try:
         critique_msg = build_critique_message(resume_text, jd_text)
-        critique_result = claude.analyze(BRUTAL_CRITIC_SYSTEM, critique_msg, max_tokens=3000, force_json=True)
+        critique_result = ai_client.analyze(BRUTAL_CRITIC_SYSTEM, critique_msg, max_tokens=3000, force_json=True)
         if not critique_result.get('error'):
             critique_data = critique_result['response']
             # try to parse string response
@@ -249,7 +268,7 @@ def api_tailor():
     keyword_data = None
     try:
         kw_msg = build_keyword_message(resume_text, jd_text)
-        kw_result = claude.analyze(KEYWORD_EXTRACTOR_SYSTEM, kw_msg, max_tokens=3000, force_json=True)
+        kw_result = ai_client.analyze(KEYWORD_EXTRACTOR_SYSTEM, kw_msg, max_tokens=3000, force_json=True)
         if not kw_result.get('error'):
             keyword_data = kw_result['response']
             # parse if string
@@ -274,6 +293,21 @@ def api_tailor():
     except Exception as e:
         print(f"[tailor] keyword error: {e}")
 
+    # step 2.5: RAG semantic matching (NVIDIA embeddings — optional enhancement)
+    rag_context = None
+    try:
+        from app.services.claude_client import nvidia
+        from app.services.rag_enhancer import enhance_tailoring
+        rag_context = enhance_tailoring(nvidia, resume_text, jd_text, jd_analysis=jd_analysis)
+        if rag_context:
+            pipeline_steps.append('rag_enhancement')
+            print(f"[tailor] RAG enhancement done ({len(rag_context)} chars)")
+        else:
+            print("[tailor] RAG enhancement returned no context — continuing without it")
+    except Exception as e:
+        print(f"[tailor] RAG enhancement failed (non-fatal, continuing): {e}")
+        rag_context = None
+
     # step 3: actually tailor the resume using all the context we gathered
     user_message = build_tailor_message(
         resume_text, jd_text,
@@ -281,6 +315,9 @@ def api_tailor():
         critique_data=critique_data,
         keyword_data=keyword_data,
         jd_analysis=jd_analysis,
+        rag_context=rag_context,
+        title_injection_mode=title_injection_mode,
+        role_title=role_title,
     )
 
     # retry up to 4 times -- the tailor call is the most critical and must return valid JSON
@@ -301,7 +338,7 @@ def api_tailor():
             msg = user_message + retry_messages[attempt]
             print(f"[tailor] attempt {attempt + 1}: retrying with stricter JSON instruction (temp={temp})")
 
-        attempt_result = claude.analyze(
+        attempt_result = ai_client.analyze(
             RESUME_TAILOR_SYSTEM, msg,
             max_tokens=16000, temperature=temp,
             force_json=True
@@ -456,6 +493,11 @@ def api_tailor():
                     resolved_loc = _resolve_location(target_city)
                     tailored_data['header']['location'] = resolved_loc
                     print(f"[tailor] location overridden: '{target_city}' → '{resolved_loc}'")
+
+                # Preserve target_role for headline injection (Option 1)
+                if title_injection_mode == 'headline' and role_title:
+                    tailored_data['header']['target_role'] = role_title
+                    print(f"[tailor] target_role set: '{role_title}'")
 
                 # education from DB
                 tailored_data['education'] = master.education or []
@@ -1096,7 +1138,16 @@ def api_tailor():
                     master_structure['projects'] = list(proj_entries.values())
 
                 validator_msg = build_validator_message(tailored_data, master_structure)
-                val_result = claude.analyze(STRUCTURE_VALIDATOR_SYSTEM, validator_msg, max_tokens=16000, temperature=0.1, force_json=True)
+                
+                app_env = current_app.config.get('APP_ENV', 'testing').strip()
+                if app_env == 'nvidia':
+                    from app.services.claude_client import nvidia as ai_client
+                    print("[json-validator] Using NVIDIA Llama-3.3-Nemotron")
+                else:
+                    from app.services.claude_client import claude as ai_client
+                    print(f"[json-validator] Using AWS Bedrock/Claude (APP_ENV={app_env})")
+
+                val_result = ai_client.analyze(STRUCTURE_VALIDATOR_SYSTEM, validator_msg, max_tokens=16000, temperature=0.1, force_json=True)
 
                 if not val_result.get('error'):
                     val_resp = val_result.get('response')
@@ -1160,6 +1211,314 @@ def api_tailor():
     # NOTE: External humanize API removed. Humanization rules are now baked
     # directly into the tailor prompt (RESUME_TAILOR_SYSTEM) so the AI produces
     # human-sounding text in a single pass — no post-processing needed.
+
+    # ---- STEP 4: DETERMINISTIC HARD SKILLS INJECTION ----
+    # Instead of relying on an unreliable AI enhancer, programmatically inject
+    # missing JD hard skills into the correct skills category. Then reorder
+    # each category so JD-matched skills come FIRST (capping-safe).
+    if isinstance(tailored_data, dict) and jd_analysis and isinstance(jd_analysis, dict):
+        try:
+            # Collect all JD hard skills + top keywords
+            jd_hard = set()
+            for s_item in jd_analysis.get('hard_skills', []):
+                if isinstance(s_item, str) and s_item.strip():
+                    jd_hard.add(s_item.strip())
+            for s_item in jd_analysis.get('top_keywords', []):
+                if isinstance(s_item, str) and s_item.strip():
+                    jd_hard.add(s_item.strip())
+
+            if jd_hard:
+                current_skills = tailored_data.get('skills', [])
+
+                # Build lowercase text of ALL current skill items for matching
+                current_skills_lower = set()
+                for cat in current_skills:
+                    for item in cat.get('items', []):
+                        current_skills_lower.add(item.strip().lower())
+
+                # Find missing skills (not already present)
+                missing = []
+                for skill in jd_hard:
+                    skill_lower = skill.lower()
+                    # Check exact match and substring containment
+                    found = False
+                    for existing in current_skills_lower:
+                        if skill_lower == existing or skill_lower in existing or existing in skill_lower:
+                            found = True
+                            break
+                    if not found:
+                        missing.append(skill)
+
+                if missing:
+                    # Build proof text from all bullets + summary for provability check
+                    all_proof_text = ''
+                    for exp in tailored_data.get('experience', []):
+                        for b in exp.get('bullets', []):
+                            if isinstance(b, str):
+                                all_proof_text += b.lower() + ' '
+                        # Also check tech_stack lines
+                        ts = exp.get('tech_stack', '')
+                        if ts:
+                            all_proof_text += ts.lower() + ' '
+                    for proj in tailored_data.get('projects', []):
+                        for b in proj.get('bullets', []):
+                            if isinstance(b, str):
+                                all_proof_text += b.lower() + ' '
+                        ts = proj.get('tech_stack', '')
+                        if ts:
+                            all_proof_text += ts.lower() + ' '
+                    all_proof_text += (tailored_data.get('summary', '') or '').lower()
+
+                    # ── Category mapping for automatic placement ──
+                    _CATEGORY_MAP = {
+                        # Languages
+                        'python': 'Languages', 'java': 'Languages', 'javascript': 'Languages',
+                        'c++': 'Languages', 'c#': 'Languages', 'typescript': 'Languages',
+                        'sql': 'Languages', 'r': 'Languages', 'go': 'Languages', 'golang': 'Languages',
+                        'rust': 'Languages', 'ruby': 'Languages', 'scala': 'Languages',
+                        'kotlin': 'Languages', 'swift': 'Languages', 'php': 'Languages',
+                        'html': 'Languages', 'html5': 'Languages', 'css': 'Languages',
+                        'css3': 'Languages', 'bash': 'Languages', 'shell': 'Languages',
+                        'perl': 'Languages', 'matlab': 'Languages', 'julia': 'Languages',
+                        'haskell': 'Languages', 'c programming': 'Languages',
+                        # Frameworks & Libraries
+                        'react': 'Frameworks & Libraries', 'react native': 'Frameworks & Libraries',
+                        'angular': 'Frameworks & Libraries', 'vue': 'Frameworks & Libraries',
+                        'vue.js': 'Frameworks & Libraries', 'spring boot': 'Frameworks & Libraries',
+                        'spring': 'Frameworks & Libraries', 'django': 'Frameworks & Libraries',
+                        'flask': 'Frameworks & Libraries', 'fastapi': 'Frameworks & Libraries',
+                        'express': 'Frameworks & Libraries', 'express.js': 'Frameworks & Libraries',
+                        'node.js': 'Frameworks & Libraries', 'pytorch': 'Frameworks & Libraries',
+                        'tensorflow': 'Frameworks & Libraries', 'scikit-learn': 'Frameworks & Libraries',
+                        'pandas': 'Frameworks & Libraries', 'numpy': 'Frameworks & Libraries',
+                        'langchain': 'Frameworks & Libraries', 'hugging face': 'Frameworks & Libraries',
+                        'huggingface': 'Frameworks & Libraries', 'next.js': 'Frameworks & Libraries',
+                        'jquery': 'Frameworks & Libraries', '.net': 'Frameworks & Libraries',
+                        'bootstrap': 'Frameworks & Libraries', 'sqlalchemy': 'Frameworks & Libraries',
+                        'jinja2': 'Frameworks & Libraries', 'restful apis': 'Frameworks & Libraries',
+                        'keras': 'Frameworks & Libraries', 'opencv': 'Frameworks & Libraries',
+                        'peft': 'Frameworks & Libraries', 'transformers': 'Frameworks & Libraries',
+                        'agent development kits': 'Frameworks & Libraries',
+                        # Tools & Platforms
+                        'docker': 'Tools & Platforms', 'kubernetes': 'Tools & Platforms',
+                        'aws': 'Tools & Platforms', 'azure': 'Tools & Platforms',
+                        'gcp': 'Tools & Platforms', 'google cloud': 'Tools & Platforms',
+                        'git': 'Tools & Platforms', 'github': 'Tools & Platforms',
+                        'gitlab': 'Tools & Platforms', 'jenkins': 'Tools & Platforms',
+                        'jira': 'Tools & Platforms', 'linux': 'Tools & Platforms',
+                        'terraform': 'Tools & Platforms', 'ansible': 'Tools & Platforms',
+                        'kafka': 'Tools & Platforms', 'redis': 'Tools & Platforms',
+                        'elasticsearch': 'Tools & Platforms', 'heroku': 'Tools & Platforms',
+                        'vercel': 'Tools & Platforms', 'postman': 'Tools & Platforms',
+                        'grafana': 'Tools & Platforms', 'prometheus': 'Tools & Platforms',
+                        'mysql': 'Tools & Platforms', 'postgresql': 'Tools & Platforms',
+                        'mongodb': 'Tools & Platforms', 'dynamodb': 'Tools & Platforms',
+                        'datadog': 'Tools & Platforms', 'splunk': 'Tools & Platforms',
+                        'aws bedrock': 'Tools & Platforms', 'vs code': 'Tools & Platforms',
+                        'maven': 'Tools & Platforms', 'gradle': 'Tools & Platforms',
+                        'circleci': 'Tools & Platforms', 'travis ci': 'Tools & Platforms',
+                        'airflow': 'Tools & Platforms', 'mlflow': 'Tools & Platforms',
+                        'wandb': 'Tools & Platforms', 'dvc': 'Tools & Platforms',
+                        # Concepts
+                        'ci/cd': 'Concepts', 'ci/cd pipelines': 'Concepts',
+                        'agile': 'Concepts', 'scrum': 'Concepts',
+                        'microservices': 'Concepts', 'machine learning': 'Concepts',
+                        'deep learning': 'Concepts', 'nlp': 'Concepts',
+                        'natural language processing': 'Concepts',
+                        'devops': 'Concepts', 'cloud orchestration': 'Concepts',
+                        'code review': 'Concepts', 'unit testing': 'Concepts',
+                        'test-driven development': 'Concepts', 'tdd': 'Concepts',
+                        'distributed systems': 'Concepts', 'data pipelines': 'Concepts',
+                        'data preprocessing': 'Concepts', 'feature engineering': 'Concepts',
+                        'statistical modeling': 'Concepts', 'api design': 'Concepts',
+                        'software engineering best practices': 'Concepts',
+                        'version control systems': 'Concepts',
+                        'collaborative development environments': 'Concepts',
+                        'open-source': 'Concepts', 'open source': 'Concepts',
+                        'highly concurrent systems': 'Concepts',
+                        'server applications': 'Concepts',
+                        'containerization': 'Concepts',
+                        # Programming Concepts
+                        'data structures': 'Programming Concepts',
+                        'algorithms': 'Programming Concepts',
+                        'object-oriented programming': 'Programming Concepts',
+                        'oop': 'Programming Concepts', 'multithreading': 'Programming Concepts',
+                        'time complexity': 'Programming Concepts',
+                        'design patterns': 'Programming Concepts',
+                    }
+
+                    injected = []
+                    skipped = []
+                    for skill in sorted(missing):
+                        skill_lower = skill.lower()
+
+                        # Determine category
+                        category = _CATEGORY_MAP.get(skill_lower)
+                        if not category:
+                            # Fuzzy: check if any map key is contained in the skill or vice versa
+                            for key, cat in _CATEGORY_MAP.items():
+                                if key in skill_lower or skill_lower in key:
+                                    category = cat
+                                    break
+                        if not category:
+                            # Default heuristic: multi-word → Concepts, single word → Tools
+                            category = 'Concepts' if len(skill.split()) >= 2 else 'Tools & Platforms'
+
+                        # Find or create the target category in current_skills
+                        target_cat = None
+                        for cat in current_skills:
+                            if cat.get('category', '').lower() == category.lower():
+                                target_cat = cat
+                                break
+                        if not target_cat:
+                            # Try partial match (e.g., "Frameworks" matches "Frameworks & Libraries")
+                            cat_first_word = category.split()[0].lower() if category else ''
+                            for cat in current_skills:
+                                if cat.get('category', '').lower().startswith(cat_first_word):
+                                    target_cat = cat
+                                    break
+                        if not target_cat:
+                            target_cat = {'category': category, 'items': []}
+                            current_skills.append(target_cat)
+
+                        # Check for exact duplicate
+                        existing_items_lower = [item.lower() for item in target_cat.get('items', [])]
+                        if skill_lower in existing_items_lower:
+                            continue
+
+                        # Inject the skill
+                        target_cat['items'].append(skill)
+                        has_proof = any(
+                            word in all_proof_text
+                            for word in skill_lower.split()
+                            if len(word) > 2  # skip short words like "of", "in"
+                        )
+                        injected.append((skill, target_cat['category'], 'proven' if has_proof else 'JD-only'))
+
+                    if injected:
+                        for skill_name, cat_name, proof_status in injected:
+                            print(f"[tailor] injected hard skill: '{skill_name}' → {cat_name} ({proof_status})")
+                        print(f"[tailor] total hard skills injected: {len(injected)}")
+                        pipeline_steps.append('hard_skills_inject')
+                    else:
+                        print("[tailor] no new hard skills to inject (all already present)")
+                else:
+                    print(f"[tailor] hard skills: all {len(jd_hard)} JD keywords already present")
+
+                # ── Reorder: JD-matched skills FIRST in each category ──
+                # This ensures LaTeX capping (from the end) drops non-JD skills, not JD ones
+                jd_lower = {s.lower() for s in jd_hard}
+                for cat in current_skills:
+                    items = cat.get('items', [])
+                    jd_items = [i for i in items if i.lower() in jd_lower]
+                    non_jd_items = [i for i in items if i.lower() not in jd_lower]
+                    cat['items'] = jd_items + non_jd_items
+
+                tailored_data['skills'] = current_skills
+                print(f"[tailor] skills reordered: JD-matched keywords placed first in each category")
+
+                # Update curated_skills snapshot so any subsequent re-enforcement
+                # preserves the injected + reordered version
+                curated_skills = current_skills
+        except Exception as e:
+            print(f"[tailor] hard skills injection failed (non-fatal): {e}")
+
+    # ---- STEP 5: CLICHÉ & NEGATIVE PHRASE POST-PROCESSING ----
+    # Safety net — scan all text fields and replace any banned phrases that slipped through.
+    if isinstance(tailored_data, dict):
+        _CLICHE_REPLACEMENTS = {
+            'results-driven': '',
+            'result-driven': '',
+            'detail-oriented': '',
+            'detail oriented': '',
+            'self-starter': '',
+            'self starter': '',
+            'go-getter': '',
+            'team player': '',
+            'think outside the box': '',
+            'outside the box': '',
+            'synergy': '',
+            'synergize': '',
+            'passionate about': '',
+            'proven track record': '',
+            'strong work ethic': '',
+            'hardworking': '',
+            'hard working': '',
+            'highly motivated': '',
+            'fast learner': '',
+            'quick learner': '',
+            'proactive': '',
+            'innovative': '',
+            'strategic thinker': '',
+            'results-oriented': '',
+            'result-oriented': '',
+            'out-of-the-box': '',
+            'value-add': '',
+            'value-added': '',
+            'best-in-class': '',
+            'cutting-edge': '',
+            'cutting edge': '',
+            'game-changer': '',
+            'game changer': '',
+            'guru': '',
+            'ninja': '',
+            'rockstar': '',
+            'rock star': '',
+            'seasoned professional': '',
+            'duties included': '',
+            'responsible for': '',
+            'assisted with': '',
+            'etc.': '',
+            'and more': '',
+        }
+
+        import re as _re_cliche
+
+        def _clean_cliches(text):
+            """Remove clichés from a text string."""
+            if not isinstance(text, str):
+                return text
+            cleaned = text
+            for phrase, replacement in _CLICHE_REPLACEMENTS.items():
+                pattern = _re_cliche.compile(r'\b' + _re_cliche.escape(phrase) + r'\b', _re_cliche.IGNORECASE)
+                cleaned = pattern.sub(replacement, cleaned)
+            # Clean up resulting double spaces, leading/trailing commas
+            cleaned = _re_cliche.sub(r'\s{2,}', ' ', cleaned)
+            cleaned = _re_cliche.sub(r',\s*,', ',', cleaned)
+            cleaned = _re_cliche.sub(r'^\s*,\s*', '', cleaned)
+            cleaned = _re_cliche.sub(r'\s*,\s*$', '', cleaned)
+            return cleaned.strip()
+
+        cliche_found = False
+
+        # Scan experience bullets
+        for exp in tailored_data.get('experience', []):
+            bullets = exp.get('bullets', [])
+            for i, bullet in enumerate(bullets):
+                cleaned = _clean_cliches(bullet)
+                if cleaned != bullet:
+                    bullets[i] = cleaned
+                    cliche_found = True
+
+        # Scan project bullets
+        for proj in tailored_data.get('projects', []):
+            bullets = proj.get('bullets', [])
+            for i, bullet in enumerate(bullets):
+                cleaned = _clean_cliches(bullet)
+                if cleaned != bullet:
+                    bullets[i] = cleaned
+                    cliche_found = True
+
+        # Scan summary
+        summary = tailored_data.get('summary', '')
+        if summary:
+            cleaned_summary = _clean_cliches(summary)
+            if cleaned_summary != summary:
+                tailored_data['summary'] = cleaned_summary
+                cliche_found = True
+
+        if cliche_found:
+            print("[tailor] clichés detected and removed (post-processing safety net)")
 
     # generate the latex
     latex_output = ''
@@ -1274,49 +1633,66 @@ def api_tailor():
     # save to db if company name was given
     app_record = None
     if company_name:
-        app_record = Application(
-            user_id=session.get('user_id'),
-            company_name=company_name,
-            role_title=role_title or 'Untitled Role',
-            jd_text=jd_text,
-            ats_score=ats['total_score'],
-        )
-        if isinstance(tailored_data, dict):
-            app_record.tailored_resume = tailored_data
-        app_record.tailored_latex = latex_output
-        db.session.add(app_record)
-        db.session.commit()
+        def _save_to_db():
+            """Save application, history, and version to DB."""
+            nonlocal app_record
+            app_record = Application(
+                user_id=session.get('user_id'),
+                company_name=company_name,
+                role_title=role_title or 'Untitled Role',
+                jd_text=jd_text,
+                ats_score=ats['total_score'],
+            )
+            if isinstance(tailored_data, dict):
+                app_record.tailored_resume = tailored_data
+            app_record.tailored_latex = latex_output
+            db.session.add(app_record)
+            db.session.flush()  # get app_record.id without final commit
 
-        # Save analysis history
-        history = AnalysisHistory(
-            application_id=app_record.id,
-            analysis_type='tailor',
-        )
-        history.input_data = {'jd_length': len(jd_text), 'resume_length': len(resume_text)}
-        history.output_data = tailored_data if isinstance(tailored_data, dict) else {'raw': str(tailored_data)}
-        history.tokens_used = total_tokens
-        history.cost_usd = total_cost
-        db.session.add(history)
-        db.session.commit()
+            # Save analysis history
+            history = AnalysisHistory(
+                application_id=app_record.id,
+                analysis_type='tailor',
+            )
+            history.input_data = {'jd_length': len(jd_text), 'resume_length': len(resume_text)}
+            history.output_data = tailored_data if isinstance(tailored_data, dict) else {'raw': str(tailored_data)}
+            history.tokens_used = total_tokens
+            history.cost_usd = total_cost
+            db.session.add(history)
 
-        # Save resume version for version tracking
-        existing_count = ResumeVersion.query.filter_by(application_id=app_record.id).count()
-        version = ResumeVersion(
-            application_id=app_record.id,
-            version_number=existing_count + 1,
-            resume_plain_text=resume_plain or '',
-            ats_score=ats.get('total_score', 0),
-            tokens_used=total_tokens,
-            cost_usd=total_cost,
-        )
-        if isinstance(tailored_data, dict):
-            version.resume_json = tailored_data
-        version.resume_latex = latex_output
-        version.score_breakdown = ats
-        version.pipeline_steps = pipeline_steps
-        db.session.add(version)
-        db.session.commit()
-        print(f"[tailor] Resume version {version.version_number} saved for application {app_record.id}")
+            # Save resume version for version tracking
+            existing_count = ResumeVersion.query.filter_by(application_id=app_record.id).count()
+            version = ResumeVersion(
+                application_id=app_record.id,
+                version_number=existing_count + 1,
+                resume_plain_text=resume_plain or '',
+                ats_score=ats.get('total_score', 0),
+                tokens_used=total_tokens,
+                cost_usd=total_cost,
+            )
+            if isinstance(tailored_data, dict):
+                version.resume_json = tailored_data
+            version.resume_latex = latex_output
+            version.score_breakdown = ats
+            version.pipeline_steps = pipeline_steps
+            db.session.add(version)
+            db.session.commit()
+            print(f"[tailor] Resume version {version.version_number} saved for application {app_record.id}")
+
+        try:
+            _save_to_db()
+        except Exception as db_err:
+            # Handle stale/broken DB connections (e.g. SSL drop during long NVIDIA timeouts)
+            print(f"[tailor] DB save failed: {db_err}. Rolling back and retrying...")
+            try:
+                db.session.rollback()
+                app_record = None  # reset so retry creates fresh objects
+                _save_to_db()
+                print("[tailor] DB save succeeded on retry")
+            except Exception as retry_err:
+                print(f"[tailor] DB save retry also failed: {retry_err}. Skipping DB save.")
+                db.session.rollback()
+                app_record = None  # ensure we don't reference a broken record
 
     return jsonify({
         'tailored_resume': tailored_data,
@@ -1348,7 +1724,8 @@ def _generate_cover_letter_impl():
     company_name = data.get('company_name', '')
     role_title = data.get('role_title', '')
     target_city = data.get('target_city', '').strip()
-    TARGET_WORDS = 330
+    TARGET_MIN = 280
+    TARGET_MAX = 300
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
@@ -1362,9 +1739,19 @@ def _generate_cover_letter_impl():
     total_tokens = 0
     total_cost = 0.0
 
+    # Step 0:Select AI provider based on APP_ENV
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        from app.services.claude_client import nvidia as ai_client
+        print("[cover-letter] Using NVIDIA Llama-3.3-Nemotron for cover letter")
+    else:
+        from app.services.claude_client import claude as ai_client
+        print(f"[cover-letter] Using AWS Bedrock/Claude for cover letter (APP_ENV={app_env})")
+
+
     # Step 1: Generate initial cover letter
     user_message = build_cover_letter_message(resume_text, jd_text, company_name, role_title, header_location=header_location)
-    result = claude.analyze(COVER_LETTER_SYSTEM, user_message, max_tokens=2048, force_json=True)
+    result = ai_client.analyze(COVER_LETTER_SYSTEM, user_message, max_tokens=2048, force_json=True)
 
     if result.get('error'):
         return jsonify({'error': result['error']}), 500
@@ -1380,7 +1767,7 @@ def _generate_cover_letter_impl():
 
         # Attempt 1: Fix newlines inside JSON strings and retry parse
         try:
-            fixed = claude._fix_json_newlines(raw.strip())
+            fixed = ai_client._fix_json_newlines(raw.strip())
             parsed = json_mod.loads(fixed)
             if isinstance(parsed, dict):
                 response = parsed
@@ -1392,7 +1779,7 @@ def _generate_cover_letter_impl():
             match = _re.search(r'\{[\s\S]*\}', raw)
             if match:
                 try:
-                    fixed = claude._fix_json_newlines(match.group(0))
+                    fixed = ai_client._fix_json_newlines(match.group(0))
                     parsed = json_mod.loads(fixed)
                     if isinstance(parsed, dict):
                         response = parsed
@@ -1447,15 +1834,15 @@ def _generate_cover_letter_impl():
     body_text = extract_body(cover_letter_text)
     current_count = count_words(body_text)
 
-    # Step 3: If word count is off, use adjustment loop (max 3 retries)
+    # Step 3: If word count is outside 280-300 range, use adjustment loop (max 3 retries)
     MAX_RETRIES = 3
     for attempt in range(MAX_RETRIES):
-        if current_count == TARGET_WORDS:
+        if TARGET_MIN <= current_count <= TARGET_MAX:
             break
 
-        print(f"[cover-letter] Body word count: {current_count}, target: {TARGET_WORDS}. Adjusting (attempt {attempt + 1})...")
-        adjust_msg = build_adjust_message(body_text, current_count, TARGET_WORDS)
-        adjust_result = claude.analyze(COVER_LETTER_ADJUST_SYSTEM, adjust_msg, max_tokens=2048, force_json=True)
+        print(f"[cover-letter] Body word count: {current_count}, target: {TARGET_MIN}-{TARGET_MAX}. Adjusting (attempt {attempt + 1})...")
+        adjust_msg = build_adjust_message(body_text, current_count, TARGET_MIN, TARGET_MAX)
+        adjust_result = ai_client.analyze(COVER_LETTER_ADJUST_SYSTEM, adjust_msg, max_tokens=2048, force_json=True)
 
         total_tokens += adjust_result.get('tokens_used', 0)
         total_cost += adjust_result.get('cost_usd', 0.0)
@@ -1500,6 +1887,14 @@ def _generate_cover_letter_impl():
                         body_end_idx = idx
                         signoff_part = [l for l in lines[idx:] if l.strip()]
                         break
+
+            # Clean up trailing empty lines in header
+            while header_part and not header_part[-1].strip():
+                header_part.pop()
+                
+            # Clean up leading empty lines in signoff
+            while signoff_part and not signoff_part[0].strip():
+                signoff_part.pop(0)
 
             # Reconstruct the full letter
             reconstructed = '\n'.join(header_part)
@@ -1863,417 +2258,40 @@ def api_download_docx():
 def api_leadership_email():
     """Generate a professional leadership outreach email."""
     try:
-        return _generate_leadership_email_impl()
+        from app.services.email_core import generate_email_core
+
+        data = request.get_json()
+        result = generate_email_core(
+            resume_text=data.get('resume_text', ''),
+            jd_text=data.get('jd_text', ''),
+            company_name=data.get('company_name', ''),
+            role_title=data.get('role_title', ''),
+            recipient_name=data.get('recipient_name', ''),
+            cover_letter_text=data.get('cover_letter_text', ''),
+            recipient_title=data.get('recipient_title', ''),
+            recipient_category=data.get('recipient_category', ''),
+            target_city=data.get('target_city', '').strip(),
+            previously_used_signals=data.get('previously_used_signals', []),
+            previously_used_subjects=data.get('previously_used_subjects', []),
+            previously_used_bodies=data.get('previously_used_bodies', []),
+            previously_used_proofs=data.get('previously_used_proofs', []),
+        )
+
+        if 'error' in result:
+            return jsonify({'error': result['error']}), result.get('status_code', 500)
+
+        return jsonify(result)
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Leadership email generation failed: {str(e)}'}), 500
 
 
-def _generate_leadership_email_impl():
-    import re as _re
-    import unicodedata as _ud
-
-    data = request.get_json()
-    resume_text = data.get('resume_text', '')
-    jd_text = data.get('jd_text', '')
-    company_name = data.get('company_name', '')
-    role_title = data.get('role_title', '')
-    recipient_name = data.get('recipient_name', '')
-    recipient_title = data.get('recipient_title', '')
-    recipient_category = data.get('recipient_category', '')
-    cover_letter_text = data.get('cover_letter_text', '')
-    target_city = data.get('target_city', '').strip()
-
-    TARGET_MIN = 120
-    TARGET_MAX = 150
-
-    if not jd_text or not resume_text:
-        return jsonify({'error': 'Both job description and resume text are required'}), 400
-
-    # Recipient name is REQUIRED — find their name on LinkedIn before generating
-    if not recipient_name or not recipient_name.strip():
-        return jsonify({'error': 'Recipient name is required. Find the actual person\'s name on LinkedIn or the company site before generating an outreach email — there is no greeting that fixes "I don\'t know who you are."'}), 400
-
-    first_name = recipient_name.strip().split()[0]
-
-    # Deduplication data (for multi-recipient: forces completely different emails)
-    previously_used_signals = data.get('previously_used_signals', [])
-    previously_used_subjects = data.get('previously_used_subjects', [])
-    previously_used_bodies = data.get('previously_used_bodies', [])
-    previously_used_proofs = data.get('previously_used_proofs', [])
-
-    total_tokens = 0
-    total_cost = 0.0
-
-    # ===== BANNED WORD CHECKER — enforced programmatically =====
-    def _check_banned_words(text):
-        """Check if body contains banned patterns. Returns list of violations."""
-        violations = []
-        text_lower = text.lower()
-        # Banned verbs/words
-        if 'maintained' in text_lower or 'maintaining' in text_lower or 'maintenance' in text_lower:
-            violations.append('"maintained" (passive verb — must use active: built, designed, scaled)')
-        if 'incident' in text_lower:
-            violations.append('"incidents" (frames candidate as firefighter, not builder)')
-        if 'resolving' in text_lower and any(c.isdigit() for c in text_lower.split('resolving')[-1][:20]):
-            violations.append('"resolving [number]" (incident count metric)')
-        # Banned proof types
-        if 'sop' in text_lower.split() or 'sops' in text_lower.split():
-            violations.append('"SOPs" (documentation is not engineering proof)')
-        if 'troubleshooting guide' in text_lower or 'troubleshooting doc' in text_lower:
-            violations.append('"troubleshooting guides" (documentation is not proof)')
-        if 'runbook' in text_lower:
-            violations.append('"runbook" (documentation is not proof)')
-        # Banned bridge patterns
-        if 'whether' in text_lower and 'the same' in text_lower:
-            violations.append('"Whether X or Y, the same..." (banned bridge sentence)')
-        if 'root cause analysis' in text_lower:
-            violations.append('"root cause analysis" (reactive, not building)')
-        # Banned AI inference language (new v3 — must sound human)
-        if 'tells me' in text_lower:
-            violations.append('"tells me" (AI inference language — use "I came across" style instead)')
-        if 'signals' in text_lower and ('your team' in text_lower or 'you are' in text_lower or "you're" in text_lower):
-            violations.append('"signals" (AI inference language — be straightforward)')
-        if 'means your team' in text_lower:
-            violations.append('"means your team" (AI inference language — be direct)')
-        # Banned cliché openers
-        if 'i hope this email finds you well' in text_lower:
-            violations.append('"I hope this email finds you well" (cliché opener)')
-        if 'i am writing to express' in text_lower:
-            violations.append('"I am writing to express" (cover letter language)')
-        if 'i believe i would be a great fit' in text_lower:
-            violations.append('"I believe I would be a great fit" (generic filler)')
-        # Banned false employment claims — candidate is a RECENT GRADUATE, not current Capgemini employee
-        if 'currently working at capgemini' in text_lower or 'currently work at capgemini' in text_lower:
-            violations.append('"currently working at Capgemini" (FALSE — candidate is a recent graduate, not a current employee)')
-        if "i'm currently a" in text_lower and 'capgemini' in text_lower:
-            violations.append('"I\'m currently a ... at Capgemini" (FALSE — use past tense: "At Capgemini, I built...")')
-        if 'i currently' in text_lower and 'capgemini' in text_lower:
-            violations.append('"I currently ... Capgemini" (FALSE — candidate previously worked there, use past tense)')
-        return violations
-
-    def _check_proof_similarity(body_text, used_proofs):
-        """Check if the proof in this email is too similar to previously used proofs."""
-        if not used_proofs:
-            return []
-        violations = []
-        body_lower = body_text.lower()
-        for prev_proof in used_proofs:
-            prev_lower = prev_proof.lower()
-            # Extract key metrics/phrases from previous proof
-            # If the same percentage or key metric appears in both, it's a duplicate
-            import re as _re_inner
-            prev_metrics = set(_re_inner.findall(r'\d+[%kK]?', prev_lower))
-            curr_metrics = set(_re_inner.findall(r'\d+[%kK]?', body_lower))
-            shared_metrics = prev_metrics & curr_metrics
-            # If they share a metric AND a key tech term, it's likely a duplicate
-            key_terms = ['ci/cd', 'jenkins', 'kubernetes', 'api', 'microservice', 'pipeline',
-                        'frontend', 'angular', 'automation', 'ml', 'bedrock', 'restful']
-            shared_terms = [t for t in key_terms if t in prev_lower and t in body_lower]
-            if shared_metrics and len(shared_terms) >= 2:
-                violations.append(f'Proof too similar to previous: shares metric(s) {shared_metrics} and terms {shared_terms}')
-        return violations
-
-    # Step 1: Generate email with AUTO-REJECT retry loop
-    MAX_GENERATION_ATTEMPTS = 3
-    response = None
-    generation_violations_log = []
-
-    for gen_attempt in range(MAX_GENERATION_ATTEMPTS):
-        user_message = build_leadership_email_message(
-            resume_text, jd_text, company_name, role_title,
-            recipient_name, cover_letter_text,
-            recipient_title, recipient_category,
-            previously_used_signals=previously_used_signals,
-            previously_used_subjects=previously_used_subjects,
-            previously_used_bodies=previously_used_bodies,
-            previously_used_proofs=previously_used_proofs,
-            tailored_resume_text=resume_text
-        )
-
-        # On retry, prepend rejection feedback to force a different output
-        if gen_attempt > 0 and generation_violations_log:
-            rejection_feedback = (
-                f"\n\n## ⛔ YOUR PREVIOUS OUTPUT WAS AUTO-REJECTED (attempt {gen_attempt})\n"
-                f"Violations found:\n"
-            )
-            for v in generation_violations_log[-1]:
-                rejection_feedback += f"  - {v}\n"
-            rejection_feedback += (
-                "\nYou MUST write a COMPLETELY DIFFERENT proof sentence. "
-                "Use an ACTIVE verb (built, designed, architected, scaled, deployed). "
-                "Choose a DIFFERENT achievement from the resume. "
-                "Do NOT use incidents, maintained, SOPs, or documentation. "
-                "The system will reject again if violations are found.\n"
-            )
-            user_message = rejection_feedback + user_message
-
-        result = claude.analyze(
-            LEADERSHIP_EMAIL_SYSTEM, user_message,
-            max_tokens=1000, force_json=True,
-            model_override='productionHigh'
-        )
-
-        if result.get('error'):
-            return jsonify({'error': result['error']}), 500
-
-        total_tokens += result.get('tokens_used', 0)
-        total_cost += result.get('cost_usd', 0.0)
-
-        response = result['response']
-        if not isinstance(response, dict):
-            raw = response if isinstance(response, str) else str(response)
-
-            # Attempt 1: Fix newlines inside JSON strings
-            try:
-                fixed = claude._fix_json_newlines(raw.strip())
-                parsed = json_mod.loads(fixed)
-                if isinstance(parsed, dict):
-                    response = parsed
-            except (json_mod.JSONDecodeError, ValueError):
-                pass
-
-            # Attempt 2: Extract JSON object with regex
-            if not isinstance(response, dict):
-                match = _re.search(r'\{[\s\S]*\}', raw)
-                if match:
-                    try:
-                        fixed = claude._fix_json_newlines(match.group(0))
-                        parsed = json_mod.loads(fixed)
-                        if isinstance(parsed, dict):
-                            response = parsed
-                    except (json_mod.JSONDecodeError, ValueError):
-                        pass
-
-            # Last resort
-            if not isinstance(response, dict):
-                response = {
-                    'subject': f'{company_name or "company"} role',
-                    'body': raw,
-                    'ref_number': '',
-                }
-
-        # Check for banned words
-        body_text = response.get('body', '')
-        violations = _check_banned_words(body_text)
-
-        # Check for proof similarity with previously used proofs
-        proof_sim_violations = _check_proof_similarity(body_text, previously_used_proofs)
-        violations.extend(proof_sim_violations)
-
-        if not violations:
-            print(f"[leadership-email] ✅ Generation attempt {gen_attempt + 1} passed QA checks")
-            break
-        else:
-            generation_violations_log.append(violations)
-            violation_str = ', '.join(violations)
-            print(f"[leadership-email] ⛔ AUTO-REJECT attempt {gen_attempt + 1}: {violation_str}")
-            if gen_attempt < MAX_GENERATION_ATTEMPTS - 1:
-                print(f"[leadership-email] 🔄 Regenerating (attempt {gen_attempt + 2})...")
-            else:
-                print(f"[leadership-email] ⚠️ Max retries reached — using last output despite violations")
-
-    subject = response.get('subject', '')
-    body = response.get('body', '')
-
-    # ===== ENCODING CLEANUP — strip non-ASCII artifacts =====
-    def _clean_encoding(text):
-        """Replace non-ASCII with closest ASCII equivalent or strip."""
-        # Common replacements
-        replacements = {
-            '\u00df': 'ss',  # ß → ss
-            '\u2018': "'", '\u2019': "'",  # smart single quotes
-            '\u201c': '"', '\u201d': '"',  # smart double quotes
-            '\u2013': '-', '\u2014': '-',  # en-dash, em-dash
-            '\u2026': '...',  # ellipsis
-            '\u00a0': ' ',  # non-breaking space
-        }
-        for char, repl in replacements.items():
-            text = text.replace(char, repl)
-        # Strip any remaining non-ASCII
-        text = text.encode('ascii', 'ignore').decode('ascii')
-        return text
-
-    subject = _clean_encoding(subject)
-    body = _clean_encoding(body)
-
-    # FORCE subject line rules — clean up but preserve descriptive format
-    if subject:
-        import re as _re_subj
-        # 1. Strip "Re:", "Fwd:", "RE:", etc. — BANNED (fake reply threads)
-        subject = _re_subj.sub(r'^(re:\s*|fwd?:\s*)+', '', subject, flags=_re_subj.IGNORECASE).strip()
-        # 2. Strip emoji
-        subject = _re_subj.sub(r'[\U00010000-\U0010ffff]', '', subject, flags=_re_subj.UNICODE).strip()
-        # 3. Strip exclamation points
-        subject = subject.replace('!', '')
-        # 4. Strip parenthetical content (e.g., "(ref 257494)")
-        subject = _re_subj.sub(r'\([^)]*\)', '', subject).strip()
-        # 5. Clean up multiple spaces
-        subject = _re_subj.sub(r'\s{2,}', ' ', subject).strip()
-        # 6. Truncate to 8 words max (descriptive but not a sentence)
-        words = subject.split()
-        if len(words) > 8:
-            subject = ' '.join(words[:8])
-            print(f"[leadership-email] Subject truncated to 8 words: {subject}")
-        # 7. Strip trailing punctuation
-        subject = subject.rstrip('.,;:--')
-
-        # 11. Dedup check — if this subject was already used, try to make it unique
-        if previously_used_subjects:
-            used_lower = [s.lower().strip() for s in previously_used_subjects]
-            if subject.lower().strip() in used_lower:
-                print(f"[leadership-email] ⚠️ Subject '{subject}' already used — needs manual review")
-
-        word_count_subj = len(subject.split())
-        print(f"[leadership-email] Subject enforced ({word_count_subj} words): {subject}")
-
-    if not body:
-        return jsonify({'error': 'Email generation failed — no body text returned'}), 500
-
-    # FORCE greeting — never trust the AI
-    import re as _re_greeting
-    body = _re_greeting.sub(
-        r'^\s*(Hi\s+\w+[,.]?|Hi\s+there[,.]?|Hi[,.]?|Hello\s+\w+[,.]?|Hello[,.]?|Hey\s+\w+[,.]?|Hey[,.]?|Dear\s+[^,\n]+[,.]?)\s*',
-        f'Hi {first_name},\n\n',
-        body,
-        count=1,
-        flags=_re_greeting.IGNORECASE
-    )
-    if not body.strip().lower().startswith(f'hi {first_name.lower()}'):
-        body = f'Hi {first_name},\n\n' + body.strip()
-
-    # Capitalize the first letter after the greeting line
-    greeting_end = f'Hi {first_name},\n\n'
-    if body.startswith(greeting_end) and len(body) > len(greeting_end):
-        rest = body[len(greeting_end):]
-        body = greeting_end + rest[0].upper() + rest[1:]
-
-    # Clean up excessive blank lines (3+ → 2) but preserve paragraph breaks
-    if greeting_end in body:
-        greeting_part = body[:body.index(greeting_end) + len(greeting_end)]
-        body_part = body[len(greeting_part):]
-        # Collapse 3+ newlines to 2 (preserve paragraph breaks, remove excess)
-        body_part = _re_greeting.sub(r'\n{3,}', '\n\n', body_part)
-        body = greeting_part + body_part.strip()
-
-    print(f'[leadership-email] Greeting forced: Hi {first_name},')
-    print(f'[leadership-email] Body formatted with paragraph breaks preserved')
-
-    # Step 2: Count words (exclude sign-off contact line)
-    def count_words(text):
-        lines = text.strip().split('\n')
-        body_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped.lower() in ['sincerely,', 'best regards,', 'regards,',
-                                     'warm regards,', 'respectfully,', 'best,']:
-                break
-            body_lines.append(stripped)
-        return len(' '.join(body_lines).split())
-
-    ref_number = response.get('ref_number', '')
-    # Strip REFENUM placeholder — if AI couldn't find a real ref, don't include it
-    if ref_number and ref_number.strip().upper() == 'REFENUM':
-        ref_number = ''
-        print("[leadership-email] Stripped REFENUM placeholder — no real ref found")
-
-    current_count = count_words(body)
-
-    # Step 3: Adjustment loop — enforce 35-60 words (max 3 retries)
-    MAX_RETRIES = 3
-    for attempt in range(MAX_RETRIES):
-        if TARGET_MIN <= current_count <= TARGET_MAX:
-            break
-
-        print(f"[leadership-email] Body word count: {current_count}, target: {TARGET_MIN}-{TARGET_MAX}. Adjusting (attempt {attempt + 1})...")
-        adjust_msg = build_email_adjust_message(body, current_count, TARGET_MIN, TARGET_MAX)
-        adjust_result = claude.analyze(
-            LEADERSHIP_EMAIL_ADJUST_SYSTEM, adjust_msg,
-            max_tokens=1000, force_json=True,
-            model_override='productionHigh'
-        )
-
-        total_tokens += adjust_result.get('tokens_used', 0)
-        total_cost += adjust_result.get('cost_usd', 0.0)
-
-        if adjust_result.get('error'):
-            break
-
-        adj_response = adjust_result['response']
-        if isinstance(adj_response, dict) and adj_response.get('adjusted_body'):
-            body = _clean_encoding(adj_response['adjusted_body'])
-            current_count = count_words(body)
-            response['body'] = body
-        else:
-            break
-
-    print(f"[leadership-email] Final word count: {current_count}")
-    print(f"[leadership-email] Subject: {subject[:80]}")
-
-    # Step 3.5: Quality checks — warn if AI ignored prompt rules
-    body_lower = body.lower()
-    if 'whether' in body_lower and 'the same' in body_lower:
-        print("[leadership-email] ⚠️ WARNING: Body contains banned bridge pattern ('Whether X or Y, the same...')")
-    if 'maintained' in body_lower:
-        print("[leadership-email] ⚠️ WARNING: Body contains 'maintained'")
-    if 'ref refenum' in body_lower or '(ref refenum)' in body_lower:
-        # Strip it from the body text too
-        body = _re.sub(r'\s*\(ref\s*REFENUM\)', '', body, flags=_re.IGNORECASE)
-        body = _re.sub(r'\s*ref\s+REFENUM', '', body, flags=_re.IGNORECASE)
-        print("[leadership-email] ✂️ Stripped 'ref REFENUM' from body text")
-
-
-    # Build sign-off with target city (if provided) instead of default Halifax
-    sign_off_location = _resolve_sign_off_location(target_city) if target_city else _DEFAULT_LOCATION
-    SIGN_OFF_BLOCK = _build_sign_off(sign_off_location)
-
-    # Strip any sign-off fragments the AI might have included despite instructions
-    lines = body.rstrip().split('\n')
-    clean_lines = []
-    for line in lines:
-        stripped = line.strip().lower()
-        if stripped in ['best regards,', 'best regards', 'best,', 'regards,',
-                        'sincerely,', 'warm regards,', 'meet patel',
-                        '+1 (902) 322-3808', 'meet', 'patel', 'meet patel,',
-                        'halifax, ns', 'halifax ns']:
-            continue
-        if 'linkedin.com/in/meettpatel28' in stripped:
-            continue
-        if stripped.startswith('+1 (902)'):
-            continue
-        # Strip any city/province line the AI may have auto-appended
-        if _re.match(r'^[a-z .\'-]+,\s*[a-z]{2}$', stripped):
-            continue
-        clean_lines.append(line)
-    body = '\n'.join(clean_lines).rstrip() + SIGN_OFF_BLOCK
-    print(f"[leadership-email] Sign-off appended with location: {sign_off_location}")
-
-    return jsonify({
-        'subject': subject,
-        'body': body,
-        'ref_number': ref_number if ref_number else None,
-        'word_count': current_count,
-        'signal_used': response.get('signal_used', ''),
-        'proof_point': response.get('proof_point', ''),
-        'proof_source': response.get('proof_source', ''),
-        'recipient_category': response.get('recipient_category', recipient_category or 'category_a'),
-        'skills_highlighted': response.get('skills_highlighted', []),
-        'metrics_used': response.get('metrics_used', []),
-        'company_name': company_name,
-        'role_title': role_title,
-        'recipient_name': recipient_name or '',
-        'recipient_title': recipient_title or '',
-        'tokens_used': total_tokens,
-        'cost_usd': total_cost,
-    })
-
-
 @tailor_bp.route('/api/download-leadership-email', methods=['POST'])
 @login_required
 def api_download_leadership_email_json():
     """Download leadership email(s) as a structured JSON file for automation."""
-    from datetime import datetime
+    from app.services.email_core import build_email_download
 
     data = request.get_json()
     company_name = data.get('company_name', '')
@@ -2282,7 +2300,6 @@ def api_download_leadership_email_json():
     # Support both multi-email (new) and single-email (backwards compat)
     emails = data.get('emails', None)
     if emails is None:
-        # Backwards compat: single email
         body = data.get('body', '')
         if not body:
             return jsonify({'error': 'No email body provided'}), 400
@@ -2303,53 +2320,9 @@ def api_download_leadership_email_json():
     if not emails or len(emails) == 0:
         return jsonify({'error': 'No emails provided'}), 400
 
-    # Add timestamps and clean up each email
-    for email in emails:
-        email['generated_at'] = datetime.now().isoformat()
-        # Strip REFENUM placeholder — don't include fake ref numbers in automation data
-        ref = email.get('ref_number', '')
-        if not ref or (isinstance(ref, str) and ref.strip().upper() == 'REFENUM'):
-            email.pop('ref_number', None)
-
-    # Build the output JSON
-    output = {
-        'company': company_name,
-        'role': role_title,
-        'generated_at': datetime.now().isoformat(),
-        'total_recipients': len(emails),
-        'emails': emails,
-    }
-
-    # Build filename: LastName_FirstName_Designation_Company
-    def _slug(text, max_len=25):
-        """Sanitize text into a safe filename slug."""
-        return ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in text.strip()).strip('_')[:max_len]
-
-    # Get recipient name from first email (or fall back to empty)
-    first_email = emails[0] if emails else {}
-    recipient_raw = first_email.get('recipient_name', '') or data.get('recipient_name', '')
-    name_parts = recipient_raw.strip().split()
-    if len(name_parts) >= 2:
-        first_name = _slug(name_parts[0])
-        last_name  = _slug(name_parts[-1])
-    elif len(name_parts) == 1:
-        first_name = _slug(name_parts[0])
-        last_name  = 'Unknown'
-    else:
-        first_name = 'Unknown'
-        last_name  = 'Unknown'
-
-    # Designation: use the RECIPIENT'S title (e.g. "HR Manager" → "HM", "Technical Recruiter" → "TR")
-    # Fall back to the applied-for role_title if recipient_title is empty
-    recipient_title_raw = (first_email.get('recipient_title', '') or data.get('recipient_title', '') or '').strip()
-    designation_raw = recipient_title_raw if recipient_title_raw else role_title.strip()
-    # Build initials from each word (capitalize each first letter)
-    initials = ''.join(w[0].upper() for w in designation_raw.split() if w)
-    designation = initials if initials else _slug(designation_raw, 20)
-
-    safe_company = _slug(company_name, 25) if company_name else 'Company'
-
-    filename = f"{last_name}_{first_name}_{designation}_{safe_company}.json"
+    output, filename = build_email_download(emails, company_name, role_title)
+    if not output:
+        return jsonify({'error': 'No emails provided'}), 400
 
     import io
     json_bytes = json_mod.dumps(output, indent=2, ensure_ascii=False).encode('utf-8')
@@ -2360,3 +2333,5 @@ def api_download_leadership_email_json():
         as_attachment=True,
         download_name=filename,
     )
+
+

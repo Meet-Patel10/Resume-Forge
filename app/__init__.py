@@ -29,6 +29,8 @@ def create_app(config_name=None):
 
     from app.routes.auth import auth_bp
     from app.routes.followup import followup_bp
+    from app.routes.outreach import outreach_bp
+    from app.routes.second_followup import second_followup_bp
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(main_bp)
     app.register_blueprint(analyze_bp, url_prefix='/analyze')
@@ -37,6 +39,10 @@ def create_app(config_name=None):
     app.register_blueprint(applications_bp, url_prefix='/applications')
     app.register_blueprint(interview_bp, url_prefix='/interview-prep')
     app.register_blueprint(followup_bp, url_prefix='/followup')
+    app.register_blueprint(outreach_bp, url_prefix='/outreach')
+    app.register_blueprint(second_followup_bp, url_prefix='/second-followup')
+
+
 
     # 30-day session for 'remember me'
     app.permanent_session_lifetime = timedelta(days=30)
@@ -45,5 +51,16 @@ def create_app(config_name=None):
     with app.app_context():
         from app.models import master_resume, bullet, application, analysis, user, resume_version
         db.create_all()
+
+    # Warm up NVIDIA GPU if using NVIDIA provider
+    # This sends a tiny background request to pre-load the model into GPU memory,
+    # eliminating cold-start timeouts (60-180s) on the first real user request.
+    if app.config.get('APP_ENV', 'testing').strip() == 'nvidia':
+        try:
+            from app.services.claude_client import nvidia as nvidia_client
+            with app.app_context():
+                nvidia_client.warmup()
+        except Exception as e:
+            print(f"[nvidia-warmup] Could not start warmup: {e}")
 
     return app

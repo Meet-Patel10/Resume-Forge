@@ -282,7 +282,8 @@ def build_leadership_email_message(resume_text, jd_text, company_name="", role_t
                                     previously_used_subjects=None,
                                     previously_used_bodies=None,
                                     previously_used_proofs=None,
-                                    tailored_resume_text=None):
+                                    tailored_resume_text=None,
+                                    project_updates_text=''):
     """Build the user message for cold outreach email generation.
 
     Args:
@@ -484,6 +485,7 @@ REMINDER: Do NOT include sign-off, name, phone, LinkedIn. Do NOT write "Whether 
 ## ====== MY RESUME ======
 {effective_resume_text}
 {cover_letter_section}
+{project_updates_text if project_updates_text else ''}
 {dedup_section}
 CHECKLIST:
 - Subject: follows formula "[Differentiator] – applied to [Role] at [Company]", 8-18 words

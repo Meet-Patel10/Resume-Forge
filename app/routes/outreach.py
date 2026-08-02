@@ -5,6 +5,7 @@ from flask import Blueprint, render_template, request, jsonify, session, send_fi
 from app.routes.auth import login_required
 from app.services.email_core import generate_email_core, build_email_download
 from app.services.resume_parser import parse_resume_file
+from app.services.github_fetcher import get_project_updates_for_prompt
 
 outreach_bp = Blueprint('outreach', __name__)
 
@@ -81,6 +82,9 @@ def api_generate_outreach_email():
         previously_used_bodies = _parse_json_field('previously_used_bodies')
         previously_used_proofs = _parse_json_field('previously_used_proofs')
 
+        # ── Fetch GitHub project updates (once per request) ──
+        project_updates_text = get_project_updates_for_prompt()
+
         # ── Generate email using shared core ──
         result = generate_email_core(
             resume_text=resume_text,
@@ -96,6 +100,7 @@ def api_generate_outreach_email():
             previously_used_subjects=previously_used_subjects,
             previously_used_bodies=previously_used_bodies,
             previously_used_proofs=previously_used_proofs,
+            project_updates_text=project_updates_text,
         )
 
         if 'error' in result:

@@ -62,6 +62,7 @@ def generate_email_core(
     previously_used_subjects=None,
     previously_used_bodies=None,
     previously_used_proofs=None,
+    project_updates_text='',
 ):
     """Core email generation logic. Returns a dict with email data or error.
 
@@ -182,7 +183,8 @@ def generate_email_core(
             previously_used_subjects=previously_used_subjects,
             previously_used_bodies=previously_used_bodies,
             previously_used_proofs=previously_used_proofs,
-            tailored_resume_text=resume_text
+            tailored_resume_text=resume_text,
+            project_updates_text=project_updates_text,
         )
 
         # On retry, prepend rejection feedback
@@ -422,7 +424,8 @@ def generate_email_core(
                     previously_used_subjects=previously_used_subjects,
                     previously_used_bodies=previously_used_bodies,
                     previously_used_proofs=previously_used_proofs,
-                    tailored_resume_text=resume_text
+                    tailored_resume_text=resume_text,
+                    project_updates_text=project_updates_text,
                 )
 
                 regen_result = ai_client.analyze(

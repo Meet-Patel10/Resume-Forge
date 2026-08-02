@@ -9,22 +9,36 @@ import re as _re
 from datetime import datetime
 from flask import Blueprint, render_template, request, jsonify, session
 from app.routes.auth import login_required
-from app.services.claude_client import BedrockClient
+from app.services.claude_client import BedrockClient, NvidiaClient
+from app.services.github_fetcher import get_project_updates_for_prompt
 from app.services.prompts.second_followup_email import (
     SECOND_FOLLOWUP_EMAIL_SYSTEM,
     build_second_followup_email_message,
     SECOND_FOLLOWUP_ADJUST_SYSTEM,
     build_second_followup_adjust_message,
+    RESPONSE_AWARE_SECOND_FOLLOWUP_SYSTEM,
+    build_response_aware_second_followup_message,
 )
 
 from app.services.email_core import build_sign_off, resolve_sign_off_location, _DEFAULT_LOCATION
 
 second_followup_bp = Blueprint('second_followup', __name__)
-bedrock = BedrockClient()
+
+
+def _get_ai_client():
+    """Get the right AI client based on APP_ENV."""
+    from flask import current_app
+    app_env = current_app.config.get('APP_ENV', 'testing').strip()
+    if app_env == 'nvidia':
+        print("[second-followup] Using NVIDIA Llama-3.3-Nemotron")
+        return NvidiaClient()
+    else:
+        print(f"[second-followup] Using AWS Bedrock/Claude (APP_ENV={app_env})")
+        return BedrockClient()
 
 # ========== Constants ==========
-TARGET_MIN = 50
-TARGET_MAX = 90
+TARGET_MIN = 40
+TARGET_MAX = 65
 
 
 # ========== Shared Utilities (same as first follow-up) ==========
@@ -132,8 +146,12 @@ def _count_words(text):
     return len(body_text.split())
 
 
-def _generate_single_second_followup(original_email, followup_email, company_name, role_title):
-    """Generate a second follow-up email for a single recipient. Returns dict."""
+def _generate_single_second_followup(original_email, followup_email, company_name, role_title, response_text='', project_updates_text=''):
+    """Generate a second follow-up email for a single recipient. Returns dict.
+
+    If response_text is provided, generates a response-aware reply instead
+    of a generic second follow-up.
+    """
 
     recipient_name = followup_email.get('recipient_name', '')
     recipient_email = followup_email.get('recipient_email', '')
@@ -148,6 +166,8 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
     original_subject = original_email.get('subject', '') if original_email else ''
     original_body = original_email.get('body', '') if original_email else ''
 
+    is_response_aware = bool(response_text and response_text.strip())
+
     if not recipient_name or not recipient_name.strip():
         return {
             'error': f'Missing recipient name for email to {recipient_email}',
@@ -158,6 +178,9 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
     total_tokens = 0
     total_cost = 0.0
 
+    # Get AI client based on APP_ENV
+    ai_client = _get_ai_client()
+
     # Extract location from follow-up email's sign-off
     original_location = _DEFAULT_LOCATION
     source_body = followup_body or original_body
@@ -166,25 +189,46 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
         for idx, line in enumerate(lines):
             if 'linkedin.com/in/meettpatel28' in line.lower() and idx > 0:
                 candidate = lines[idx - 1].strip()
-                if _re.match(r'^[A-Za-z .\'-]+,\s*[A-Z]{2}$', candidate):
+                if _re.match(r'^[A-Za-z .\'\-]+,\s*[A-Z]{2}$', candidate):
                     original_location = candidate
                     break
     print(f"[second-followup] Location from previous: {original_location}")
 
-    print(f"\n[second-followup] === Generating second follow-up for {recipient_name} ({recipient_title}) ===")
+    mode_label = 'RESPONSE-AWARE REPLY' if is_response_aware else 'SECOND FOLLOW-UP'
+    print(f"\n[second-followup] === {mode_label} for {recipient_name} ({recipient_title}) ===")
+    if is_response_aware:
+        print(f"[second-followup] Response text ({len(response_text)} chars): {response_text[:120]}...")
 
-    # Build the user message
-    user_message = build_second_followup_email_message(
-        original_email_body=original_body,
-        original_subject=original_subject,
-        first_followup_body=followup_body,
-        first_followup_subject=followup_subject,
-        company_name=company_name,
-        role_title=role_title,
-        recipient_name=recipient_name,
-        recipient_title=recipient_title,
-        recipient_category=recipient_category,
-    )
+    # Build the user message — branch based on whether we have a response
+    if is_response_aware:
+        system_prompt = RESPONSE_AWARE_SECOND_FOLLOWUP_SYSTEM
+        user_message = build_response_aware_second_followup_message(
+            original_email_body=original_body,
+            original_subject=original_subject,
+            first_followup_body=followup_body,
+            first_followup_subject=followup_subject,
+            recipient_response_text=response_text.strip(),
+            company_name=company_name,
+            role_title=role_title,
+            recipient_name=recipient_name,
+            recipient_title=recipient_title,
+            recipient_category=recipient_category,
+            project_updates_text=project_updates_text,
+        )
+    else:
+        system_prompt = SECOND_FOLLOWUP_EMAIL_SYSTEM
+        user_message = build_second_followup_email_message(
+            original_email_body=original_body,
+            original_subject=original_subject,
+            first_followup_body=followup_body,
+            first_followup_subject=followup_subject,
+            company_name=company_name,
+            role_title=role_title,
+            recipient_name=recipient_name,
+            recipient_title=recipient_title,
+            recipient_category=recipient_category,
+            project_updates_text=project_updates_text,
+        )
 
     # Generate with retry loop
     MAX_RETRIES = 3
@@ -194,8 +238,8 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"[second-followup] Attempt {attempt}/{MAX_RETRIES}")
 
-        result = bedrock.analyze(
-            system_prompt=SECOND_FOLLOWUP_EMAIL_SYSTEM,
+        result = ai_client.analyze(
+            system_prompt=system_prompt,
             user_message=user_message,
             max_tokens=1024,
             temperature=0.5,
@@ -274,7 +318,7 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
         print(f"[second-followup] Adjusting word count ({word_count} -> {TARGET_MIN}-{TARGET_MAX})")
 
         adjust_message = build_second_followup_adjust_message(body, word_count, TARGET_MIN, TARGET_MAX)
-        adjust_result = bedrock.analyze(
+        adjust_result = ai_client.analyze(
             system_prompt=SECOND_FOLLOWUP_ADJUST_SYSTEM,
             user_message=adjust_message,
             max_tokens=1024,
@@ -330,9 +374,10 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
                     recipient_name=recipient_name,
                     recipient_title=recipient_title,
                     recipient_category=recipient_category,
+                    project_updates_text=project_updates_text,
                 )
 
-                regen_result = bedrock.analyze(
+                regen_result = ai_client.analyze(
                     system_prompt=SECOND_FOLLOWUP_EMAIL_SYSTEM,
                     user_message=regen_message,
                     max_tokens=1024,
@@ -385,6 +430,7 @@ def _generate_single_second_followup(original_email, followup_email, company_nam
         'recipient_category': recipient_category,
         'signal_used': f'Second follow-up to: {followup_subject}',
         'word_count': final_word_count,
+        'is_response_reply': is_response_aware,
         'generated_at': datetime.now().isoformat(),
         'tokens_used': total_tokens,
         'cost_usd': total_cost,
@@ -466,9 +512,26 @@ def generate_second_followups():
     total_tokens = 0
     total_cost = 0.0
 
+    # Extract per-recipient responses from the request
+    responses_map = {}
+    try:
+        responses_json = request.form.get('responses', '{}')
+        responses_map = json.loads(responses_json) if responses_json else {}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Fetch GitHub project updates (once per batch)
+    project_updates_text = get_project_updates_for_prompt()
+
     for i, followup_email in enumerate(followup_emails):
         recipient_name = followup_email.get('recipient_name', f'Recipient {i+1}')
+        recipient_email_addr = followup_email.get('recipient_email', '')
         print(f"\n[second-followup] --- [{i+1}/{len(followup_emails)}] {recipient_name} ---")
+
+        # Check if user provided a response for this recipient
+        response_text = responses_map.get(recipient_email_addr, '')
+        if response_text:
+            print(f"[second-followup] 📨 Response provided for {recipient_name}")
 
         # Try to find the original outreach email for this recipient
         key = (recipient_name.strip().lower(), followup_email.get('recipient_email', '').strip().lower())
@@ -485,7 +548,7 @@ def generate_second_followups():
         else:
             print(f"[second-followup] ⚠️ No original outreach found for {recipient_name} — using follow-up only")
 
-        result = _generate_single_second_followup(original_email, followup_email, company_name, role_title)
+        result = _generate_single_second_followup(original_email, followup_email, company_name, role_title, response_text=response_text, project_updates_text=project_updates_text)
 
         if 'error' in result:
             errors.append(result)

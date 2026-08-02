@@ -2259,8 +2259,13 @@ def api_leadership_email():
     """Generate a professional leadership outreach email."""
     try:
         from app.services.email_core import generate_email_core
+        from app.services.github_fetcher import get_project_updates_for_prompt
 
         data = request.get_json()
+
+        # Fetch GitHub project updates (once per request)
+        project_updates_text = get_project_updates_for_prompt()
+
         result = generate_email_core(
             resume_text=data.get('resume_text', ''),
             jd_text=data.get('jd_text', ''),
@@ -2275,6 +2280,7 @@ def api_leadership_email():
             previously_used_subjects=data.get('previously_used_subjects', []),
             previously_used_bodies=data.get('previously_used_bodies', []),
             previously_used_proofs=data.get('previously_used_proofs', []),
+            project_updates_text=project_updates_text,
         )
 
         if 'error' in result:

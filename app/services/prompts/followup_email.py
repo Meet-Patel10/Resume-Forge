@@ -133,6 +133,7 @@ def build_followup_email_message(
     recipient_name,
     recipient_title,
     recipient_category='category_a',
+    project_updates_text='',
 ):
     """Build the user message for follow-up email generation."""
 
@@ -145,6 +146,17 @@ def build_followup_email_message(
     }
     category_str = category_descriptions.get(recipient_category, category_descriptions['category_a'])
 
+    # Optional project updates section
+    updates_section = ''
+    if project_updates_text:
+        updates_section = f"""
+---
+
+{project_updates_text}
+
+**FOR FOLLOW-UPS:** Use 1 recent update as your "new value" — e.g., "Since my last email, I shipped [feature] in ResumeForge" — this shows active development without re-pitching.
+"""
+
     return f"""## FOLLOW-UP EMAIL GENERATION
 
 ### ORIGINAL EMAIL (sent previously — do NOT copy this, write something NEW)
@@ -153,7 +165,7 @@ def build_followup_email_message(
 
 **Original Body:**
 {original_email_body}
-
+{updates_section}
 ---
 
 ### TASK: Write a follow-up email for this recipient.
@@ -200,3 +212,164 @@ def build_followup_adjust_message(body_text, current_count, target_min=80, targe
 {body_text}
 
 {direction} approximately {abs(diff)} words. Keep all metrics, company name, role title, greeting, and ask intact. DO NOT add a sign-off — the system handles that. Cut adjectives and qualifiers first. Preserve paragraph breaks between paragraphs. All characters must be plain ASCII. Maintain conversational tone. Output the full adjusted body."""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  RESPONSE-AWARE FOLLOW-UP — When the recipient actually replied
+# ═══════════════════════════════════════════════════════════════════════
+
+RESPONSE_AWARE_FOLLOWUP_SYSTEM = """You are an expert at writing REPLY emails to people who responded to a cold outreach. This is NOT a follow-up to silence — the recipient ACTUALLY REPLIED. This changes everything about tone, structure, and strategy.
+
+## CONTEXT
+The candidate sent a cold outreach email about a job role. The recipient RESPONDED. You are now writing a smart, contextual reply that:
+1. Acknowledges their response specifically (reference what they said)
+2. Matches their energy level — if they were brief, you be brief. If they were warm, you can be warmer.
+3. Moves the conversation toward the next concrete step
+4. Shows gratitude WITHOUT being over-the-top
+
+## CANDIDATE PROFILE (MANDATORY):
+- Recent graduate: MSc in Applied Computer Science, St. Francis Xavier University
+- Currently building ResumeForge (AI-powered resume intelligence platform)
+- Previously worked at Capgemini as Software Engineer (PAST TENSE only)
+- NEVER say "I'm currently working at Capgemini" — FALSE
+- NEVER invent numbers for ResumeForge (no user counts, no accuracy percentages)
+
+## RESPONSE TYPES AND STRATEGIES
+
+### Type A: REFERRAL ("I've forwarded your resume" / "Passed it to the hiring team")
+- Thank them sincerely — this is a WIN, they took action
+- Ask a clarifying follow-up: "Would it be helpful if I reached out to them directly, or better to wait for them to contact me?"
+- Do NOT ask for MORE from this person — they already helped
+- Keep it SHORT (3-4 sentences max)
+
+### Type B: REDIRECT ("Try applying through our portal" / "Not my department")
+- Thank them for the direction
+- Confirm you'll take the action they suggested
+- Ask ONE clarifying question: "Is there a specific team or person I should mention?"
+- Do NOT push back or re-pitch — they told you what to do, do it
+
+### Type C: SOFT REJECTION ("Not hiring right now" / "No openings")
+- Thank them for taking the time to respond (most people don't)
+- Ask if you can stay in touch for future openings — ONE sentence
+- Do NOT re-pitch, do NOT argue, do NOT "overcome the objection"
+- Graceful exit leaves the door open
+
+### Type D: POSITIVE INTEREST ("Let's set up a call" / "Send me your resume" / "Tell me more")
+- This is the golden reply — respond promptly and specifically
+- If they ask for a document: confirm you'll send it
+- If they suggest a call: provide 2-3 specific time slots
+- If they want more info: give ONE concise paragraph of relevant detail, not your life story
+- Match their enthusiasm but don't overdo it
+
+### Type E: QUESTION ("What specifically did you work on?" / "Tell me about your experience with X")
+- Answer the question DIRECTLY — do not hedge
+- Use specific examples from resume/projects
+- Keep answer tight: 2-3 sentences for the answer, then redirect to next step
+- Do NOT dump your entire resume — answer ONLY what they asked
+
+### Type F: AMBIGUOUS / SHORT ("Thanks" / "Noted" / "Interesting")
+- Reply briefly: "Thanks for reading — just wanted to make sure my application didn't get lost. Happy to share more if useful."
+- Do NOT over-interpret a one-word reply
+- Do NOT write a paragraph in response to "Thanks"
+- Match their brevity
+
+## TONE RULES
+- You are REPLYING to someone who took time to respond — be grateful
+- DO NOT re-pitch if they didn't ask for it
+- DO NOT use corporate phrases: "I hope this email finds you well", "leverage", "synergy"
+- USE contractions: I'm, I've, I'd, don't
+- Be HUMAN — this is a conversation now, not outreach
+- Match the formality level of their response
+
+## ABSOLUTE BANS — AUTO-REJECT
+1. "I hope this email finds you well" — BANNED
+2. Re-sending your entire pitch when they didn't ask — BANNED
+3. "maintained" in any form — BANNED
+4. "tells me" / "signals" / "means your team" — BANNED
+5. Fabricating ResumeForge metrics — BANNED
+6. "I'm currently working at Capgemini" — FALSE, BANNED
+7. Over-the-top gratitude: "I am so incredibly grateful" / "This means the world to me" — BANNED
+8. "Just to circle back" — BANNED
+
+## OUTPUT FORMAT
+Return ONLY valid JSON:
+{
+  "subject": "your reply subject line (usually Re: original subject)",
+  "body": "the full reply body (greeting through closing, NO sign-off)"
+}
+
+Do NOT include any text before or after the JSON. Do NOT wrap in markdown code blocks."""
+
+
+def build_response_aware_followup_message(
+    original_email_body,
+    original_subject,
+    recipient_response_text,
+    company_name,
+    role_title,
+    recipient_name,
+    recipient_title,
+    recipient_category='category_a',
+    project_updates_text='',
+):
+    """Build the user message for a response-aware follow-up (recipient replied)."""
+
+    first_name = recipient_name.strip().split()[0] if recipient_name and recipient_name.strip() else '[Name]'
+
+    category_descriptions = {
+        'category_a': 'Recruiter / Talent Acquisition',
+        'category_b': 'Hiring Manager / Team Lead',
+        'category_c': 'VP / Director / Executive',
+    }
+    category_str = category_descriptions.get(recipient_category, category_descriptions['category_a'])
+
+    # Optional project updates for response-aware replies
+    updates_hint = ''
+    if project_updates_text:
+        updates_hint = f"""
+---
+
+{project_updates_text}
+
+**FOR RESPONSE REPLIES:** Only reference a recent update if they asked about your work or if it naturally fits the conversation. Do NOT force project updates into a reply.
+"""
+
+    return f"""## RESPONSE-AWARE REPLY GENERATION
+
+### YOUR ORIGINAL OUTREACH EMAIL (what you sent first)
+
+**Original Subject:** {original_subject}
+
+**Original Body:**
+{original_email_body}
+
+---
+
+### RECIPIENT'S RESPONSE (what they replied with)
+
+{recipient_response_text}
+{updates_hint}
+---
+
+### TASK: Write a smart reply to their response.
+
+## Company: {company_name}
+## Role: {role_title}
+## Recipient: {recipient_name} — {recipient_title}
+## Greeting: Use "Hi {first_name},"
+## Recipient Level: {category_str}
+
+### SELF-CHECK BEFORE WRITING:
+1. Read your original outreach above.
+2. Read the recipient's response carefully.
+3. Identify the response TYPE (referral, redirect, rejection, positive interest, question, ambiguous).
+4. Write a reply that DIRECTLY addresses what they said.
+5. Keep it 40-100 words (body only, no sign-off).
+6. Use 1-2 paragraphs max.
+7. Do NOT include sign-off, name, phone, or LinkedIn.
+8. Do NOT re-pitch unless they explicitly asked for more info.
+9. Be grateful without being excessive.
+10. Move toward the next concrete step.
+
+### WRITE THE REPLY NOW (JSON format):"""
+

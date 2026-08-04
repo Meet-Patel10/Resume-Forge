@@ -145,18 +145,124 @@
 
         <!-- LaTeX Output -->
         <div class="tailor-tab-content active" id="ttab-latex">
-            <div class="card">
-                <div class="flex-between mb-4">
-                    <h3 class="card-title">Edit LaTeX & Export</h3>
-                    <div class="flex gap-4" style="flex-wrap: wrap;">
-                        <button class="btn btn-sm btn-secondary" onclick="selectAllLatex()">🔘 Select All</button>
-                        <button class="btn btn-sm btn-primary" onclick="copyLatex()">📋 Copy to Clipboard</button>
-                        <button class="btn btn-sm btn-secondary" onclick="downloadPDF()" id="btn-download-pdf">📥 Download PDF</button>
-                        <button class="btn btn-sm btn-secondary" onclick="downloadDOCX()" id="btn-download-docx">📄 Download DOCX</button>
+            <!-- Split-pane: LaTeX editor (left) + PDF preview (right) -->
+            <style>
+                .latex-split-pane {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 1rem;
+                }
+                @media (max-width: 900px) {
+                    .latex-split-pane { grid-template-columns: 1fr; }
+                }
+                .pdf-preview-frame {
+                    width: 100%;
+                    min-height: 600px;
+                    height: 100%;
+                    border: 1px solid var(--border-primary);
+                    border-radius: var(--radius-md);
+                    background: var(--bg-tertiary);
+                }
+                .pdf-preview-empty {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 600px;
+                    color: var(--text-muted);
+                    font-size: var(--text-sm);
+                    gap: 0.75rem;
+                    border: 1px dashed var(--border-primary);
+                    border-radius: var(--radius-md);
+                    background: var(--bg-tertiary);
+                }
+                .pdf-preview-empty .icon { font-size: 2.5rem; opacity: 0.5; }
+                .pdf-preview-loading {
+                    display: none;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 600px;
+                    color: var(--text-muted);
+                    font-size: var(--text-sm);
+                    gap: 0.75rem;
+                    border: 1px dashed var(--border-primary);
+                    border-radius: var(--radius-md);
+                    background: var(--bg-tertiary);
+                }
+                .pdf-preview-loading .spinner {
+                    width: 32px; height: 32px;
+                    border: 3px solid var(--border-primary);
+                    border-top-color: var(--accent-primary);
+                    border-radius: 50%;
+                    animation: spin 0.8s linear infinite;
+                }
+                @keyframes spin { to { transform: rotate(360deg); } }
+                .pdf-preview-error {
+                    display: none;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    min-height: 600px;
+                    color: var(--text-muted);
+                    font-size: var(--text-sm);
+                    gap: 0.75rem;
+                    border: 1px dashed var(--border-primary);
+                    border-radius: var(--radius-md);
+                    background: var(--bg-tertiary);
+                    padding: 1.5rem;
+                    text-align: center;
+                }
+                .pdf-preview-error .icon { font-size: 2rem; }
+                .pdf-preview-error .error-msg { color: var(--text-error, #f87171); font-size: var(--text-xs); max-width: 300px; word-break: break-word; }
+            </style>
+
+            <div class="latex-split-pane">
+                <!-- LEFT: LaTeX Code Editor -->
+                <div class="card">
+                    <div class="flex-between mb-4">
+                        <h3 class="card-title">Edit LaTeX & Export</h3>
+                        <div class="flex gap-4" style="flex-wrap: wrap;">
+                            <button class="btn btn-sm btn-secondary" onclick="selectAllLatex()">🔘 Select All</button>
+                            <button class="btn btn-sm btn-primary" onclick="copyLatex()">📋 Copy</button>
+                            <button class="btn btn-sm btn-secondary" onclick="downloadPDF()" id="btn-download-pdf">📥 PDF</button>
+                            <button class="btn btn-sm btn-secondary" onclick="downloadDOCX()" id="btn-download-docx">📄 DOCX</button>
+                        </div>
                     </div>
+                    <textarea id="latex-output" class="form-textarea"
+                              style="font-family: var(--font-mono); font-size: var(--text-sm); min-height: 600px; line-height: 1.5; background: var(--bg-tertiary); color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word;"></textarea>
                 </div>
-                <textarea id="latex-output" class="form-textarea"
-                          style="font-family: var(--font-mono); font-size: var(--text-sm); min-height: 500px; line-height: 1.5; background: var(--bg-tertiary); color: var(--text-primary); white-space: pre; overflow-x: auto;"></textarea>
+
+                <!-- RIGHT: PDF Preview -->
+                <div class="card">
+                    <div class="flex-between mb-4">
+                        <h3 class="card-title">PDF Preview</h3>
+                        <button class="btn btn-sm btn-primary" onclick="renderPDFPreview()" id="btn-refresh-preview">🔄 Refresh Preview</button>
+                    </div>
+
+                    <!-- Empty state -->
+                    <div id="pdf-preview-empty" class="pdf-preview-empty">
+                        <span class="icon">📄</span>
+                        <span>PDF preview will appear here after tailoring</span>
+                    </div>
+
+                    <!-- Loading state -->
+                    <div id="pdf-preview-loading" class="pdf-preview-loading">
+                        <div class="spinner"></div>
+                        <span>Compiling PDF...</span>
+                    </div>
+
+                    <!-- Error state -->
+                    <div id="pdf-preview-error" class="pdf-preview-error">
+                        <span class="icon">⚠️</span>
+                        <span>PDF compilation failed</span>
+                        <span class="error-msg" id="pdf-preview-error-msg"></span>
+                        <button class="btn btn-sm btn-secondary" onclick="renderPDFPreview()" style="margin-top: 0.5rem;">🔄 Retry</button>
+                    </div>
+
+                    <!-- PDF iframe -->
+                    <iframe id="pdf-preview-iframe" class="pdf-preview-frame" style="display: none;"></iframe>
+                </div>
             </div>
 
             <!-- Instant Re-Score -->
@@ -789,6 +895,9 @@
             document.getElementById('tailor-sim-section').style.display = 'block';
 
             showToast('Resume tailored and humanized! Copy the LaTeX code to Overleaf.', 'success');
+
+            // Auto-render PDF preview
+            renderPDFPreview();
         } catch (e) {
             hideLoading();
             showToast('API error: ' + e.message, 'error');
@@ -872,6 +981,64 @@
         textarea.select();
         textarea.setSelectionRange(0, 99999);
         showToast('All text selected — press Ctrl+C / Cmd+C to copy.', 'info');
+    }
+
+    // ===== PDF Preview =====
+    let currentPdfBlobUrl = null;
+
+    function _setPdfState(state, errorMsg) {
+        const empty = document.getElementById('pdf-preview-empty');
+        const loading = document.getElementById('pdf-preview-loading');
+        const error = document.getElementById('pdf-preview-error');
+        const iframe = document.getElementById('pdf-preview-iframe');
+
+        empty.style.display = state === 'empty' ? 'flex' : 'none';
+        loading.style.display = state === 'loading' ? 'flex' : 'none';
+        error.style.display = state === 'error' ? 'flex' : 'none';
+        iframe.style.display = state === 'ready' ? 'block' : 'none';
+
+        if (state === 'error' && errorMsg) {
+            document.getElementById('pdf-preview-error-msg').textContent = errorMsg;
+        }
+    }
+
+    async function renderPDFPreview() {
+        const latex = document.getElementById('latex-output').value;
+        if (!latex) {
+            _setPdfState('empty');
+            return;
+        }
+
+        if (currentPdfBlobUrl) {
+            URL.revokeObjectURL(currentPdfBlobUrl);
+            currentPdfBlobUrl = null;
+        }
+
+        _setPdfState('loading');
+
+        try {
+            const res = await fetch('/tailor/api/download-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ latex_code: latex }),
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('pdf')) {
+                const blob = await res.blob();
+                currentPdfBlobUrl = URL.createObjectURL(blob);
+                document.getElementById('pdf-preview-iframe').src = currentPdfBlobUrl;
+                _setPdfState('ready');
+            } else {
+                let errMsg = 'Compilation failed';
+                try {
+                    const data = await res.json();
+                    errMsg = data.error || errMsg;
+                } catch (_) {}
+                _setPdfState('error', errMsg);
+            }
+        } catch (e) {
+            _setPdfState('error', e.message);
+        }
     }
 
     // ===== Cover Letter =====

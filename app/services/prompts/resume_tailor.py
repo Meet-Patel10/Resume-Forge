@@ -609,10 +609,29 @@ def _extract_summary(resume_text):
     return ''
 
 
+
+def _build_soft_skills_context(soft_skills_data):
+    """Build a prompt section for soft skills gap analysis."""
+    if not soft_skills_data:
+        return ""
+    jd_ss = soft_skills_data.get('jd_soft_skills', [])
+    resume_ss = soft_skills_data.get('resume_soft_skills', [])
+    missing_ss = soft_skills_data.get('missing_soft_skills', [])
+    if not jd_ss:
+        return ""
+    lines = ["\n## SOFT SKILLS GAP ANALYSIS"]
+    lines.append(f"JD emphasizes: {', '.join(jd_ss)}")
+    lines.append(f"Resume already demonstrates: {', '.join(resume_ss) if resume_ss else 'none'}")
+    if missing_ss:
+        lines.append(f"MISSING (weave into Experience bullets where provable): {', '.join(missing_ss)}")
+        lines.append("Rule: Do NOT fabricate soft skills. Only weave them into bullets where the candidate's actual work demonstrates the skill.")
+    return "\n".join(lines)
+
+
 def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
                          critique_data=None, keyword_data=None, jd_analysis=None,
                          rag_context=None, title_injection_mode='none',
-                         role_title=''):
+                         role_title='', soft_skills_data=None):
     """Assemble the user message for the tailor prompt with all context."""
     # figure out section order so we can tell the AI to preserve it
     section_order = _detect_section_order(resume_text)
@@ -649,6 +668,11 @@ def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
         soft_skills = jd_analysis.get('soft_skills', [])
         if soft_skills:
             sections.append(f'SOFT SKILLS FROM JD — if provable in Experience/Projects, may be woven into Summary Sentence 2: {", ".join(soft_skills)}')
+
+        # Soft skills integration note:
+        # If missing_soft_skills are provided, rewrite bullets to include evidence of these soft skills.
+        # Example: "Built authentication module" → "Collaborated with design team to build authentication module"
+        # Ensure every bullet has both technical AND soft skill signals.
 
         # Top keywords
         top_keywords = jd_analysis.get('top_keywords', [])
@@ -825,6 +849,7 @@ IMPORTANT: This OVERRIDES the immutable titles rule for this specific modificati
 {rag_context_block}
 {hard_skills_directive}
 {title_injection_directive}
+{_build_soft_skills_context(soft_skills_data)}
 
 TAILOR this resume for the job above. STRICT RULES:
 1. 4-FILTER KEYWORD EXTRACTION: Run all 4 filters (Priority → Role-Definition → Honesty/Match → Density/Placement) BEFORE tailoring any section. Only keywords that survive all 4 filters get placed.
@@ -839,7 +864,8 @@ TAILOR this resume for the job above. STRICT RULES:
 10. Skills-Experience CONSISTENCY: If Experience mentions Angular, Skills must include Angular. If Experience has no React, Skills must not claim React.
 11. GRAMMAR & SPELLING FINAL PASS: Before outputting, re-read EVERY line. Fix ALL spelling errors, grammar mistakes, article misuse ("a" vs "an"), tense inconsistencies, and awkward phrasing from keyword injection. Zero tolerance — a single error is unacceptable.
 12. Output the structured JSON for LaTeX rendering
-{title_injection_rule}"""
+{title_injection_rule}
+{'13. SOFT SKILLS INJECTION: If SOFT SKILLS GAP ANALYSIS is provided above, weave MISSING soft skills into Experience bullets where the candidates actual work demonstrates the skill. Do NOT fabricate — only add soft skill language (e.g., \"collaborated\", \"communicated\", \"led\") to bullets where the original work naturally involved that skill. Do NOT add soft skills to the Skills section.' if soft_skills_data else ''}"""
 
 
 # ──────────────────────────────────────────────────────────────────────────────

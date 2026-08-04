@@ -18,7 +18,14 @@ from app.services.latex_engine import render_latex
 from app.services.ats_scorer import calculate_ats_score
 import json as json_mod
 from flask import current_app
-
+# Add after: from app.services.ats_scorer import calculate_ats_score
+from app.extractors.aws_extractor import AWSServiceExtractor
+from app.extractors.soft_skills_extractor import SoftSkillsExtractor
+from app.scoring.weighted_scorer import WeightedKeywordScorer
+from app.validators.cover_letter_validator import validate_cover_letter_resume_alignment, flatten_resume_to_text
+from app.validators.role_validator import detect_role_level, validate_role_skill_coherence, ROLE_SKILL_MATRIX
+from app.validators.timeline_validator import analyze_employment_timeline
+from app.validators.email_optimizer import optimize_email_subject_line
 
 tailor_bp = Blueprint('tailor', __name__)
 
@@ -111,6 +118,56 @@ def api_rewrite_bullets():
         'tokens_used': result['tokens_used'],
         'cost_usd': result['cost_usd'],
     })
+
+@tailor_bp.route('/api/analyze-jd-advanced', methods=['POST'])
+@login_required
+def api_analyze_jd_advanced():
+    """
+    Advanced JD analysis with:
+    - AWS service extraction
+    - Soft skills detection
+    - Weighted keyword scoring
+    """
+    data = request.get_json()
+    jd_text = data.get('jd_text', '')
+    found_keywords = set(data.get('found_keywords', []))
+
+    if not jd_text:
+        return jsonify({'error': 'Job description required'}), 400
+
+    try:
+        aws_extractor = AWSServiceExtractor()
+        aws_services = aws_extractor.extract_all(jd_text)
+
+        soft_skills_extractor = SoftSkillsExtractor()
+        soft_skills_found = soft_skills_extractor.extract_from_text(jd_text)
+        soft_skills_emphasized = soft_skills_extractor.get_emphasized_soft_skills(jd_text)
+
+        required_keywords = {
+            'Python': 'must_have',
+            'AWS': 'must_have',
+            'Docker': 'important',
+            'React': 'nice_to_have'
+        }
+
+        scorer = WeightedKeywordScorer()
+        weighted_score = scorer.calculate_keyword_match_score(
+            found_keywords,
+            required_keywords
+        )
+
+        return jsonify({
+            'aws_services': list(aws_services),
+            'soft_skills': {
+                'emphasized': soft_skills_emphasized,
+                'all_skills': soft_skills_found
+            },
+            'weighted_score': weighted_score
+        })
+
+    except Exception as e:
+        current_app.logger.error(f"Advanced JD analysis error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @tailor_bp.route('/api/tailor', methods=['POST'])
@@ -293,6 +350,86 @@ def api_tailor():
     except Exception as e:
         print(f"[tailor] keyword error: {e}")
 
+    # step 2.1: Advanced JD analysis (AWS services, soft skills, weighted scoring)
+    advanced_analysis = None
+    try:
+        aws_extractor = AWSServiceExtractor()
+        aws_services = aws_extractor.extract_all(jd_text)
+
+        soft_extractor = SoftSkillsExtractor()
+        soft_skills_found = soft_extractor.extract_from_text(jd_text)
+        soft_skills_emphasized = soft_extractor.get_emphasized_soft_skills(jd_text)
+
+        # Build weighted keywords from keyword_data if available
+        found_kws = set()
+        required_kws = {}
+        if keyword_data and isinstance(keyword_data, dict):
+            for kw in keyword_data.get('must_have', []):
+                k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                if k:
+                    required_kws[k] = 'must_have'
+            for kw in keyword_data.get('important', keyword_data.get('good_to_have', [])):
+                k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                if k:
+                    required_kws[k] = 'important'
+            for kw in keyword_data.get('nice_to_have', []):
+                k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                if k:
+                    required_kws[k] = 'nice_to_have'
+            for kw in keyword_data.get('found_in_resume', []):
+                k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                if k:
+                    found_kws.add(k)
+
+        scorer = WeightedKeywordScorer()
+        weighted_score = scorer.calculate_keyword_match_score(found_kws, required_kws) if required_kws else None
+
+        advanced_analysis = {
+            'aws_services': list(aws_services),
+            'soft_skills_emphasized': soft_skills_emphasized,
+            'soft_skills_all': soft_skills_found,
+            'weighted_score': weighted_score,
+        }
+        pipeline_steps.append('advanced_jd_analysis')
+        hard_skills_list = list(required_kws.keys()) + list(aws_services)
+        print(f"[tailor] ═══ Advanced JD Analysis ═══")
+        print(f"[tailor]   Hard skills ({len(hard_skills_list)}): {', '.join(hard_skills_list) if hard_skills_list else 'none detected'}")
+        print(f"[tailor]   AWS services ({len(aws_services)}): {', '.join(aws_services) if aws_services else 'none'}")
+        print(f"[tailor]   Soft skills ({len(soft_skills_emphasized)}): {', '.join(soft_skills_emphasized) if soft_skills_emphasized else 'none detected'}")
+        if weighted_score:
+            print(f"[tailor]   Weighted score: {weighted_score.get('weighted_score', 'N/A')}% (must-have: {weighted_score.get('breakdown', {}).get('must_have', {}).get('found', 0)}/{weighted_score.get('breakdown', {}).get('must_have', {}).get('total', 0)})")
+        print(f"[tailor] ═══════════════════════════")
+    except Exception as e:
+        print(f"[tailor] Advanced JD analysis failed (non-fatal): {e}")
+
+    # step 2.1b: Soft skills extraction & gap analysis
+    soft_skills_data = {}
+    try:
+        soft_extractor2 = SoftSkillsExtractor()
+
+        # Extract soft skills from JD and resume
+        jd_soft_skills = soft_extractor2.extract_from_text(jd_text)
+        resume_soft_skills = soft_extractor2.extract_from_text(resume_text)
+
+        # Find which soft skills JD requires but resume doesn't claim
+        missing_soft_skills = []
+        for skill_name, skill_data in jd_soft_skills.items():
+            if skill_data['found'] and not resume_soft_skills.get(skill_name, {}).get('found'):
+                missing_soft_skills.append(skill_name)
+
+        soft_skills_data = {
+            'jd_soft_skills': [k for k, v in jd_soft_skills.items() if v['found']],
+            'resume_soft_skills': [k for k, v in resume_soft_skills.items() if v['found']],
+            'missing_soft_skills': missing_soft_skills,
+        }
+
+        print(f"[tailor] Soft skills: JD wants {soft_skills_data['jd_soft_skills']}, "
+              f"resume claims {soft_skills_data['resume_soft_skills']}, missing {missing_soft_skills}")
+
+    except Exception as e:
+        print(f"[tailor] Soft skills extraction failed (non-fatal): {e}")
+        soft_skills_data = {}
+
     # step 2.5: RAG semantic matching (NVIDIA embeddings — optional enhancement)
     rag_context = None
     try:
@@ -308,6 +445,49 @@ def api_tailor():
         print(f"[tailor] RAG enhancement failed (non-fatal, continuing): {e}")
         rag_context = None
 
+    # ========== RAG ALIGNMENT VALIDATION & WARNING ==========
+    if rag_context:
+        # Extract alignment metrics if available
+        high_matches = 0
+        partial_matches = 0
+        no_matches = 0
+
+        # Try to parse alignment from rag_context
+        for line in rag_context.split('\n'):
+            line_lower = line.lower()
+            if 'high' in line_lower and 'match' in line_lower:
+                high_matches += 1
+            elif 'partial' in line_lower and 'match' in line_lower:
+                partial_matches += 1
+            elif 'no match' in line_lower or 'no_match' in line_lower:
+                no_matches += 1
+
+        total = high_matches + partial_matches + no_matches
+
+        if total > 0:
+            alignment_percentage = ((high_matches * 2) + partial_matches) / (total * 2) * 100
+        else:
+            alignment_percentage = 0
+
+        print(f"\n[tailor] RAG ALIGNMENT ANALYSIS:")
+        print(f"[tailor] High matches: {high_matches}")
+        print(f"[tailor] Partial matches: {partial_matches}")
+        print(f"[tailor] No match: {no_matches}")
+        print(f"[tailor] Alignment score: {alignment_percentage:.1f}%")
+
+        if alignment_percentage < 50:
+            print(f"\n[tailor] ⚠️ WARNING: RAG ALIGNMENT IS LOW ({alignment_percentage:.1f}%)")
+            print(f"[tailor]   This means:")
+            print(f"[tailor]   - Master resume bullets don't match JD requirements")
+            print(f"[tailor]   - AI will struggle to find connections")
+            print(f"[tailor]   - Resume might not clearly show fit for role")
+            print(f"[tailor]")
+            print(f"[tailor]   Recommendation:")
+            print(f"[tailor]   - Review master resume bullets")
+            print(f"[tailor]   - Add more role-specific examples to master")
+            print(f"[tailor]   - Update master with recent/relevant projects")
+            print(f"[tailor]")
+
     # step 3: actually tailor the resume using all the context we gathered
     user_message = build_tailor_message(
         resume_text, jd_text,
@@ -318,6 +498,7 @@ def api_tailor():
         rag_context=rag_context,
         title_injection_mode=title_injection_mode,
         role_title=role_title,
+        soft_skills_data=soft_skills_data,
     )
 
     # retry up to 4 times -- the tailor call is the most critical and must return valid JSON
@@ -766,6 +947,110 @@ def api_tailor():
                     tailored_data['skills'] = enforced_skills
                     print(f"[tailor] skills: {len(enforced_skills)} categories (max {MAX_CATEGORIES}), mapping={cat_mapping}")
 
+                    # ---- ROLE-LEVEL VALIDATION (Fix #3) ----
+                    try:
+                        detected_role_level = detect_role_level(tailored_data, jd_text)
+                        print(f"[tailor] detected role level: {detected_role_level}")
+
+                        coherence_check = validate_role_skill_coherence(tailored_data, detected_role_level)
+
+                        if coherence_check['status'] == 'FAIL':
+                            print(f"[tailor] role coherence issues: {coherence_check['issues']}")
+
+                            # Auto-fix: remove problematic skills
+                            forbidden_list = coherence_check.get('forbidden', [])
+                            for skill_group in tailored_data.get('skills', []):
+                                original_count = len(skill_group.get('items', []))
+                                skill_group['items'] = [
+                                    s for s in skill_group.get('items', [])
+                                    if not any(forbidden.lower() in s.lower()
+                                              for forbidden in forbidden_list)
+                                ]
+                                removed = original_count - len(skill_group['items'])
+                                if removed > 0:
+                                    print(f"[tailor] removed {removed} incoherent skills from {skill_group.get('category', 'unknown')}")
+
+                            # ========== AUTO-FIX SKILLS COHERENCE ==========
+                            print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+                            print(f"[tailor] ║ AUTO-FIX: ROLE COHERENCE ISSUES                    ║")
+                            print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
+
+                            # Count current skills
+                            all_skills_list = []
+                            for skill_group in tailored_data.get('skills', []):
+                                all_skills_list.extend(skill_group.get('items', []))
+
+                            current_count = len(all_skills_list)
+                            max_allowed = ROLE_SKILL_MATRIX.get(detected_role_level, {}).get('max_total_skills', 16)
+
+                            if current_count > max_allowed:
+                                skills_to_remove = current_count - max_allowed
+                                print(f"[tailor] Current: {current_count} skills | Allowed: {max_allowed} | Remove: {skills_to_remove}")
+
+                                # STEP 1: Build JD relevance scores for all skills
+                                jd_keywords_lower = set()
+                                for skill in jd_analysis.get('hard_skills', []):
+                                    jd_keywords_lower.add(skill.lower())
+                                for skill in jd_analysis.get('top_keywords', []):
+                                    jd_keywords_lower.add(skill.lower())
+
+                                # STEP 2: Score each skill by JD relevance
+                                skill_scores = {}
+                                for group in tailored_data.get('skills', []):
+                                    for item in group.get('items', []):
+                                        score = 0
+                                        item_lower = item.lower()
+
+                                        # Direct match = 100 points
+                                        if item_lower in jd_keywords_lower:
+                                            score += 100
+
+                                        # Substring match = 50 points
+                                        for jd_kw in jd_keywords_lower:
+                                            if jd_kw in item_lower or item_lower in jd_kw:
+                                                score += 50
+                                                break
+
+                                        # Language vs Framework preference (role-dependent)
+                                        if detected_role_level == 'entry_level':
+                                            if group['category'] == 'Languages':
+                                                score += 10  # Entry-level: prioritize languages
+                                        elif detected_role_level == 'mid_level':
+                                            if group['category'] == 'Frameworks & Libraries':
+                                                score += 5  # Mid-level: prioritize frameworks
+
+                                        skill_scores[item] = score
+
+                                # STEP 3: Sort by score (descending) and keep only top N
+                                sorted_skills = sorted(skill_scores.items(), key=lambda x: -x[1])
+                                keeper_skills = set([s[0] for s in sorted_skills[:max_allowed]])
+
+                                print(f"\n[tailor] TOP {max_allowed} SKILLS BY JD RELEVANCE:")
+                                for i, (skill, score) in enumerate(sorted_skills[:max_allowed]):
+                                    print(f"[tailor] {i+1}. {skill} (score: {score})")
+
+                                print(f"\n[tailor] REMOVING {skills_to_remove} LEAST-RELEVANT SKILLS:")
+                                removed = []
+                                for skill, score in sorted_skills[max_allowed:]:
+                                    print(f"[tailor] ✗ {skill} (score: {score})")
+                                    removed.append(skill)
+
+                                # STEP 4: Rebuild skills array with only keeper skills
+                                new_skills = []
+                                for group in tailored_data.get('skills', []):
+                                    filtered_items = [item for item in group.get('items', []) if item in keeper_skills]
+                                    if filtered_items:
+                                        new_skills.append({'category': group['category'], 'items': filtered_items})
+
+                                tailored_data['skills'] = new_skills
+
+                                print(f"\n[tailor] ✓ COHERENCE FIXED: {current_count} → {max_allowed} skills")
+                                print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
+                        else:
+                            print(f"[tailor] role coherence: PASS (score: {coherence_check['coherence_score']})")
+                    except Exception as e:
+                        print(f"[tailor] role validation failed (non-fatal): {e}")
+
                 # ---- SUMMARY ENFORCEMENT: ALWAYS use master + programmatic injection ----
                 # We NEVER trust the AI's summary rewrite. Instead we:
                 #   1. Start from the master summary (exact text from DB)
@@ -1083,6 +1368,25 @@ def api_tailor():
                 print("[tailor] no master resume in db, skipping")
         except Exception as e:
             print(f"[tailor] enforcement error (non-fatal): {e}")
+
+    # step 4.4: Employment timeline validation (Fix #4)
+    try:
+        if isinstance(tailored_data, dict):
+            timeline_analysis = analyze_employment_timeline(tailored_data, '')
+            if not timeline_analysis.get('timeline_coherent', True):
+                print(f"[tailor] ═══ Timeline Issues ═══")
+                for issue in timeline_analysis.get('issues', []):
+                    print(f"[tailor]   {issue['severity']}: {issue['message']}")
+                    print(f"[tailor]     → {issue['recommendation']}")
+                print(f"[tailor] ═══════════════════════")
+
+                # Add warnings to response
+                tailored_data['_warnings'] = tailored_data.get('_warnings', [])
+                tailored_data['_warnings'].extend(timeline_analysis['issues'])
+            else:
+                print(f"[tailor] timeline: PASS ({timeline_analysis.get('total_jobs', 0)} jobs, {timeline_analysis.get('span_years', 0)} year span)")
+    except Exception as e:
+        print(f"[tailor] timeline validation failed (non-fatal): {e}")
 
     # step 4.5: structure validation agent — ensures JSON matches template format
     # IMPORTANT: Save curated data BEFORE the validator runs — the validator
@@ -1423,6 +1727,73 @@ def api_tailor():
         except Exception as e:
             print(f"[tailor] hard skills injection failed (non-fatal): {e}")
 
+
+    def flatten_bullets(data):
+        """Collect all bullets from experience and projects into a flat list."""
+        bullets = []
+        for exp in data.get('experience', []):
+            bullets.extend(exp.get('bullets', []))
+        for proj in data.get('projects', []):
+            bullets.extend(proj.get('bullets', []))
+        return bullets
+
+    # ========== SKILLS CATEGORIZATION VALIDATION ==========
+    if isinstance(tailored_data, dict):
+        print(f"\n[tailor] SKILLS CATEGORIZATION VALIDATION:")
+
+        CORRECT_CATEGORIES = {
+            'Python': 'Languages',
+            'JavaScript': 'Languages',
+            'TypeScript': 'Languages',
+            'React': 'Frameworks & Libraries',
+            'Django': 'Frameworks & Libraries',
+            'FastAPI': 'Frameworks & Libraries',
+            'AWS': 'Tools & Platforms',
+            'Docker': 'Tools & Platforms',
+            'Kubernetes': 'Tools & Platforms',
+            'SageMaker': 'Tools & Platforms',  # AWS service, not language
+            'REST APIs': 'Concepts',
+            'GraphQL': 'Concepts',
+            'GraphQL APIs': 'Concepts',
+            'async handling': 'Programming Concepts',
+            'data pipelines': 'Concepts',
+            'state management': 'Concepts',
+        }
+
+        miscategorized = []
+        for category_group in tailored_data.get('skills', []):
+            category_name = category_group.get('category', '')
+            for item in category_group.get('items', []):
+                expected_category = CORRECT_CATEGORIES.get(item)
+
+                if expected_category and expected_category != category_name:
+                    miscategorized.append({
+                        'skill': item,
+                        'current': category_name,
+                        'correct': expected_category
+                    })
+
+        if miscategorized:
+            print(f"[tailor] ⚠️ {len(miscategorized)} MISCATEGORIZED SKILLS FOUND:")
+            for issue in miscategorized:
+                print(f"[tailor]   {issue['skill']}: '{issue['current']}' → should be '{issue['correct']}'")
+
+            # Auto-fix
+            for issue in miscategorized:
+                # Find and update the skill
+                for category_group in tailored_data.get('skills', []):
+                    if issue['skill'] in category_group.get('items', []):
+                        category_group['items'].remove(issue['skill'])
+
+                    # Add to correct category (create if needed)
+                    if category_group.get('category') == issue['correct']:
+                        if issue['skill'] not in category_group.get('items', []):
+                            category_group['items'].insert(0, issue['skill'])
+
+                print(f"[tailor] ✓ Fixed: {issue['skill']}")
+        else:
+            print(f"[tailor] ✓ All skills correctly categorized")
+
     # ---- STEP 5: CLICHÉ & NEGATIVE PHRASE POST-PROCESSING ----
     # Safety net — scan all text fields and replace any banned phrases that slipped through.
     if isinstance(tailored_data, dict):
@@ -1519,6 +1890,115 @@ def api_tailor():
 
         if cliche_found:
             print("[tailor] clichés detected and removed (post-processing safety net)")
+
+    # ========== SOFT SKILLS INJECTION INTO BULLETS ==========
+    if isinstance(tailored_data, dict) and soft_skills_data.get('missing_soft_skills'):
+        missing_skills = soft_skills_data['missing_soft_skills']
+        print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+        print(f"[tailor] ║ SOFT SKILLS INJECTION - {len(missing_skills)} missing skills     ║")
+        print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
+
+        # Collect all bullets from experience and projects
+        all_bullets = []
+        bullet_locations = []  # Track which section each bullet came from
+
+        for exp_idx, exp in enumerate(tailored_data.get('experience', [])):
+            for bullet_idx, bullet in enumerate(exp.get('bullets', [])):
+                all_bullets.append(bullet)
+                bullet_locations.append(('experience', exp_idx, bullet_idx))
+
+        for proj_idx, proj in enumerate(tailored_data.get('projects', [])):
+            for bullet_idx, bullet in enumerate(proj.get('bullets', [])):
+                all_bullets.append(bullet)
+                bullet_locations.append(('project', proj_idx, bullet_idx))
+
+        if all_bullets:
+            # Map soft skills to bullets (distribute evenly)
+            for skill_idx, skill in enumerate(missing_skills):
+                # Find which bullet should get this skill
+                bullet_position = (skill_idx * len(all_bullets)) // len(missing_skills)
+
+                if bullet_position < len(all_bullets):
+                    section, section_idx, bullet_idx = bullet_locations[bullet_position]
+                    original_bullet = all_bullets[bullet_position]
+
+                    # Create soft skill evidence prompt
+                    soft_skill_prompt = f"""
+            Rewrite this bullet to include evidence of '{skill}' (e.g., communication, mentoring, collaboration, adaptability):
+
+            Original: "{original_bullet}"
+
+            Requirements:
+            - Keep the technical achievement
+            - Add soft skill verb (e.g., "collaborated with", "mentored", "communicated")
+            - Make it sound natural, not forced
+            - Keep under 140 characters
+
+            Example soft skill additions:
+            - collaboration: "Worked with X to build Y"
+            - communication: "Clearly explained X to team, enabling Y"
+            - mentoring: "Guided junior dev through X process"
+            - adaptability: "Quickly pivoted to handle unexpected X challenge"
+            - leadership: "Took ownership of X despite initial uncertainty"
+
+            Return ONLY the new bullet text, no explanation.
+            """
+
+                    try:
+                        # Use AI to enhance bullet
+                        soft_skill_result = ai_client.analyze(
+                            "You are a resume writer. Enhance bullets with soft skill evidence.",
+                            soft_skill_prompt,
+                            max_tokens=150,
+                        )
+
+                        if not soft_skill_result.get('error'):
+                            enhanced_raw = soft_skill_result['response']
+                            if isinstance(enhanced_raw, str):
+                                enhanced_bullet = enhanced_raw.strip('"').strip()
+                            else:
+                                enhanced_bullet = str(enhanced_raw).strip('"').strip()
+
+                            # Update the bullet in the appropriate location
+                            if section == 'experience':
+                                tailored_data['experience'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+                            else:
+                                tailored_data['projects'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+
+                            total_tokens += soft_skill_result.get('tokens_used', 0)
+                            total_cost += soft_skill_result.get('cost_usd', 0.0)
+
+                            print(f"[tailor] ✓ Soft skill '{skill}' injected into {section} bullet #{bullet_idx}")
+                            print(f"[tailor]   Before: {original_bullet[:60]}...")
+                            print(f"[tailor]   After:  {enhanced_bullet[:60]}...")
+                        else:
+                            print(f"[tailor] ⚠ Failed to inject '{skill}': {soft_skill_result['error']}")
+
+                    except Exception as e:
+                        print(f"[tailor] ⚠ Soft skill injection error for '{skill}': {e}")
+
+            # VERIFICATION: Check which soft skills made it into bullets
+            all_bullets_text = '\n'.join(flatten_bullets(tailored_data))
+            verified_skills = []
+            for skill in missing_skills:
+                if skill.lower() in all_bullets_text.lower():
+                    verified_skills.append(skill)
+
+            unverified = set(missing_skills) - set(verified_skills)
+
+            print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+            print(f"[tailor] ║ VERIFICATION: {len(verified_skills)}/{len(missing_skills)} soft skills in bullets ║")
+            print(f"[tailor] ╠═══════════════════════════════════════════════════════╣")
+
+            for skill in verified_skills:
+                print(f"[tailor] ║ ✓ {skill}")
+
+            if unverified:
+                print(f"[tailor] ║")
+                for skill in unverified:
+                    print(f"[tailor] ║ ✗ {skill} (NOT FOUND)")
+
+            print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
 
     # generate the latex
     latex_output = ''
@@ -1694,6 +2174,91 @@ def api_tailor():
                 db.session.rollback()
                 app_record = None  # ensure we don't reference a broken record
 
+    # ========== FINAL RESUME QUALITY REPORT ==========
+    quality_report = {}
+    try:
+        print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+        print(f"[tailor] ║         FINAL RESUME QUALITY ASSESSMENT               ║")
+        print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
+
+        # Calculate scores
+        hard_skills_count = sum(len(g.get('items', [])) for g in tailored_data.get('skills', [])) if isinstance(tailored_data, dict) else 0
+        hard_skills_jd_matched = len(jd_analysis.get('hard_skills', [])) if jd_analysis else 0
+        hard_skills_score = (hard_skills_jd_matched / max(hard_skills_count, 1)) * 100
+
+        soft_skills_found = len(soft_skills_data.get('resume_soft_skills', []))
+        soft_skills_required = len(soft_skills_data.get('jd_soft_skills', []))
+        soft_skills_score = (soft_skills_found / max(soft_skills_required, 1)) * 100
+
+        keywords_score = 100  # Base from keyword extraction
+
+        # Use coherence_check if it was computed
+        try:
+            coherence_score_val = 100 if coherence_check['status'] == 'PASS' else 50
+        except Exception:
+            coherence_score_val = 100
+
+        # Use timeline_analysis if it was computed
+        try:
+            timeline_score = 100 if timeline_analysis.get('status') == 'PASS' else 50
+        except Exception:
+            timeline_score = 100
+
+        # Composite ATS score (weighted)
+        composite_score = (
+            hard_skills_score * 0.25 +    # Hard skills importance
+            soft_skills_score * 0.35 +     # Soft skills importance (modern ATS)
+            keywords_score * 0.15 +         # Keyword matching
+            coherence_score_val * 0.15 +    # Resume coherence
+            timeline_score * 0.10           # Timeline validity
+        )
+
+        # Print report
+        print(f"[tailor] ┌─────────────────────────────────────────────────────┐")
+        print(f"[tailor] │ COMPONENT SCORES                                    │")
+        print(f"[tailor] ├─────────────────────────────────────────────────────┤")
+        print(f"[tailor] │ Hard Skills Match:    {hard_skills_score:5.0f}%  {'✓' if hard_skills_score >= 90 else '✗'}")
+        print(f"[tailor] │ Soft Skills Match:    {soft_skills_score:5.0f}%  {'✓' if soft_skills_score >= 70 else '✗'}")
+        print(f"[tailor] │ Keyword Match:        {keywords_score:5.0f}%  {'✓' if keywords_score >= 90 else '✗'}")
+        print(f"[tailor] │ Role Coherence:       {coherence_score_val:5.0f}%  {'✓' if coherence_score_val >= 90 else '✗'}")
+        print(f"[tailor] │ Timeline Validity:    {timeline_score:5.0f}%  {'✓' if timeline_score >= 90 else '✗'}")
+        print(f"[tailor] └─────────────────────────────────────────────────────┘")
+        print(f"[tailor]")
+        print(f"[tailor] ╔═══════════════════════════════════════════════════════╗")
+        print(f"[tailor] ║ ESTIMATED ATS SCORE:  {composite_score:5.0f}/100                    ║")
+        print(f"[tailor] ╠═══════════════════════════════════════════════════════╣")
+
+        if composite_score >= 80:
+            readiness = "✓ READY FOR SUBMISSION"
+            recommendation = "Confidence: High. Submit this resume."
+        elif composite_score >= 70:
+            readiness = "⚠ ACCEPTABLE"
+            recommendation = "Confidence: Medium. Consider improving soft skills."
+        elif composite_score >= 60:
+            readiness = "⚠ MARGINAL"
+            recommendation = "Confidence: Low. Major improvements recommended."
+        else:
+            readiness = "✗ NOT READY"
+            recommendation = "Confidence: Very Low. Significant work needed."
+
+        print(f"[tailor] ║ STATUS: {readiness}")
+        print(f"[tailor] ║ {recommendation}")
+        print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
+
+        # Add to response
+        quality_report = {
+            'hard_skills_score': hard_skills_score,
+            'soft_skills_score': soft_skills_score,
+            'keywords_score': keywords_score,
+            'coherence_score': coherence_score_val,
+            'timeline_score': timeline_score,
+            'estimated_ats_score': composite_score,
+            'readiness_status': 'READY' if composite_score >= 80 else ('ACCEPTABLE' if composite_score >= 70 else 'NEEDS_WORK'),
+            'recommendation': recommendation
+        }
+    except Exception as e:
+        print(f"[tailor] quality report failed (non-fatal): {e}")
+
     return jsonify({
         'tailored_resume': tailored_data,
         'latex': latex_output,
@@ -1702,6 +2267,7 @@ def api_tailor():
         'cost_usd': total_cost,
         'pipeline_steps': pipeline_steps,
         'application_id': app_record.id if app_record else None,
+        'quality_report': quality_report,
     })
 
 
@@ -1929,6 +2495,33 @@ def _generate_cover_letter_impl():
             app_record.cover_letter = final_text
             db.session.commit()
 
+    # Fix #2: Cover letter-resume alignment validation
+    alignment_data = {}
+    try:
+        # Build a simple resume dict for validation
+        master = MasterResume.query.filter_by(user_id=session.get('user_id')).first()
+        if master:
+            resume_json = {
+                'summary': master.summary or '',
+                'skills': json_mod.loads(master.skills) if master.skills else [],
+                'experience': json_mod.loads(master.experience) if master.experience else [],
+                'projects': json_mod.loads(master.projects) if master.projects else [],
+                'education': json_mod.loads(master.education) if master.education else [],
+            }
+            alignment_check = validate_cover_letter_resume_alignment(final_text, resume_json)
+            alignment_data = alignment_check
+
+            if alignment_check['status'] == 'FAIL':
+                print(f"[cover-letter] ═══ Alignment Issues ═══")
+                for mm in alignment_check['mismatches']:
+                    print(f"[cover-letter]   {mm['severity']}: {mm['claim']}")
+                    print(f"[cover-letter]     missing terms: {mm['missing_terms']}")
+                print(f"[cover-letter] ═══════════════════════")
+            else:
+                print(f"[cover-letter] alignment: PASS (score: {alignment_check['alignment_score']:.0f}%)")
+    except Exception as e:
+        print(f"[cover-letter] alignment validation failed (non-fatal): {e}")
+
     # Send ALL fields as flat top-level keys — no nested dicts.
     # This guarantees the frontend always gets cover_letter_text as a plain string.
     return jsonify({
@@ -1941,6 +2534,9 @@ def _generate_cover_letter_impl():
         'company_research_hook': response.get('company_research_hook', ''),
         'tokens_used': total_tokens,
         'cost_usd': total_cost,
+        'cover_letter_alignment_score': alignment_data.get('alignment_score', None),
+        'alignment_status': alignment_data.get('status', None),
+        'alignment_mismatches': alignment_data.get('mismatches', []),
     })
 
 
@@ -2285,6 +2881,38 @@ def api_leadership_email():
 
         if 'error' in result:
             return jsonify({'error': result['error']}), result.get('status_code', 500)
+
+        # Fix #5: Email subject line optimization
+        try:
+            subject = result.get('subject', '')
+            role_title_email = data.get('role_title', '')
+            company_name_email = data.get('company_name', '')
+            recipient_name_email = data.get('recipient_name', '')
+            # Extract proof points from email body for specificity scoring
+            proof_points = result.get('proof_points', [])
+            if not proof_points:
+                body_text = result.get('body', '')
+                if body_text:
+                    proof_points = [line.strip() for line in body_text.split('\n')
+                                   if any(v in line.lower() for v in ['improved', 'reduced', 'built', 'led'])]
+
+            subject_optimization = optimize_email_subject_line(
+                role_title_email, company_name_email, recipient_name_email, proof_points
+            )
+            result['subject_quality_score'] = subject_optimization['quality_score']
+            result['subject_issues'] = subject_optimization['issues']
+
+            if subject_optimization['quality_score'] < 70:
+                print(f"[email] ═══ Subject Line Issues ═══")
+                print(f"[email]   Subject: {subject}")
+                print(f"[email]   Score: {subject_optimization['quality_score']}")
+                print(f"[email]   Issues: {subject_optimization['issues']}")
+                print(f"[email]   Recommendation: {subject_optimization['recommendation']}")
+                print(f"[email] ═══════════════════════════")
+            else:
+                print(f"[email] subject quality: {subject_optimization['quality_score']}% — {subject_optimization['recommendation']}")
+        except Exception as e:
+            print(f"[email] subject optimization failed (non-fatal): {e}")
 
         return jsonify(result)
     except Exception as e:

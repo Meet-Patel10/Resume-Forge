@@ -130,13 +130,30 @@ def _trim_bullets_to_fit(resume_data, max_chars=155):
 
 
 def _cap_skills_per_category(resume_data, max_per_cat=8):
-    """Cap the number of skills per category to prevent line overflow."""
+    """Cap the number of skills per category to prevent line overflow.
+
+    Preserves injected skills (tracked in resume_data['metadata']['injected_skills'])
+    even when capping, so newly-added JD-required skills don't get truncated off
+    the end of an already-long category.
+    """
+    injected_skills = set(resume_data.get('metadata', {}).get('injected_skills', []))
     skills = resume_data.get('skills', [])
     for group in skills:
         items = group.get('items', [])
         if len(items) > max_per_cat:
-            group['items'] = items[:max_per_cat]
-            print(f"[latex] capped skills '{group.get('category','')[:20]}': {len(items)} → {max_per_cat}")
+            # Split into: injected, non-injected
+            injected = [i for i in items if i.lower() in injected_skills]
+            non_injected = [i for i in items if i.lower() not in injected_skills]
+
+            # Keep ALL injected skills, cap non-injected
+            remaining_slots = max_per_cat - len(injected)
+            if remaining_slots < 0:
+                # Even injected skills exceed the limit (rare)
+                group['items'] = injected[:max_per_cat]
+            else:
+                # Keep all injected + as many non-injected as fits
+                group['items'] = injected + non_injected[:remaining_slots]
+            print(f"[latex] capped skills '{group.get('category','')[:20]}': {len(items)} → {len(group['items'])} (preserved {len(injected)} injected)")
 
 
 def render_latex(resume_data):

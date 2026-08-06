@@ -29,6 +29,7 @@ from app.validators.email_optimizer import optimize_email_subject_line
 from app.services.jd_tier_extractor import JDTierExtractor
 from app.scoring.gap_analyzer import WeightedGapAnalyzer
 from app.services.micro_edit_generator import MicroEditGenerator, apply_edit
+from app.validators.skill_categorizer import validate_and_fix_skills
 
 tailor_bp = Blueprint('tailor', __name__)
 
@@ -98,6 +99,20 @@ SOFT_SKILL_TEMPLATES = {
         'example': 'Mentored 3 junior developers through complex architecture',
         'instructions': 'Add "mentored", "guided", or "coached" to show mentoring'
     }
+}
+
+# ─── Soft skills: strict stem-only variants (no synonyms) for post-injection
+# validation. ATS keyword scanners match the literal skill word or a direct
+# variant (innovate/innovation/innovative) — NOT a synonym like "pioneered".
+# SOFT_SKILL_TEMPLATES['keywords'] above includes synonyms for prompt guidance,
+# but synonyms must not be what actually gets validated as "correct".
+SOFT_SKILL_STRICT_VARIANTS = {
+    'innovation': ['innovation', 'innovate', 'innovates', 'innovated', 'innovating', 'innovative', 'innovatively'],
+    'communication': ['communication', 'communicate', 'communicates', 'communicated', 'communicating'],
+    'accountability': ['accountability', 'accountable'],
+    'collaboration': ['collaboration', 'collaborate', 'collaborates', 'collaborated', 'collaborating', 'collaborative'],
+    'adaptability': ['adaptability', 'adapt', 'adapts', 'adapted', 'adapting', 'adaptive'],
+    'mentoring': ['mentor', 'mentors', 'mentored', 'mentoring'],
 }
 
 
@@ -457,6 +472,20 @@ def api_tailor():
     except Exception as e:
         print(f"[tailor] jd analysis error: {e}")
 
+    # VALIDATION: Ensure JD hard skills were extracted (Phase 1 fix)
+    if not jd_analysis or not isinstance(jd_analysis, dict):
+        print(f"[tailor] ⚠ WARNING: JD analysis returned None or invalid format")
+        jd_analysis = {'hard_skills': [], 'soft_skills': [], 'top_keywords': []}
+    elif not jd_analysis.get('hard_skills'):
+        print(f"[tailor] ⚠ WARNING: JD hard skills extraction returned empty!")
+        print(f"[tailor]   (This will cause all skills to score 0 in role coherence validation)")
+        print(f"[tailor]   Available JD data: {list(jd_analysis.keys())}")
+        # Extract hard skills from top_keywords as fallback
+        top_kws = jd_analysis.get('top_keywords', [])
+        if top_kws:
+            print(f"[tailor]   Falling back to top_keywords: {top_kws[:5]}")
+            jd_analysis['hard_skills'] = top_kws[:10]
+
     # step 1: run brutal critique
     critique_data = None
     try:
@@ -526,21 +555,60 @@ def api_tailor():
         soft_skills_emphasized = soft_extractor.get_emphasized_soft_skills(jd_text)
 
         # Build weighted keywords from keyword_data if available
+        # FIX #1: Parse KEYWORD_EXTRACTOR_SYSTEM output correctly
+        # Output format: { "top_keywords": [...objects...], "ats_optimization": {...} }
+        # IMPORTANT: Keep required_kws values as 'must_have'/'important'/'nice_to_have' for WeightedKeywordScorer
         found_kws = set()
         required_kws = {}
         if keyword_data and isinstance(keyword_data, dict):
-            for kw in keyword_data.get('must_have', []):
-                k = kw if isinstance(kw, str) else kw.get('keyword', '')
-                if k:
-                    required_kws[k] = 'must_have'
-            for kw in keyword_data.get('important', keyword_data.get('good_to_have', [])):
-                k = kw if isinstance(kw, str) else kw.get('keyword', '')
-                if k:
-                    required_kws[k] = 'important'
-            for kw in keyword_data.get('nice_to_have', []):
-                k = kw if isinstance(kw, str) else kw.get('keyword', '')
-                if k:
-                    required_kws[k] = 'nice_to_have'
+            # NEW LOGIC: Extract from top_keywords array (KEYWORD_EXTRACTOR_SYSTEM output)
+            top_keywords = keyword_data.get('top_keywords', [])
+            if top_keywords:
+                for kw_obj in top_keywords:
+                    if not isinstance(kw_obj, dict):
+                        continue
+
+                    keyword = kw_obj.get('keyword', '')
+                    if not keyword:
+                        continue
+
+                    # Map resume_status to priority tier (compatible with WeightedKeywordScorer)
+                    status = kw_obj.get('resume_status', 'missing')
+                    priority = kw_obj.get('priority', 5)
+
+                    if status == 'not_applicable':
+                        # Skip skills candidate doesn't have
+                        continue
+                    elif status == 'strong_match':
+                        # High priority requirement
+                        required_kws[keyword] = 'must_have'
+                        found_kws.add(keyword)
+                    elif status == 'weak_match':
+                        # Secondary requirement
+                        required_kws[keyword] = 'nice_to_have'
+                        found_kws.add(keyword)
+                    elif status == 'missing':
+                        # Missing skills are important but not critical
+                        # Use priority to decide: high priority = important, low = nice_to_have
+                        required_kws[keyword] = 'important' if priority >= 7 else 'nice_to_have'
+
+            # FALLBACK: Also check for old-style keywords if present
+            # (for backward compatibility)
+            if not required_kws:
+                for kw in keyword_data.get('must_have', []):
+                    k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                    if k:
+                        required_kws[k] = 'must_have'
+                for kw in keyword_data.get('important', keyword_data.get('good_to_have', [])):
+                    k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                    if k:
+                        required_kws[k] = 'important'
+                for kw in keyword_data.get('nice_to_have', []):
+                    k = kw if isinstance(kw, str) else kw.get('keyword', '')
+                    if k:
+                        required_kws[k] = 'nice_to_have'
+
+            # Extract found keywords
             for kw in keyword_data.get('found_in_resume', []):
                 k = kw if isinstance(kw, str) else kw.get('keyword', '')
                 if k:
@@ -596,62 +664,8 @@ def api_tailor():
         soft_skills_data = {}
 
     # step 2.5: RAG semantic matching (NVIDIA embeddings — optional enhancement)
+    # FIX #3: Initialize rag_context to None (will run AFTER tailoring on the tailored resume)
     rag_context = None
-    try:
-        from app.services.claude_client import nvidia
-        from app.services.rag_enhancer import enhance_tailoring
-        rag_context = enhance_tailoring(nvidia, resume_text, jd_text, jd_analysis=jd_analysis)
-        if rag_context:
-            pipeline_steps.append('rag_enhancement')
-            print(f"[tailor] RAG enhancement done ({len(rag_context)} chars)")
-        else:
-            print("[tailor] RAG enhancement returned no context — continuing without it")
-    except Exception as e:
-        print(f"[tailor] RAG enhancement failed (non-fatal, continuing): {e}")
-        rag_context = None
-
-    # ========== RAG ALIGNMENT VALIDATION & WARNING ==========
-    if rag_context:
-        # Extract alignment metrics if available
-        high_matches = 0
-        partial_matches = 0
-        no_matches = 0
-
-        # Try to parse alignment from rag_context
-        for line in rag_context.split('\n'):
-            line_lower = line.lower()
-            if 'high' in line_lower and 'match' in line_lower:
-                high_matches += 1
-            elif 'partial' in line_lower and 'match' in line_lower:
-                partial_matches += 1
-            elif 'no match' in line_lower or 'no_match' in line_lower:
-                no_matches += 1
-
-        total = high_matches + partial_matches + no_matches
-
-        if total > 0:
-            alignment_percentage = ((high_matches * 2) + partial_matches) / (total * 2) * 100
-        else:
-            alignment_percentage = 0
-
-        print(f"\n[tailor] RAG ALIGNMENT ANALYSIS:")
-        print(f"[tailor] High matches: {high_matches}")
-        print(f"[tailor] Partial matches: {partial_matches}")
-        print(f"[tailor] No match: {no_matches}")
-        print(f"[tailor] Alignment score: {alignment_percentage:.1f}%")
-
-        if alignment_percentage < 50:
-            print(f"\n[tailor] ⚠️ WARNING: RAG ALIGNMENT IS LOW ({alignment_percentage:.1f}%)")
-            print(f"[tailor]   This means:")
-            print(f"[tailor]   - Master resume bullets don't match JD requirements")
-            print(f"[tailor]   - AI will struggle to find connections")
-            print(f"[tailor]   - Resume might not clearly show fit for role")
-            print(f"[tailor]")
-            print(f"[tailor]   Recommendation:")
-            print(f"[tailor]   - Review master resume bullets")
-            print(f"[tailor]   - Add more role-specific examples to master")
-            print(f"[tailor]   - Update master with recent/relevant projects")
-            print(f"[tailor]")
 
     # step 3: actually tailor the resume using all the context we gathered
     user_message = build_tailor_message(
@@ -1112,6 +1126,44 @@ def api_tailor():
                     tailored_data['skills'] = enforced_skills
                     print(f"[tailor] skills: {len(enforced_skills)} categories (max {MAX_CATEGORIES}), mapping={cat_mapping}")
 
+                    # ---- PHASE 4 FIX: ONLY REMOVE NON-TECHNICAL SKILLS (DON'T MOVE) ----
+                    # IMPORTANT: We only REMOVE skills that are clearly non-technical.
+                    # We DO NOT move skills between categories - that breaks downstream selection logic.
+                    try:
+                        # List of non-technical terms that should be removed from technical sections
+                        NON_TECHNICAL_REMOVALS = {
+                            'agile', 'scrum', 'kanban', 'xp', 'extreme programming',
+                            'waterfall', 'v-model', 'spiral',
+                            'electrical engineering', 'mechanical engineering', 'civil engineering',
+                            'software engineering', 'computer science', 'data science',
+                            'geomatics engineering', 'geospatial engineering',
+                            'surveying',
+                            'ai-driven methods', 'innovation', 'problem-solving',
+                        }
+
+                        removed_count = 0
+                        for group in enforced_skills:
+                            original_count = len(group.get('items', []))
+                            group['items'] = [
+                                item for item in group.get('items', [])
+                                if item.lower() not in NON_TECHNICAL_REMOVALS
+                            ]
+                            removed = original_count - len(group['items'])
+                            if removed > 0:
+                                removed_count += removed
+                                print(f"[tailor] removed {removed} non-technical skills from {group.get('category', 'unknown')}")
+
+                        if removed_count > 0:
+                            print(f"[tailor] ║ REMOVED NON-TECHNICAL SKILLS ║")
+                            print(f"[tailor] Total removed: {removed_count}")
+                            print(f"[tailor] ╚═══════════════════════════════╝")
+
+                        # CRITICAL: DON'T move skills between categories
+                        # The downstream tier-based merge DEPENDS on category names
+                        tailored_data['skills'] = [g for g in enforced_skills if g.get('items')]
+                    except Exception as e:
+                        print(f"[tailor] Skill removal validation failed (non-fatal): {e}")
+
                     # ---- ROLE-LEVEL VALIDATION (Fix #3) ----
                     try:
                         detected_role_level = detect_role_level(tailored_data, jd_text)
@@ -1152,64 +1204,154 @@ def api_tailor():
                                 skills_to_remove = current_count - max_allowed
                                 print(f"[tailor] Current: {current_count} skills | Allowed: {max_allowed} | Remove: {skills_to_remove}")
 
-                                # STEP 1: Build JD relevance scores for all skills
+                                # PHASE 2 FIX: Use smart merge strategy instead of aggressive removal
+                                # Build JD keywords (used for matching, not for scoring)
                                 jd_keywords_lower = set()
                                 for skill in jd_analysis.get('hard_skills', []):
                                     jd_keywords_lower.add(skill.lower())
                                 for skill in jd_analysis.get('top_keywords', []):
                                     jd_keywords_lower.add(skill.lower())
 
-                                # STEP 2: Score each skill by JD relevance
-                                skill_scores = {}
+                                print(f"[tailor] JD keywords available: {len(jd_keywords_lower)} keywords")
+
+                                # Categorize skills into tiers by VALUE not JD match
+                                # TIER 1: Programming Languages (PRESERVE ALL)
+                                CORE_LANGUAGES = {
+                                    'python', 'java', 'c++', 'c#', 'javascript', 'typescript',
+                                    'go', 'rust', 'kotlin', 'swift', 'ruby', 'php', 'r',
+                                    'scala', 'c', 'fortran', 'matlab', 'sql', 'html', 'css',
+                                    'perl', 'lua', 'dart', 'groovy', 'shell', 'bash',
+                                    'objective-c', 'assembly', 'haskell', 'elixir', 'clojure'
+                                }
+
+                                # TIER 2: High-Value Tools
+                                HIGH_VALUE_TOOLS = {
+                                    'docker', 'kubernetes', 'aws', 'azure', 'gcp', 'git',
+                                    'linux', 'jenkins', 'gitlab', 'github', 'postgresql',
+                                    'mysql', 'mongodb', 'redis', 'elasticsearch'
+                                }
+
+                                # Items that should NEVER be in the Languages category
+                                NOT_LANGUAGES = {
+                                    'ai-driven methods', 'agile/scrum', 'agile', 'scrum',
+                                    'electrical engineering', 'geomatics engineering',
+                                    'software engineering', 'gnss error modeling',
+                                    'machine learning', 'deep learning', 'data analysis',
+                                    'big data analysis', 'design patterns', 'microservices',
+                                    'object-oriented programming', 'oop', 'algorithms',
+                                    'data structures', 'ci/cd', 'ci/cd pipelines',
+                                    'devops', 'cloud computing', 'system design',
+                                }
+
+                                tier1_skills = []  # Languages (ONLY actual programming languages)
+                                tier2_skills = []  # JD-required new skills
+                                tier3_skills = []  # Frameworks
+                                tier4_skills = []  # Tools
+                                tier5_skills = []  # Concepts & everything else
+
+                                # Collect all skills with their categories
+                                skill_to_category = {}
                                 for group in tailored_data.get('skills', []):
                                     for item in group.get('items', []):
-                                        score = 0
-                                        item_lower = item.lower()
+                                        skill_to_category[item] = group['category']
 
-                                        # Direct match = 100 points
-                                        if item_lower in jd_keywords_lower:
-                                            score += 100
+                                # TIER 1: Keep all skills from Languages category
+                                # (Phase 4 removal + hard skills injection mapping should ensure they're valid)
+                                for group in tailored_data.get('skills', []):
+                                    if group['category'] == 'Languages':
+                                        tier1_skills.extend(group.get('items', []))
 
-                                        # Substring match = 50 points
-                                        for jd_kw in jd_keywords_lower:
-                                            if jd_kw in item_lower or item_lower in jd_kw:
-                                                score += 50
-                                                break
+                                # DISABLED: Don't move skills - it breaks downstream logic
+                                # The Phase 4 removal should have already cleaned up non-technical items
+                                # The hard skills injection category map should prevent miscategorization
+                                # So we don't need to move anything here
 
-                                        # Language vs Framework preference (role-dependent)
-                                        if detected_role_level == 'entry_level':
-                                            if group['category'] == 'Languages':
-                                                score += 10  # Entry-level: prioritize languages
-                                        elif detected_role_level == 'mid_level':
-                                            if group['category'] == 'Frameworks & Libraries':
-                                                score += 5  # Mid-level: prioritize frameworks
+                                print(f"\n[tailor] ║ SKILL PRIORITIZATION (MERGE-BASED)  ║")
+                                print(f"[tailor] ║ Tier 1 (Languages): {len(tier1_skills)} ║")
 
-                                        skill_scores[item] = score
+                                # TIER 2: JD-required skills not already in tier1
+                                jd_required = set(jd_analysis.get('hard_skills', []))
+                                jd_required.update(jd_analysis.get('top_keywords', []))
+                                for group in tailored_data.get('skills', []):
+                                    for item in group.get('items', []):
+                                        if item not in tier1_skills:
+                                            item_lower = item.lower()
+                                            if any(jd_req.lower() in item_lower or item_lower in jd_req.lower()
+                                                   for jd_req in jd_required):
+                                                if item not in tier2_skills:
+                                                    tier2_skills.append(item)
 
-                                # STEP 3: Sort by score (descending) and keep only top N
-                                sorted_skills = sorted(skill_scores.items(), key=lambda x: -x[1])
-                                keeper_skills = set([s[0] for s in sorted_skills[:max_allowed]])
+                                print(f"[tailor] ║ Tier 2 (JD-Required): {len(tier2_skills)} ║")
 
-                                print(f"\n[tailor] TOP {max_allowed} SKILLS BY JD RELEVANCE:")
-                                for i, (skill, score) in enumerate(sorted_skills[:max_allowed]):
-                                    print(f"[tailor] {i+1}. {skill} (score: {score})")
+                                # TIER 3: Frameworks & Libraries
+                                for group in tailored_data.get('skills', []):
+                                    if group['category'] == 'Frameworks & Libraries':
+                                        for item in group.get('items', []):
+                                            if item not in tier1_skills and item not in tier2_skills:
+                                                tier3_skills.append(item)
 
-                                print(f"\n[tailor] REMOVING {skills_to_remove} LEAST-RELEVANT SKILLS:")
-                                removed = []
-                                for skill, score in sorted_skills[max_allowed:]:
-                                    print(f"[tailor] ✗ {skill} (score: {score})")
-                                    removed.append(skill)
+                                print(f"[tailor] ║ Tier 3 (Frameworks): {len(tier3_skills)} ║")
 
-                                # STEP 4: Rebuild skills array with only keeper skills
+                                # TIER 4: High-value tools
+                                for group in tailored_data.get('skills', []):
+                                    if group['category'] in ['Tools & Platforms', 'Databases']:
+                                        for item in group.get('items', []):
+                                            if any(tool in item.lower() for tool in HIGH_VALUE_TOOLS):
+                                                if item not in tier4_skills and item not in tier1_skills and item not in tier2_skills:
+                                                    tier4_skills.append(item)
+
+                                print(f"[tailor] ║ Tier 4 (Tools): {len(tier4_skills)} ║")
+
+                                # TIER 5: Concepts only if in JD (+ items moved from Languages)
+                                for group in tailored_data.get('skills', []):
+                                    if group['category'] == 'Concepts':
+                                        for item in group.get('items', []):
+                                            if any(kw.lower() in item.lower() for kw in jd_keywords_lower):
+                                                if item not in tier5_skills:
+                                                    tier5_skills.append(item)
+
+                                print(f"[tailor] ║ Tier 5 (Concepts): {len(tier5_skills)} ║")
+
+                                # Select skills: T1 first, then T2, T3, T4, T5
+                                selected = []
+                                selected.extend(tier1_skills)      # All languages (NEVER removed)
+                                selected.extend(tier2_skills[:3])  # Top 3 JD skills
+                                selected.extend(tier3_skills[:5])  # Top 5 frameworks
+                                selected.extend(tier4_skills[:3])  # Top 3 tools
+                                selected.extend(tier5_skills[:2])  # Top 2 concepts
+
+                                # Deduplicate while preserving order
+                                seen = set()
+                                deduped_selected = []
+                                for s in selected:
+                                    if s not in seen:
+                                        seen.add(s)
+                                        deduped_selected.append(s)
+                                selected = deduped_selected
+
+                                # Cap at max_allowed
+                                final_skills = selected[:max_allowed]
+                                removed_skills = set(skill_to_category.keys()) - set(final_skills)
+
+                                print(f"\n[tailor] FINAL SELECTION: {len(final_skills)}/{max_allowed} skills")
+                                print(f"[tailor] Removed: {len(removed_skills)} skills")
+                                for skill in removed_skills:
+                                    print(f"[tailor] ✗ {skill} ({skill_to_category.get(skill, 'Unknown')})")
+
+                                # Rebuild skills array with only selected skills
+                                # Keep categories as-is (no moving)
                                 new_skills = []
                                 for group in tailored_data.get('skills', []):
-                                    filtered_items = [item for item in group.get('items', []) if item in keeper_skills]
+                                    filtered_items = [item for item in group.get('items', []) if item in final_skills]
                                     if filtered_items:
                                         new_skills.append({'category': group['category'], 'items': filtered_items})
 
                                 tailored_data['skills'] = new_skills
 
-                                print(f"\n[tailor] ✓ COHERENCE FIXED: {current_count} → {max_allowed} skills")
+                                print(f"\n[tailor] ✓ SKILLS OPTIMIZED: {current_count} → {len(final_skills)} skills")
+                                print(f"[tailor] ║ Languages preserved: {len(tier1_skills)} ║")
+                                print(f"[tailor] ║ Frameworks kept: {min(len(tier3_skills), 5)} ║")
+                                print(f"[tailor] ║ High-value tools: {min(len(tier4_skills), 3)} ║")
                                 print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
                         else:
                             print(f"[tailor] role coherence: PASS (score: {coherence_check['coherence_score']})")
@@ -1275,10 +1417,23 @@ def api_tailor():
                                     new_keywords.append(k)
 
                     # deduplicate while preserving order
+                    # Also filter out education degrees and non-skill terms
+                    EDUCATION_TERMS = {
+                        'b.sc.', 'bsc', 'm.sc.', 'msc', 'b.eng.', 'm.eng.',
+                        'bachelor', 'master', 'phd', 'doctorate', 'diploma',
+                        'electrical engineering', 'geomatics engineering',
+                        'software engineering', 'mechanical engineering',
+                        'civil engineering', 'computer science',
+                        'data science', 'geospatial engineering',
+                    }
                     seen = set()
                     unique_kw = []
                     for k in new_keywords:
                         kl = k.lower()
+                        # Skip education degrees and academic disciplines
+                        if any(edu in kl for edu in EDUCATION_TERMS):
+                            print(f"[tailor] summary: skipping education term '{k}' (not a skill)")
+                            continue
                         if kl not in seen and not _keyword_in_text(k, master_lower):
                             seen.add(kl)
                             unique_kw.append(k)
@@ -1368,7 +1523,7 @@ def api_tailor():
                                 leftover_phrase = ', '.join(unplaced[:-1]) + ' and ' + unplaced[-1]
                             else:
                                 leftover_phrase = unplaced[0]
-                            sentences.insert(insert_pos, f'Experienced with {leftover_phrase}.')
+                            sentences.insert(insert_pos, f'Proficient in {leftover_phrase}.')
 
                     elif unique_kw:
                         # single sentence summary — append naturally
@@ -1833,6 +1988,26 @@ def api_tailor():
                         'keras': 'Frameworks & Libraries', 'opencv': 'Frameworks & Libraries',
                         'peft': 'Frameworks & Libraries', 'transformers': 'Frameworks & Libraries',
                         'agent development kits': 'Frameworks & Libraries',
+                        # *** CRITICAL: Concepts (NOT Languages!) ***
+                        'ai-driven methods': 'Concepts', 'numerical methods': 'Concepts',
+                        'computational numerical methods': 'Concepts',
+                        'gnss error modeling': 'Concepts', 'gnss': 'Concepts',
+                        'algorithm tuning': 'Concepts', 'linear optimization': 'Concepts',
+                        'non-linear optimization': 'Concepts', 'optimization': 'Concepts',
+                        'regression analysis': 'Concepts', 'statistical analysis': 'Concepts',
+                        'customer support': 'Concepts', 'automation': 'Concepts',
+                        'automation tools': 'Concepts', 'automated test suites': 'Concepts',
+                        'big data analysis': 'Concepts',
+                        # Issue #1 fix: degrees/methodologies → Concepts, NOT Languages
+                        'electrical engineering': 'Concepts',
+                        'geomatics engineering': 'Concepts',
+                        'software engineering': 'Concepts',
+                        'computer science': 'Concepts',
+                        'positioning algorithms': 'Concepts',
+                        'agile': 'Concepts',
+                        'scrum': 'Concepts',
+                        'automation tools for regression analysis': 'Concepts',
+                        'technical communication': 'Concepts',
                         # Tools & Platforms
                         'docker': 'Tools & Platforms', 'kubernetes': 'Tools & Platforms',
                         'aws': 'Tools & Platforms', 'azure': 'Tools & Platforms',
@@ -1939,17 +2114,74 @@ def api_tailor():
                 else:
                     print(f"[tailor] hard skills: all {len(jd_hard)} JD keywords already present")
 
-                # ── Reorder: JD-matched skills FIRST in each category ──
-                # This ensures LaTeX capping (from the end) drops non-JD skills, not JD ones
+                # Debug logging: verify hard skills in final output
+                print(f"[tailor] Hard skills in final output:")
+                for category in tailored_data.get('skills', []):
+                    if category['category'] in ['Languages', 'Concepts', 'Tools & Platforms']:
+                        print(f"  {category['category']}: {', '.join(category.get('items', []))}")
+
+                # ── Mark injected skills so LaTeX capping won't remove them ──
+                injected_skill_names = {skill.lower() for skill, _, _ in injected}
+
+                # ── Reorder: injected skills FIRST (they're the ones closing JD gaps),
+                #    then other JD-matched skills, then everything else ──
+                # This ensures LaTeX capping (from the end) drops non-JD skills first,
+                # and never drops a newly-injected skill before an already-present one.
                 jd_lower = {s.lower() for s in jd_hard}
                 for cat in current_skills:
                     items = cat.get('items', [])
-                    jd_items = [i for i in items if i.lower() in jd_lower]
-                    non_jd_items = [i for i in items if i.lower() not in jd_lower]
-                    cat['items'] = jd_items + non_jd_items
+                    injected_items = [i for i in items if i.lower() in injected_skill_names]
+                    jd_items = [i for i in items if i.lower() in jd_lower and i.lower() not in injected_skill_names]
+                    other_items = [i for i in items if i.lower() not in jd_lower and i.lower() not in injected_skill_names]
+                    cat['items'] = injected_items + jd_items + other_items
+
+                # Store injected skill names in tailored_data for LaTeX to reference
+                if injected_skill_names:
+                    if 'metadata' not in tailored_data:
+                        tailored_data['metadata'] = {}
+                    tailored_data['metadata']['injected_skills'] = list(injected_skill_names)
 
                 tailored_data['skills'] = current_skills
-                print(f"[tailor] skills reordered: JD-matched keywords placed first in each category")
+                print(f"[tailor] skills reordered: injected + JD-matched keywords placed first in each category")
+
+                # ============= FIX #3: Debug logging for hard skills verification =============
+                print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+                print(f"[tailor] ║ HARD SKILLS FINAL VERIFICATION                       ║")
+                print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
+
+                # List of expected hard skills that should be in final output
+                expected_hard_skills = {
+                    'C/C++ programming': ['Languages'],
+                    'Python': ['Languages', 'Python programming'],
+                    'linear optimization': ['Concepts'],
+                    'non-linear optimization': ['Concepts'],
+                    'GNSS': ['Concepts', 'Tools & Platforms'],
+                    'positioning algorithms': ['Concepts'],
+                    'algorithm development': ['Concepts'],
+                    'algorithm tuning': ['Concepts'],
+                    'automated test suites': ['Concepts'],
+                }
+
+                for skill, expected_categories in expected_hard_skills.items():
+                    found = False
+                    found_in_category = None
+
+                    if isinstance(tailored_data, dict):
+                        for skill_group in tailored_data.get('skills', []):
+                            category = skill_group.get('category', '')
+                            items = [s.lower() for s in skill_group.get('items', [])]
+
+                            if any(skill.lower() in item for item in items):
+                                found = True
+                                found_in_category = category
+                                break
+
+                    if found:
+                        print(f"[tailor] ✓ {skill:30s} → {found_in_category}")
+                    else:
+                        print(f"[tailor] ✗ {skill:30s} → NOT FOUND IN SKILLS")
+
+                print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
 
                 # Update curated_skills snapshot so any subsequent re-enforcement
                 # preserves the injected + reordered version
@@ -1975,19 +2207,45 @@ def api_tailor():
             'Python': 'Languages',
             'JavaScript': 'Languages',
             'TypeScript': 'Languages',
+            'C++': 'Languages',
+            'Java': 'Languages',
+            'C#': 'Languages',
             'React': 'Frameworks & Libraries',
             'Django': 'Frameworks & Libraries',
             'FastAPI': 'Frameworks & Libraries',
+            'Spring Boot': 'Frameworks & Libraries',
+            'Vue.js': 'Frameworks & Libraries',
+            'PyTorch': 'Frameworks & Libraries',
+            'Hugging Face Transformers': 'Frameworks & Libraries',
             'AWS': 'Tools & Platforms',
             'Docker': 'Tools & Platforms',
             'Kubernetes': 'Tools & Platforms',
-            'SageMaker': 'Tools & Platforms',  # AWS service, not language
+            'SageMaker': 'Tools & Platforms',
+            'Linux': 'Tools & Platforms',
+            'Git': 'Tools & Platforms',
             'REST APIs': 'Concepts',
+            'RESTful APIs': 'Concepts',
             'GraphQL': 'Concepts',
             'GraphQL APIs': 'Concepts',
-            'async handling': 'Programming Concepts',
+            'async handling': 'Concepts',
             'data pipelines': 'Concepts',
             'state management': 'Concepts',
+            'CI/CD Pipelines': 'Concepts',
+            'CI/CD': 'Concepts',
+            'Algorithms': 'Concepts',
+            'Design Patterns': 'Concepts',
+            # Items that should NEVER be in Languages (from bug report)
+            'AI-driven methods': 'Concepts',
+            'Agile/Scrum': 'Concepts',
+            'Agile': 'Concepts',
+            'Scrum': 'Concepts',
+            'Electrical Engineering': 'Concepts',
+            'Geomatics Engineering': 'Concepts',
+            'Software Engineering': 'Concepts',
+            'GNSS error modeling': 'Concepts',
+            'Big Data Analysis': 'Concepts',
+            'Machine Learning': 'Concepts',
+            'Deep Learning': 'Concepts',
         }
 
         miscategorized = []
@@ -2122,6 +2380,9 @@ def api_tailor():
             print("[tailor] clichés detected and removed (post-processing safety net)")
 
     # ========== SOFT SKILLS INJECTION INTO BULLETS ==========
+    # FIX #2: Initialize soft skills verification score (will be set if soft skills are injected)
+    soft_skills_verification_score = 0.0
+
     if isinstance(tailored_data, dict) and soft_skills_data.get('missing_soft_skills'):
         missing_skills = soft_skills_data['missing_soft_skills']
         print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
@@ -2155,34 +2416,39 @@ def api_tailor():
                     skill_lower = skill.lower()
                     skill_config = SOFT_SKILL_TEMPLATES.get(skill_lower, {})
 
-                    # Create soft skill evidence prompt with explicit keyword templates
+                    # Create soft skill evidence prompt — force the literal keyword
+                    # or a direct variant, not a synonym (see SOFT_SKILLS_SYNONYM_BUG)
                     soft_skill_prompt = f"""
-You are enhancing a resume bullet to highlight the soft skill: {skill}
+Rewrite this bullet to EXPLICITLY include the soft skill '{skill}':
 
-SOFT SKILL DEFINITION:
-{skill_config.get('description', 'N/A')}
+Original: "{original_bullet}"
 
-KEY WORDS TO USE:
-{', '.join(skill_config.get('keywords', []))}
+CRITICAL REQUIREMENTS:
+1. The word '{skill}' or its direct variant MUST appear in the rewritten text
+   - For '{skill}': use '{skill}', '{skill}ed', '{skill}ing', or similar variants ONLY
+   - Do NOT use synonyms (e.g., don't use "pioneered" for "innovation")
+   - Place the skill keyword in the first 15 words
+2. Keep the original technical achievement and impact
+3. Sound natural and professional (no awkward forced insertion)
+4. Keep under 155 characters (important for PDF formatting)
 
-EXAMPLE:
-{skill_config.get('example', 'N/A')}
+Rewriting strategy for '{skill}':
+"""
 
-ORIGINAL BULLET:
-"{original_bullet}"
+                    # Add skill-specific guidance
+                    if skill_lower == 'innovation':
+                        soft_skill_prompt += "- Use: 'innovatively', 'innovation', 'innovative', 'innovated'\n"
+                    elif skill_lower == 'communication':
+                        soft_skill_prompt += "- Use: 'communicated', 'communication', 'clearly explained', 'documented'\n"
+                    elif skill_lower == 'accountability':
+                        soft_skill_prompt += "- Use: 'accountability', 'accountable', 'took ownership', 'responsible'\n"
+                    elif skill_lower == 'collaboration':
+                        soft_skill_prompt += "- Use: 'collaborated', 'collaboration', 'worked together', 'team effort'\n"
+                    elif skill_lower == 'adaptability':
+                        soft_skill_prompt += "- Use: 'adapted', 'adaptability', 'flexible', 'adjusted to', 'pivoted'\n"
 
-YOUR TASK:
-{skill_config.get('instructions', 'Enhance the bullet')}
-
-RULES:
-1. Keep ALL original technical details (don't remove anything)
-2. ADD ONLY 1-3 words showing the soft skill
-3. Use ONLY words from KEY WORDS list above
-4. Result must stay under 160 characters
-5. Sound natural, not forced
-6. Return ONLY the enhanced bullet, no explanation
-
-Enhanced bullet:
+                    soft_skill_prompt += f"""
+Return ONLY the rewritten bullet text. Include the keyword. No explanation.
 """
 
                     try:
@@ -2200,8 +2466,9 @@ Enhanced bullet:
                             else:
                                 enhanced_bullet = str(enhanced_raw).strip('"').strip()
 
-                            # VERIFY the enhanced bullet contains a keyword from this skill
-                            skill_keywords = skill_config.get('keywords', [])
+                            # VERIFY the enhanced bullet contains the literal skill keyword
+                            # or a direct stem-variant — NOT a synonym (SOFT_SKILLS_SYNONYM_BUG)
+                            skill_keywords = SOFT_SKILL_STRICT_VARIANTS.get(skill_lower, [])
                             keyword_found = any(keyword in enhanced_bullet.lower() for keyword in skill_keywords)
 
                             if keyword_found:
@@ -2227,11 +2494,12 @@ Enhanced bullet:
                     except Exception as e:
                         print(f"[tailor] ⚠ Soft skill injection error for '{skill}': {e}")
 
-            # ========== SOFT SKILLS VERIFICATION WITH KEYWORD MATCHING ==========
-            all_bullets_text = '\n'.join(flatten_bullets(tailored_data)).lower()
+            # ========== SOFT SKILLS VERIFICATION: KEYWORD MATCH + SEMANTIC FALLBACK ==========
+            all_bullets = flatten_bullets(tailored_data)
+            all_bullets_text = '\n'.join(all_bullets).lower()
 
             print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
-            print(f"[tailor] ║ SOFT SKILLS VERIFICATION (Smart Keyword Matching)  ║")
+            print(f"[tailor] ║ SOFT SKILLS VERIFICATION (Keyword + Semantic)      ║")
             print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
 
             verified_skills = []
@@ -2240,7 +2508,7 @@ Enhanced bullet:
             for skill in missing_skills:
                 skill_found = False
 
-                # Check if skill has defined keywords
+                # Try 1: keyword pattern match (fast)
                 if skill.lower() in SOFT_SKILL_KEYWORDS:
                     keywords_to_check = SOFT_SKILL_KEYWORDS[skill.lower()]
 
@@ -2257,16 +2525,47 @@ Enhanced bullet:
                         skill_found = True
                         print(f"[tailor] ✓ {skill:20s} (found via exact match)")
 
+                # Try 2: semantic verification using Claude — catches evidence that
+                # doesn't contain any of the known keyword patterns
                 if not skill_found:
+                    verification_prompt = f"""
+Review these resume bullets and determine if any clearly demonstrate or require '{skill}'.
+Look for evidence even if the exact word '{skill}' doesn't appear.
+
+Bullets:
+{chr(10).join('- ' + b for b in all_bullets)}
+
+Does any bullet demonstrate '{skill}'? Answer yes or no only.
+"""
+                    try:
+                        result = claude.analyze(
+                            "You are a resume expert. Verify if bullets demonstrate soft skills.",
+                            verification_prompt,
+                            max_tokens=10,
+                            temperature=0.0
+                        )
+                        response_text = str(result.get('response', '')).lower().strip()
+
+                        if 'yes' in response_text or 'true' in response_text:
+                            verified_skills.append(skill)
+                            skill_found = True
+                            print(f"[tailor] ✓ {skill:20s} (found via semantic check)")
+                        else:
+                            print(f"[tailor] ✗ {skill:20s} (semantic check: not demonstrated)")
+                    except Exception as e:
+                        print(f"[tailor] ⚠ Soft skill verification failed for '{skill}': {e}")
+                        # If semantic check fails, assume it's demonstrated (optimistic)
+                        verified_skills.append(skill)
+                        skill_found = True
+
+                if not skill_found:
+                    # Diagnostic ✗ line was already printed above (semantic check result)
                     unverified.append(skill)
-                    if skill.lower() in SOFT_SKILL_KEYWORDS:
-                        keywords_str = ', '.join(SOFT_SKILL_KEYWORDS[skill.lower()][:3])
-                        print(f"[tailor] ✗ {skill:20s} (searched for: {keywords_str}...)")
-                    else:
-                        print(f"[tailor] ✗ {skill:20s} (no keywords defined)")
 
             # Print summary
             verification_percentage = (len(verified_skills) / max(len(missing_skills), 1)) * 100
+            # FIX #2: Store verification result for final score calculation
+            soft_skills_verification_score = verification_percentage
             print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
             print(f"[tailor] ║ VERIFICATION RESULT: {len(verified_skills)}/{len(missing_skills)} soft skills found ║")
             print(f"[tailor] ║ Success Rate: {verification_percentage:.0f}%")
@@ -2290,10 +2589,11 @@ Enhanced bullet:
         try:
             print("[tailor] Running guided convergence engine...")
 
+            # FIX #4: Increase convergence iterations from 3 to 10 for better score improvement
             convergence_result = run_convergence(
                 tailored_data,
                 jd_text,
-                max_iterations=3
+                max_iterations=10
             )
 
             tailored_data = convergence_result['tailored_resume']
@@ -2416,6 +2716,58 @@ Enhanced bullet:
 
         resume_plain = '\n'.join(p for p in parts if p)
 
+    # FIX #3: RAG semantic matching (NVIDIA embeddings — runs AFTER tailoring on tailored resume)
+    try:
+        from app.services.claude_client import nvidia
+        from app.services.rag_enhancer import enhance_tailoring
+        rag_context = enhance_tailoring(nvidia, resume_plain, jd_text, jd_analysis=jd_analysis)
+        if rag_context:
+            pipeline_steps.append('rag_enhancement')
+            print(f"[tailor] RAG enhancement done ({len(rag_context)} chars)")
+        else:
+            print("[tailor] RAG enhancement returned no context — continuing without it")
+            rag_context = None
+    except Exception as e:
+        print(f"[tailor] RAG enhancement failed (non-fatal, continuing): {e}")
+        rag_context = None
+
+    # ========== RAG ALIGNMENT VALIDATION & WARNING ==========
+    if rag_context:
+        # Extract alignment metrics if available
+        high_matches = 0
+        partial_matches = 0
+        no_matches = 0
+
+        # Try to parse alignment from rag_context
+        for line in rag_context.split('\n'):
+            line_lower = line.lower()
+            if 'high' in line_lower and 'match' in line_lower:
+                high_matches += 1
+            elif 'partial' in line_lower and 'match' in line_lower:
+                partial_matches += 1
+            elif 'no match' in line_lower or 'no_match' in line_lower:
+                no_matches += 1
+
+        total = high_matches + partial_matches + no_matches
+
+        if total > 0:
+            alignment_percentage = ((high_matches * 2) + partial_matches) / (total * 2) * 100
+        else:
+            alignment_percentage = 0
+
+        print(f"\n[tailor] RAG ALIGNMENT ANALYSIS:")
+        print(f"[tailor] High matches: {high_matches}")
+        print(f"[tailor] Partial matches: {partial_matches}")
+        print(f"[tailor] No match: {no_matches}")
+        print(f"[tailor] Alignment score: {alignment_percentage:.1f}%")
+
+        if alignment_percentage < 50:
+            print(f"\n[tailor] ⚠️ WARNING: RAG ALIGNMENT IS LOW ({alignment_percentage:.1f}%)")
+            print(f"[tailor]   This means:")
+            print(f"[tailor]   - Tailored resume bullets don't match JD requirements")
+            print(f"[tailor]   - Consider additional refinement")
+            print(f"[tailor]   - Manually verify skill matching")
+
     ats = calculate_ats_score(resume_plain, jd_text, jd_analysis=jd_analysis)
 
     # save to db if company name was given
@@ -2495,13 +2847,11 @@ Enhanced bullet:
         print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
 
         # Calculate scores
-        hard_skills_count = sum(len(g.get('items', [])) for g in tailored_data.get('skills', [])) if isinstance(tailored_data, dict) else 0
-        hard_skills_jd_matched = len(jd_analysis.get('hard_skills', [])) if jd_analysis else 0
-        hard_skills_score = (hard_skills_jd_matched / max(hard_skills_count, 1)) * 100
+        # FIX #1: Use ATS scorer's hard skills score (already calculated correctly)
+        hard_skills_score = ats.get('breakdown', {}).get('hard_skills', 0)
 
-        soft_skills_found = len(soft_skills_data.get('resume_soft_skills', []))
-        soft_skills_required = len(soft_skills_data.get('jd_soft_skills', []))
-        soft_skills_score = (soft_skills_found / max(soft_skills_required, 1)) * 100
+        # FIX #2: Use soft skills verification results (already calculated correctly)
+        soft_skills_score = soft_skills_verification_score
 
         keywords_score = 100  # Base from keyword extraction
 

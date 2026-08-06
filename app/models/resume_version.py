@@ -29,6 +29,12 @@ class ResumeVersion(db.Model):
     cost_usd = db.Column(db.Float, default=0.0)
     _pipeline_steps = db.Column('pipeline_steps', db.Text, default='[]')
 
+    # Guided Convergence Engine
+    ats_score_before_convergence = db.Column(db.Float)    # 61.0
+    ats_score_after_convergence = db.Column(db.Float)     # 85.2
+    _convergence_iterations = db.Column('convergence_iterations', db.Text, default='[]')  # History of edits
+    convergence_applied = db.Column(db.Boolean, default=False)
+
     # Timestamps
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -56,6 +62,14 @@ class ResumeVersion(db.Model):
     def pipeline_steps(self, value):
         self._pipeline_steps = json.dumps(value) if value else '[]'
 
+    @property
+    def convergence_iterations(self):
+        return json.loads(self._convergence_iterations) if self._convergence_iterations else []
+
+    @convergence_iterations.setter
+    def convergence_iterations(self, value):
+        self._convergence_iterations = json.dumps(value) if value else '[]'
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -68,4 +82,8 @@ class ResumeVersion(db.Model):
             'pipeline_steps': self.pipeline_steps,
             'has_latex': self.resume_latex is not None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'ats_score_before_convergence': self.ats_score_before_convergence,
+            'ats_score_after_convergence': self.ats_score_after_convergence,
+            'convergence_iterations': self.convergence_iterations,
+            'convergence_applied': self.convergence_applied,
         }

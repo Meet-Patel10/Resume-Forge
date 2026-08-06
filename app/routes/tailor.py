@@ -26,6 +26,9 @@ from app.validators.cover_letter_validator import validate_cover_letter_resume_a
 from app.validators.role_validator import detect_role_level, validate_role_skill_coherence, ROLE_SKILL_MATRIX
 from app.validators.timeline_validator import analyze_employment_timeline
 from app.validators.email_optimizer import optimize_email_subject_line
+from app.services.jd_tier_extractor import JDTierExtractor
+from app.scoring.gap_analyzer import WeightedGapAnalyzer
+from app.services.micro_edit_generator import MicroEditGenerator, apply_edit
 
 tailor_bp = Blueprint('tailor', __name__)
 
@@ -52,6 +55,50 @@ _CITY_TO_PROVINCE = {
 }
 
 _DEFAULT_LOCATION = 'Halifax, NS'
+
+# ─── Soft skills: keyword patterns for verification (Stage 1) ───
+SOFT_SKILL_KEYWORDS = {
+    'innovation': ['pioneer', 'innovate', 'innovat', 'novel', 'first', 'created new', 'breakthrough', 'develop new'],
+    'communication': ['communica', 'present', 'document', 'explain', 'articulate', 'convey', 'discuss', 'share insight'],
+    'adaptability': ['adapt', 'adjust', 'pivot', 'respond', 'accommodat', 'flexible', 'adjust', 'quickly adapted'],
+    'accountability': ['ownership', 'owned', 'respons', 'led', 'drove', 'took charge', 'champion', 'took ownership', 'accountab'],
+    'mentoring': ['mentor', 'guid', 'teach', 'coach', 'develop team', 'train', 'onboard'],
+    'collaboration': ['collabora', 'worked with', 'partner', 'cross-functional', 'team', 'coordi', 'cooperat']
+}
+
+# ─── Soft skills: templates for injection prompt (Stage 2) ───
+SOFT_SKILL_TEMPLATES = {
+    'innovation': {
+        'description': 'Introducing new ideas, creative problem-solving, pioneering approaches',
+        'keywords': ['pioneered', 'innovated', 'introduced novel', 'developed new approach', 'created breakthrough'],
+        'example': 'Pioneered new approach to X, resulting in Y',
+        'instructions': 'Add "pioneered", "innovated", or "introduced new" to show creative problem-solving'
+    },
+    'communication': {
+        'description': 'Clear articulation, documentation, presentation, stakeholder engagement',
+        'keywords': ['communicated', 'presented', 'documented', 'explained', 'articulated'],
+        'example': 'Clearly communicated architecture decisions to cross-functional teams',
+        'instructions': 'Add "communicated", "presented", or "documented" to show clear communication'
+    },
+    'adaptability': {
+        'description': 'Quick response to change, flexibility, learning new skills',
+        'keywords': ['adapted', 'adjusted', 'quickly responded', 'pivoted', 'accommodated'],
+        'example': 'Quickly adapted codebase to handle new requirements',
+        'instructions': 'Add "adapted", "adjusted", or "responded" to show flexibility'
+    },
+    'accountability': {
+        'description': 'Taking ownership, responsibility, driving results, follow-through',
+        'keywords': ['took ownership', 'owned', 'responsible for', 'led', 'drove'],
+        'example': 'Took ownership of critical system, delivering on time',
+        'instructions': 'Add "took ownership", "owned", or "led" to show accountability'
+    },
+    'mentoring': {
+        'description': 'Teaching others, guidance, team development, knowledge transfer',
+        'keywords': ['mentored', 'guided', 'coached', 'trained', 'developed'],
+        'example': 'Mentored 3 junior developers through complex architecture',
+        'instructions': 'Add "mentored", "guided", or "coached" to show mentoring'
+    }
+}
 
 
 def _resolve_sign_off_location(city_input):
@@ -168,6 +215,124 @@ def api_analyze_jd_advanced():
     except Exception as e:
         current_app.logger.error(f"Advanced JD analysis error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+def run_convergence(tailored_resume, jd_text, max_iterations=4, target_score=85):
+    """
+    Guided Convergence Engine with validation: iteratively close the highest-ROI
+    JD gaps in a tailored resume until the weighted ATS estimate hits target_score
+    or no feasible edits remain. Skips (rather than lying) when JD extraction
+    quality is too low, and flags suspiciously high scores instead of declaring
+    false success.
+    """
+
+    # Step 1: Extract tiered JD
+    tier_extractor = JDTierExtractor()
+    jd_tiers = tier_extractor.extract_tiered_requirements(jd_text)
+
+    # Step 2: Analyze gap
+    gap_analyzer = WeightedGapAnalyzer()
+    gap = gap_analyzer.analyze_gap(tailored_resume, jd_tiers)
+
+    # VALIDATION: Should we even run convergence?
+    if gap.skip_convergence:
+        print(f"[converge] SKIPPING CONVERGENCE: {gap.skip_reason}")
+        return {
+            'status': 'skipped',
+            'reason': gap.skip_reason,
+            'jd_quality': jd_tiers.quality_score * 100,
+            'message': 'JD extraction quality too low. Manual review recommended.',
+            'tailored_resume': tailored_resume,
+        }
+
+    # VALIDATION: Check if score is suspiciously high
+    if gap.weighted_ats_estimate >= 95:
+        print(f"[converge] ⚠ WARNING: Estimated score is suspiciously high ({gap.weighted_ats_estimate:.1f}%)")
+        print(f"  Required: {gap.required_match_score:.0f}%")
+        print(f"  Preferred: {gap.preferred_match_score:.0f}%")
+        print(f"  → This suggests JD extraction may have failed. Check required/preferred skill counts.")
+
+        return {
+            'status': 'suspicious_score',
+            'estimated_score': gap.weighted_ats_estimate,
+            'message': 'Score seems too high. JD extraction may have issues.',
+            'debug': {
+                'required_skills': len(jd_tiers.required_hard_skills),
+                'preferred_skills': len(jd_tiers.preferred_hard_skills),
+                'quality_score': jd_tiers.quality_score,
+            },
+            'tailored_resume': tailored_resume,
+        }
+
+    # Normal convergence loop
+    current_resume = tailored_resume
+    iteration_history = []
+
+    for iteration in range(1, max_iterations + 1):
+        gap = gap_analyzer.analyze_gap(current_resume, jd_tiers)
+        current_score = gap.weighted_ats_estimate
+
+        print(f"[converge] Iteration {iteration}: Score {current_score:.1f}")
+
+        if current_score >= target_score:
+            print(f"[converge] Target reached! Score: {current_score:.1f}")
+            break
+
+        # Generate edits
+        edit_generator = MicroEditGenerator()
+        edits = edit_generator.generate_edits(current_resume, gap)
+
+        if not edits:
+            print(f"[converge] No feasible edits remaining")
+            break
+
+        # Apply best edit
+        best_edit = max(edits, key=lambda e: e.ats_gain * e.feasibility)
+        print(f"[converge]   Applying: {best_edit.gap_skill} ({best_edit.ats_gain:.1f} points)")
+
+        current_resume = apply_edit(current_resume, best_edit)
+
+        iteration_history.append({
+            'iteration': iteration,
+            'score': current_score,
+            'edit_applied': best_edit.gap_skill,
+            'gain': best_edit.ats_gain,
+        })
+
+    return {
+        'status': 'converged',
+        'tailored_resume': current_resume,
+        'final_score': gap.weighted_ats_estimate,
+        'iterations': iteration_history,
+        'convergence_details': {
+            'required_match': gap.required_match_score,
+            'preferred_match': gap.preferred_match_score,
+            'nice_match': gap.nice_match_score,
+        }
+    }
+
+
+@tailor_bp.route('/api/tailor-converge', methods=['POST'])
+@login_required
+def api_tailor_converge():
+    """
+    Run guided convergence engine with validation.
+    """
+
+    data = request.get_json()
+    tailored_resume = data.get('tailored_resume')  # From previous api_tailor call
+    jd_text = data.get('jd_text')
+    max_iterations = data.get('max_iterations', 4)
+    target_score = data.get('target_score', 85)
+
+    result = run_convergence(
+        tailored_resume,
+        jd_text,
+        max_iterations=max_iterations,
+        target_score=target_score,
+    )
+
+    return jsonify(result)
 
 
 @tailor_bp.route('/api/tailor', methods=['POST'])
@@ -1451,6 +1616,28 @@ def api_tailor():
                     from app.services.claude_client import claude as ai_client
                     print(f"[json-validator] Using AWS Bedrock/Claude (APP_ENV={app_env})")
 
+                # ========== SAVE SOFT SKILLS BEFORE VALIDATOR (defensive safety net) ==========
+                # The structure validator below replaces tailored_data entirely. Today,
+                # soft-skills injection runs AFTER this step, so there's nothing to lose
+                # yet — but if that ordering ever changes, this save/restore guarantees
+                # any soft-skill-enhanced bullets already present survive the validator.
+                print(f"[tailor] Saving soft skills bullets before structure validator...")
+                saved_soft_skills_bullets = {}
+
+                for exp_idx, exp in enumerate(tailored_data.get('experience', [])):
+                    saved_soft_skills_bullets[f'exp_{exp_idx}'] = {
+                        'bullets': exp.get('bullets', []).copy(),
+                        'count': len(exp.get('bullets', []))
+                    }
+
+                for proj_idx, proj in enumerate(tailored_data.get('projects', [])):
+                    saved_soft_skills_bullets[f'proj_{proj_idx}'] = {
+                        'bullets': proj.get('bullets', []).copy(),
+                        'count': len(proj.get('bullets', []))
+                    }
+
+                print(f"[tailor] Saved {len(saved_soft_skills_bullets)} sections with soft skills bullets")
+
                 val_result = ai_client.analyze(STRUCTURE_VALIDATOR_SYSTEM, validator_msg, max_tokens=16000, temperature=0.1, force_json=True)
 
                 if not val_result.get('error'):
@@ -1461,6 +1648,49 @@ def api_tailor():
                         total_cost += val_result.get('cost_usd', 0)
                         pipeline_steps.append('structure_validator')
                         print("[tailor] structure validation done — JSON fixed")
+
+                        # ========== RESTORE SOFT SKILLS BULLETS AFTER VALIDATOR ==========
+                        print(f"[tailor] Restoring soft skills bullets after structure validator...")
+
+                        for exp_idx, exp in enumerate(tailored_data.get('experience', [])):
+                            key = f'exp_{exp_idx}'
+                            if key in saved_soft_skills_bullets:
+                                saved_data = saved_soft_skills_bullets[key]
+                                current_bullets = exp.get('bullets', [])
+
+                                # Only restore if bullet count matches (means structure is same)
+                                if len(current_bullets) == saved_data['count']:
+                                    exp['bullets'] = saved_data['bullets']
+                                    print(f"[tailor] ✓ Restored experience section #{exp_idx} soft skills")
+                                else:
+                                    print(f"[tailor] ⚠ Experience section #{exp_idx} structure changed, skipping restore")
+
+                        for proj_idx, proj in enumerate(tailored_data.get('projects', [])):
+                            key = f'proj_{proj_idx}'
+                            if key in saved_soft_skills_bullets:
+                                saved_data = saved_soft_skills_bullets[key]
+                                current_bullets = proj.get('bullets', [])
+
+                                # Only restore if bullet count matches
+                                if len(current_bullets) == saved_data['count']:
+                                    proj['bullets'] = saved_data['bullets']
+                                    print(f"[tailor] ✓ Restored project #{proj_idx} soft skills")
+                                else:
+                                    print(f"[tailor] ⚠ Project #{proj_idx} structure changed, skipping restore")
+
+                        # Verify soft skills survived (inline flatten — the flatten_bullets()
+                        # helper below isn't defined yet at this point in the function)
+                        final_text = '\n'.join(
+                            b for exp in tailored_data.get('experience', []) for b in exp.get('bullets', [])
+                        ) + '\n' + '\n'.join(
+                            b for proj in tailored_data.get('projects', []) for b in proj.get('bullets', [])
+                        )
+                        final_text = final_text.lower()
+                        survived_count = 0
+                        for skill in soft_skills_data.get('missing_soft_skills', []):
+                            if skill.lower() in final_text:
+                                survived_count += 1
+                        print(f"[tailor] Soft skills survived: {survived_count}/{len(soft_skills_data.get('missing_soft_skills', []))}")
 
                         # ---- RE-ENFORCE tech_stack & dates from master DB ----
                         # The structure validator AI doesn't know about tech_stack,
@@ -1922,32 +2152,43 @@ def api_tailor():
                     section, section_idx, bullet_idx = bullet_locations[bullet_position]
                     original_bullet = all_bullets[bullet_position]
 
-                    # Create soft skill evidence prompt
+                    skill_lower = skill.lower()
+                    skill_config = SOFT_SKILL_TEMPLATES.get(skill_lower, {})
+
+                    # Create soft skill evidence prompt with explicit keyword templates
                     soft_skill_prompt = f"""
-            Rewrite this bullet to include evidence of '{skill}' (e.g., communication, mentoring, collaboration, adaptability):
+You are enhancing a resume bullet to highlight the soft skill: {skill}
 
-            Original: "{original_bullet}"
+SOFT SKILL DEFINITION:
+{skill_config.get('description', 'N/A')}
 
-            Requirements:
-            - Keep the technical achievement
-            - Add soft skill verb (e.g., "collaborated with", "mentored", "communicated")
-            - Make it sound natural, not forced
-            - Keep under 140 characters
+KEY WORDS TO USE:
+{', '.join(skill_config.get('keywords', []))}
 
-            Example soft skill additions:
-            - collaboration: "Worked with X to build Y"
-            - communication: "Clearly explained X to team, enabling Y"
-            - mentoring: "Guided junior dev through X process"
-            - adaptability: "Quickly pivoted to handle unexpected X challenge"
-            - leadership: "Took ownership of X despite initial uncertainty"
+EXAMPLE:
+{skill_config.get('example', 'N/A')}
 
-            Return ONLY the new bullet text, no explanation.
-            """
+ORIGINAL BULLET:
+"{original_bullet}"
+
+YOUR TASK:
+{skill_config.get('instructions', 'Enhance the bullet')}
+
+RULES:
+1. Keep ALL original technical details (don't remove anything)
+2. ADD ONLY 1-3 words showing the soft skill
+3. Use ONLY words from KEY WORDS list above
+4. Result must stay under 160 characters
+5. Sound natural, not forced
+6. Return ONLY the enhanced bullet, no explanation
+
+Enhanced bullet:
+"""
 
                     try:
                         # Use AI to enhance bullet
                         soft_skill_result = ai_client.analyze(
-                            "You are a resume writer. Enhance bullets with soft skill evidence.",
+                            "You are a professional resume writer. Enhance bullets with soft skills.",
                             soft_skill_prompt,
                             max_tokens=150,
                         )
@@ -1959,46 +2200,113 @@ def api_tailor():
                             else:
                                 enhanced_bullet = str(enhanced_raw).strip('"').strip()
 
-                            # Update the bullet in the appropriate location
-                            if section == 'experience':
-                                tailored_data['experience'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+                            # VERIFY the enhanced bullet contains a keyword from this skill
+                            skill_keywords = skill_config.get('keywords', [])
+                            keyword_found = any(keyword in enhanced_bullet.lower() for keyword in skill_keywords)
+
+                            if keyword_found:
+                                # Update the bullet in the appropriate location
+                                if section == 'experience':
+                                    tailored_data['experience'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+                                else:
+                                    tailored_data['projects'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+
+                                total_tokens += soft_skill_result.get('tokens_used', 0)
+                                total_cost += soft_skill_result.get('cost_usd', 0.0)
+
+                                print(f"[tailor] ✓ Soft skill '{skill}' injected into {section} bullet #{bullet_idx}")
+                                print(f"[tailor]   Before: {original_bullet[:60]}...")
+                                print(f"[tailor]   After:  {enhanced_bullet[:60]}...")
                             else:
-                                tailored_data['projects'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
-
-                            total_tokens += soft_skill_result.get('tokens_used', 0)
-                            total_cost += soft_skill_result.get('cost_usd', 0.0)
-
-                            print(f"[tailor] ✓ Soft skill '{skill}' injected into {section} bullet #{bullet_idx}")
-                            print(f"[tailor]   Before: {original_bullet[:60]}...")
-                            print(f"[tailor]   After:  {enhanced_bullet[:60]}...")
+                                print(f"[tailor] ✗ Soft skill '{skill}' enhancement failed (no keywords in result)")
+                                print(f"[tailor]   Expected one of: {', '.join(skill_keywords)}")
+                                print(f"[tailor]   Got: {enhanced_bullet[:60]}...")
                         else:
                             print(f"[tailor] ⚠ Failed to inject '{skill}': {soft_skill_result['error']}")
 
                     except Exception as e:
                         print(f"[tailor] ⚠ Soft skill injection error for '{skill}': {e}")
 
-            # VERIFICATION: Check which soft skills made it into bullets
-            all_bullets_text = '\n'.join(flatten_bullets(tailored_data))
-            verified_skills = []
-            for skill in missing_skills:
-                if skill.lower() in all_bullets_text.lower():
-                    verified_skills.append(skill)
-
-            unverified = set(missing_skills) - set(verified_skills)
+            # ========== SOFT SKILLS VERIFICATION WITH KEYWORD MATCHING ==========
+            all_bullets_text = '\n'.join(flatten_bullets(tailored_data)).lower()
 
             print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
-            print(f"[tailor] ║ VERIFICATION: {len(verified_skills)}/{len(missing_skills)} soft skills in bullets ║")
-            print(f"[tailor] ╠═══════════════════════════════════════════════════════╣")
+            print(f"[tailor] ║ SOFT SKILLS VERIFICATION (Smart Keyword Matching)  ║")
+            print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
 
-            for skill in verified_skills:
-                print(f"[tailor] ║ ✓ {skill}")
+            verified_skills = []
+            unverified = []
 
-            if unverified:
-                print(f"[tailor] ║")
-                for skill in unverified:
-                    print(f"[tailor] ║ ✗ {skill} (NOT FOUND)")
+            for skill in missing_skills:
+                skill_found = False
 
+                # Check if skill has defined keywords
+                if skill.lower() in SOFT_SKILL_KEYWORDS:
+                    keywords_to_check = SOFT_SKILL_KEYWORDS[skill.lower()]
+
+                    for keyword in keywords_to_check:
+                        if keyword in all_bullets_text:
+                            verified_skills.append(skill)
+                            skill_found = True
+                            print(f"[tailor] ✓ {skill:20s} (found via '{keyword}')")
+                            break
+                else:
+                    # Fallback: exact match if no keywords defined
+                    if skill.lower() in all_bullets_text:
+                        verified_skills.append(skill)
+                        skill_found = True
+                        print(f"[tailor] ✓ {skill:20s} (found via exact match)")
+
+                if not skill_found:
+                    unverified.append(skill)
+                    if skill.lower() in SOFT_SKILL_KEYWORDS:
+                        keywords_str = ', '.join(SOFT_SKILL_KEYWORDS[skill.lower()][:3])
+                        print(f"[tailor] ✗ {skill:20s} (searched for: {keywords_str}...)")
+                    else:
+                        print(f"[tailor] ✗ {skill:20s} (no keywords defined)")
+
+            # Print summary
+            verification_percentage = (len(verified_skills) / max(len(missing_skills), 1)) * 100
+            print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+            print(f"[tailor] ║ VERIFICATION RESULT: {len(verified_skills)}/{len(missing_skills)} soft skills found ║")
+            print(f"[tailor] ║ Success Rate: {verification_percentage:.0f}%")
+            if verification_percentage >= 75:
+                print(f"[tailor] ║ STATUS: ✓ EXCELLENT")
+            elif verification_percentage >= 50:
+                print(f"[tailor] ║ STATUS: ⚠ GOOD (but could improve)")
+            else:
+                print(f"[tailor] ║ STATUS: ✗ NEEDS IMPROVEMENT")
             print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
+
+            # Store verification result
+            soft_skills_data['verified_count'] = len(verified_skills)
+            soft_skills_data['verified_skills'] = verified_skills
+            soft_skills_data['missing_unverified'] = unverified
+
+    # Step 3.5: Run guided convergence (NEW)
+    convergence_iterations = []
+    convergence_result = None
+    if isinstance(tailored_data, dict):
+        try:
+            print("[tailor] Running guided convergence engine...")
+
+            convergence_result = run_convergence(
+                tailored_data,
+                jd_text,
+                max_iterations=3
+            )
+
+            tailored_data = convergence_result['tailored_resume']
+
+            if convergence_result['status'] == 'converged':
+                convergence_iterations = convergence_result['iterations']
+                print(f"[tailor] Convergence complete: {convergence_result['final_score']:.1f}/100")
+                for it in convergence_iterations:
+                    print(f"  Iter {it['iteration']}: {it['score']:.1f}% (+{it['gain']:.1f} from {it['edit_applied']})")
+            else:
+                print(f"[tailor] Convergence {convergence_result['status']}: {convergence_result.get('message', '')}")
+        except Exception as e:
+            print(f"[tailor] convergence engine failed (non-fatal): {e}")
 
     # generate the latex
     latex_output = ''
@@ -2155,6 +2463,11 @@ def api_tailor():
             version.resume_latex = latex_output
             version.score_breakdown = ats
             version.pipeline_steps = pipeline_steps
+            if convergence_iterations:
+                version.ats_score_before_convergence = convergence_iterations[0]['score']
+                version.ats_score_after_convergence = convergence_result['final_score']
+                version.convergence_iterations = convergence_iterations
+                version.convergence_applied = True
             db.session.add(version)
             db.session.commit()
             print(f"[tailor] Resume version {version.version_number} saved for application {app_record.id}")

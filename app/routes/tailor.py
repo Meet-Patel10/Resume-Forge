@@ -8,7 +8,7 @@ from app.models.resume_version import ResumeVersion
 from app.services.claude_client import claude
 from app.services.prompts.resume_tailor import (
     RESUME_TAILOR_SYSTEM, build_tailor_message,
-    get_summary_generator, get_convergence_guard,
+    get_summary_generator, get_convergence_guard, verify_summary_integrity,
 )
 from app.services.prompts.bullet_rewriter import BULLET_REWRITER_SYSTEM, build_bullet_message
 from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, COVER_LETTER_ADJUST_SYSTEM, build_cover_letter_message, build_adjust_message
@@ -27,7 +27,7 @@ from app.extractors.soft_skills_extractor import SoftSkillsExtractor
 from app.scoring.weighted_scorer import WeightedKeywordScorer
 from app.validators.cover_letter_validator import validate_cover_letter_resume_alignment, flatten_resume_to_text
 from app.validators.role_validator import detect_role_level, detect_role_level_by_years, validate_role_level_consistency, validate_role_skill_coherence, calculate_years_experience, ROLE_SKILL_MATRIX, ROLE_LEVEL_MAPPING
-from app.validators.skill_validator import validate_skill, cleanup_skills_section
+from app.validators.skill_validator import validate_skill, aggressive_cleanup as aggressive_skill_cleanup
 from app.validators.timeline_validator import analyze_employment_timeline
 from app.validators.email_optimizer import optimize_email_subject_line
 from app.services.jd_tier_extractor import JDTierExtractor
@@ -2382,6 +2382,21 @@ def api_tailor():
         print(f"[tailor]   Skills section: {len(routed_keywords['skills'])}")
         print(f"[tailor]   Summary: {len(routed_keywords['summary'])}")
         print(f"[tailor]   Experience: {len(routed_keywords['experience'])}")
+
+        # TASK 6: routing audit — flag it loudly if hard skills were
+        # extracted but none made it to the Skills section (the exact
+        # "Skills section: 0" production symptom this task is about)
+        if not routed_keywords['skills'] and all_validated:
+            hard_or_tool_count = sum(
+                1 for kw in all_validated
+                if kw.keyword_type.value in ('hard_skill', 'tool_platform')
+            )
+            if hard_or_tool_count:
+                print(f"[tailor] ⚠ TASK 6 WARNING: {hard_or_tool_count} hard/tool keywords "
+                      f"extracted but ZERO routed to Skills section — check classification/tiering")
+            else:
+                print(f"[tailor]   (Skills section empty because no keywords classified as "
+                      f"hard_skill/tool_platform this run — not necessarily a bug)")
 
         # STEP 4: Prepare structured keyword data for AI prompt
         print(f"\n[tailor] STEP 4: Preparing structured keywords for AI")
@@ -4771,6 +4786,35 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
                 print(f"[tailor] Convergence {convergence_result['status']}: {convergence_result.get('message', '')}")
         except Exception as e:
             print(f"[tailor] convergence engine failed (non-fatal): {e}")
+
+    # ========== TASK 4: AGGRESSIVE SKILL CLEANUP (final safety net) ==========
+    # validate_skill() at the hard-skills-injection gate only catches junk
+    # introduced by that one step. This runs last, right before the PDF is
+    # rendered and the resume is scored, and catches nonsense skills from
+    # ANY source (AI's own tailoring output, master-skill preservation,
+    # guarantee engine injection, convergence engine edits, etc.).
+    if isinstance(tailored_data, dict):
+        try:
+            tailored_data = aggressive_skill_cleanup(tailored_data)
+        except Exception as e:
+            print(f"[tailor] aggressive skill cleanup failed (non-fatal): {e}")
+
+    # ========== TASK 5: FINAL SUMMARY INTEGRITY CHECK (last safety net) ==========
+    # Everything before this point already protects the summary at each
+    # individual stage (construction from master, Task 2's validator right
+    # after, curated_summary save/restore around the structure validator,
+    # ConvergenceGuard around convergence). This is the one final check of
+    # the truly-final summary against the master, right before output.
+    if isinstance(tailored_data, dict) and master:
+        try:
+            _final_summary, _was_restored = verify_summary_integrity(
+                master.summary or '', tailored_data.get('summary', '')
+            )
+            tailored_data['summary'] = _final_summary
+            if _was_restored:
+                print(f"[tailor] TASK 5: final summary integrity check made a correction")
+        except Exception as e:
+            print(f"[tailor] TASK 5 summary integrity check failed (non-fatal): {e}")
 
     # generate the latex
     latex_output = ''

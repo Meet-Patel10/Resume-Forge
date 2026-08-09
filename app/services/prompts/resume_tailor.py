@@ -1677,3 +1677,68 @@ def get_summary_generator() -> SummaryGenerator:
 def get_convergence_guard() -> ConvergenceGuard:
     """Factory function to get convergence guard instance."""
     return ConvergenceGuard()
+
+
+# ============================================================================
+# TASK 5: FINAL END-TO-END SUMMARY INTEGRITY CHECK
+#
+# This codebase already has four separate summary protections layered
+# through the pipeline: construction always starts from the DB's
+# master_summary (never trusts the AI's rewrite — also locked at the prompt
+# level); SummaryGenerator.validate_and_fix_summary() runs immediately after
+# construction (Task 2); curated_summary is saved before the structure
+# validator and restored after (tailor.py's "RE-ENFORCE curated skills,
+# summary & header" block); and ConvergenceGuard wraps the convergence
+# engine. Rather than adding a fifth, mostly-redundant "SummaryPreserver"
+# class (TASK_5_COMPLETE_SOLUTION.md's config values — 400/350/50 chars —
+# are identical to SummaryConstraints above), this adds the one thing none
+# of those four cover: a final check of the truly-final summary against the
+# master, right before the response is built, as a last-resort net for
+# anything upstream of it that isn't already caught.
+# ============================================================================
+
+def verify_summary_integrity(master_summary, final_summary):
+    """
+    TASK 5: Compare the final summary against the master and restore/repair
+    it if something corrupted it in a way none of the earlier per-stage
+    protections caught.
+
+    Args:
+        master_summary: The original summary from the master resume (DB).
+        final_summary: The summary as it stands right before output.
+
+    Returns:
+        (summary: str, was_restored: bool)
+    """
+    if not master_summary:
+        return final_summary, False
+
+    if not final_summary:
+        print("[tailor] TASK 5: final summary is empty — restoring master summary")
+        return master_summary, True
+
+    # Severe corruption: lost more than half the content, or no
+    # sentence-ending punctuation at all
+    has_punctuation = any(ch in final_summary for ch in '.!?')
+    lost_half_content = len(final_summary) < len(master_summary) * 0.5
+
+    if lost_half_content or not has_punctuation:
+        print(f"[tailor] TASK 5: summary severely corrupted "
+              f"({len(final_summary)} chars vs master's {len(master_summary)}, "
+              f"has_punctuation={has_punctuation}) — restoring master summary")
+        return master_summary, True
+
+    # Minor corruption: reuse the existing Task 2 fixer instead of
+    # duplicating its logic
+    generator = get_summary_generator()
+    is_valid, _issues = generator.validate_summary_completeness(final_summary)
+    if is_valid:
+        return final_summary, False
+
+    fixed, report = generator.validate_and_fix_summary(final_summary)
+    if report['final_valid']:
+        print("[tailor] TASK 5: minor summary issues auto-fixed at final integrity check")
+        return fixed, True
+
+    print("[tailor] TASK 5: summary still invalid after auto-fix — restoring master summary")
+    return master_summary, True

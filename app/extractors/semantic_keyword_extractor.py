@@ -337,23 +337,64 @@ class SemanticKeywordExtractor:
         
         return classified
     
+    # TASK 6 bugfix: the original classifier only recognized 5 hardcoded
+    # languages, 4 tools, and 3 soft-skill words. Any multi-word term that
+    # missed those tiny lists fell through to the "len(words) >= 2 ->
+    # DOMAIN_TERM" heuristic — and DOMAIN_TERM never routes to the Skills
+    # section (see SectionRouter._get_routing_decision in
+    # app/keyword_router/section_router.py). Real multi-word hard skills
+    # like "Spring Boot", "REST API", "Machine Learning", "CI/CD" were
+    # being silently misrouted away from Skills entirely. This is the
+    # actual root cause of "[tailor] Skills section: 0" — the routing
+    # rules downstream were already correct; classification wasn't.
+    _SOFT_SKILL_TERMS = [
+        'communication', 'teamwork', 'leadership', 'collaboration',
+        'problem solving', 'problem-solving', 'critical thinking',
+        'mentoring', 'coaching', 'adaptability', 'flexibility',
+        'innovation', 'innovative', 'accountability', 'creativity',
+    ]
+
+    _TOOL_PATTERNS = [
+        r'docker|kubernetes|k8s|jenkins|gitlab|github|bitbucket',
+        r'\baws\b|amazon web services|\bazure\b|\bgcp\b|google cloud',
+        r'terraform|ansible|puppet|chef|vagrant',
+        r'\bjira\b|confluence|\bslack\b|\blinux\b|\bunix\b|windows server',
+        r'ci\s*/\s*cd|circleci|travis|github actions',
+    ]
+
+    _HARD_SKILL_PATTERNS = [
+        # NOTE: no bare "go" pattern — "Go" the language is single-word and
+        # already caught by the fallback below; a \bgo\b pattern here would
+        # false-positive on ordinary phrases like "go to market strategy"
+        r'\bpython\b|\bjava\b|javascript|typescript|golang|\brust\b|kotlin|\bscala\b|\bswift\b|\bphp\b|\bruby\b|c\+\+|c#',
+        r'\bsql\b|mysql|postgresql|postgres|\boracle\b|mongodb|\bredis\b|cassandra|elasticsearch',
+        r'django|flask|fastapi|spring boot|\bspring\b|\breact\b|\bvue\b|angular|express|next\.js|node\.js',
+        r'pytorch|tensorflow|\bkeras\b|scikit-learn|\bpandas\b|\bnumpy\b',
+        r'rest\s*api|restful|graphql|\bgrpc\b|microservices?',
+        r'machine learning|deep learning|\bnlp\b|computer vision',
+        r'data structures?|\balgorithms?\b|design patterns?|object.oriented',
+        r'\bdevops\b|\bsre\b',
+    ]
+
     def _classify_single_keyword(self, keyword_lower: str) -> KeywordType:
         """Classify a single keyword."""
-        
-        # Check against known sets
-        if any(lang in keyword_lower for lang in ['python', 'java', 'javascript', 'ruby', 'go']):
-            return KeywordType.HARD_SKILL
-        
-        if any(tool in keyword_lower for tool in ['docker', 'kubernetes', 'aws', 'azure']):
-            return KeywordType.TOOL_PLATFORM
-        
-        if any(soft in keyword_lower for soft in ['communication', 'teamwork', 'leadership']):
+
+        # Soft skills checked first — never classified as a hard skill/tool
+        if any(soft in keyword_lower for soft in self._SOFT_SKILL_TERMS):
             return KeywordType.SOFT_SKILL
-        
-        # Default heuristics
+
+        if any(re.search(p, keyword_lower) for p in self._TOOL_PATTERNS):
+            return KeywordType.TOOL_PLATFORM
+
+        if any(re.search(p, keyword_lower) for p in self._HARD_SKILL_PATTERNS):
+            return KeywordType.HARD_SKILL
+
+        # Default heuristics: unmatched multi-word terms are more likely a
+        # domain/business phrase than a skill; unmatched single words
+        # default to HARD_SKILL (most single-word JD keywords are skills)
         if len(keyword_lower.split()) >= 2:
             return KeywordType.DOMAIN_TERM
-        
+
         return KeywordType.HARD_SKILL
     
     def _exclude_soft_skills(self, classified: List[Dict]) -> List[Dict]:

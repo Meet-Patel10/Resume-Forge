@@ -113,88 +113,197 @@ class SemanticKeywordExtractor:
         
         return result
     
+    # Rule 4's known-skill/domain vocabulary (hoisted from a local variable
+    # to a class attribute in TASK 8 so _calculate_extraction_confidence can
+    # reuse it as a confidence fast-path without duplicating the list).
+    _KNOWN_SKILL_REGEX = [
+        # Programming
+        r'(python|java|javascript|c\+\+|rust|go|ruby|php)',
+        # Frameworks
+        r'(react|angular|vue|spring|django|flask|fastapi)',
+        # Databases
+        r'(sql|postgres|mysql|mongodb|redis|cassandra)',
+        # Tools
+        r'(docker|kubernetes|git|jenkins|aws|azure)',
+        # Concepts
+        r'(oop|design pattern|algorithm|data structure|tdd|agile)',
+        # Soft skills
+        r'(communication|leadership|collaboration|problem.solving)',
+        # Domain (this app also tailors for finance/healthcare roles)
+        r'(capital market|fintech|risk|machine learning|data science)',
+    ]
+
+    # TASK 8: short JD-connector/sentence-fragment patterns. Rule 3 above
+    # only rejects LONG (>4-word) fragments containing a connector word;
+    # confirmed against real extractor output that SHORT 2-3 word JD
+    # fragments ("with cloud platforms", "end interfaces", "product teams",
+    # "stack or backend", "functional teams") were passing through as
+    # "Valid" regardless of word count. These patterns catch those without
+    # a word-count gate. Verified against real multi-word skills already
+    # used elsewhere in this codebase (Spring Boot, REST APIs, Machine
+    # Learning, CI/CD, Full Stack, Node.js, etc.) — none match.
+    _JD_FRAGMENT_PATTERNS = [
+        r'^end\s',
+        r'^\s*and\s',
+        r'^\s*with\s',
+        r'^\s*of\s',
+        r'^\s*to\s',
+        r'^\s*or\s',
+        r'^team\s+',
+        r'team\s+and',
+        r'stack\s+or\s',
+        r'functional\s+teams?\b',
+        r'product\s+teams?\b',
+        r"^(will|'?ll)\s",
+        r'enabled systems and intelligent',
+        r'delivered to hundreds',
+        r'\bnext generation\b',
+        r'alongside talented',
+        r'launch our new',
+        r'architect the intelligent',
+        r'design intelligent',
+        r'^optimize for\b',
+        r'working in collaborative',
+        r'as part of an on',
+        r'call rotation',
+        r'^(the|a|an|is|are|was|were|be|been|being)\s',
+        r'[,;:]\s*$',
+        r'^\d+',
+        r'^\W+$',
+    ]
+
+    _SUSPICIOUS_CONFIDENCE_PATTERNS = [
+        r'^\s*and\s',
+        r'^\s*with\s',
+        r'\s+and\s+the\s+',
+        r',\s*$',
+    ]
+
+    def _is_known_technical_or_domain_term(self, keyword_lower: str) -> bool:
+        """Reuses the existing known-pattern sources (Rule 4's vocabulary
+        plus the Task 6 hard-skill/tool classifier patterns, which are
+        broader and already verified) instead of building a third,
+        separate skill whitelist."""
+        return (
+            any(re.search(p, keyword_lower) for p in self._KNOWN_SKILL_REGEX)
+            or any(re.search(p, keyword_lower) for p in self._TOOL_PATTERNS)
+            or any(re.search(p, keyword_lower) for p in self._HARD_SKILL_PATTERNS)
+        )
+
+    def _calculate_extraction_confidence(self, keyword_text: str) -> float:
+        """
+        TASK 8: confidence score (0.0-1.0) for a raw extracted keyword.
+
+        Known technical/domain terms are trusted outright (0.9) — word
+        count and length penalties only apply to terms NOT already
+        recognized, so a genuine known multi-word skill ("Machine
+        Learning", "Spring Boot") is never penalized just for having two
+        words. This is deliberately more lenient than a hard-coded 14
+        term whitelist would be, since this app also extracts finance/
+        healthcare domain vocabulary that a generic tech list would miss.
+        """
+        keyword_lower = keyword_text.lower().strip()
+
+        if self._is_known_technical_or_domain_term(keyword_lower):
+            return 0.9
+
+        confidence = 0.75
+
+        length = len(keyword_text)
+        if length < 3:
+            confidence *= 0.5
+        elif length > 30:
+            confidence *= 0.6
+
+        word_count = len(keyword_text.split())
+        if word_count > 4:
+            confidence *= 0.3
+        elif word_count > 2:
+            confidence *= 0.8
+
+        for pattern in self._SUSPICIOUS_CONFIDENCE_PATTERNS:
+            if re.search(pattern, keyword_text, re.IGNORECASE):
+                confidence *= 0.5
+
+        return max(0.0, min(1.0, confidence))
+
     def _validate_keyword(self, keyword_text, keyword_type, signals):
         """
         FIX #6: Reject hallucinated/nonsensical keywords.
-        
+
         Returns: (is_valid: bool, reason: str)
         """
-        
+
         # REJECT RULES
         reject_reasons = []
-        
+
         # Rule 1: Single letter keywords
         if len(keyword_text.strip()) <= 1:
             return False, "Single letter (too short)"
-        
+
         # Rule 2: Obvious non-skills
         NON_SKILLS = {
             'program works', 'for technology', 'for large', 'and', 'or', 'the',
             'a', 'an', 'is', 'are', 'to be', 'as', 'in', 'on', 'at',
             'capability', 'ability', 'team',  # Too generic
         }
-        
+
         if keyword_text.lower() in NON_SKILLS:
             return False, f"Non-skill: '{keyword_text}'"
-        
+
         # Rule 3: Keyword fragments (incomplete phrases)
         if keyword_text.count(' ') > 4:  # More than 4 words usually not a skill
             words = keyword_text.split()
             # Check for sentence fragments like "for technology and large"
             if any(w in ['for', 'and', 'or', 'but'] for w in words):
                 return False, f"Likely JD fragment: '{keyword_text}'"
-        
+
+        # Rule 3b (TASK 8): short JD-connector/sentence fragments that
+        # Rule 3's word-count gate misses (see _JD_FRAGMENT_PATTERNS above).
+        for pattern in self._JD_FRAGMENT_PATTERNS:
+            if re.search(pattern, keyword_text, re.IGNORECASE):
+                return False, f"JD fragment/connector pattern: '{pattern}'"
+
         # Rule 4: Check against known skills vocabulary
-        KNOWN_SKILL_PATTERNS = [
-            # Programming
-            r'(python|java|javascript|c\+\+|rust|go|ruby|php)',
-            # Frameworks
-            r'(react|angular|vue|spring|django|flask|fastapi)',
-            # Databases
-            r'(sql|postgres|mysql|mongodb|redis|cassandra)',
-            # Tools
-            r'(docker|kubernetes|git|jenkins|aws|azure)',
-            # Concepts
-            r'(oop|design pattern|algorithm|data structure|tdd|agile)',
-            # Soft skills
-            r'(communication|leadership|collaboration|problem.solving)',
-            # Domain
-            r'(capital market|fintech|risk|machine learning|data science)',
-        ]
-        
         is_known_skill = any(
             re.search(pattern, keyword_text.lower())
-            for pattern in KNOWN_SKILL_PATTERNS
+            for pattern in self._KNOWN_SKILL_REGEX
         )
-        
+
         if not is_known_skill and len(keyword_text.split()) > 3:
             # If unknown skill and more than 3 words, likely invalid
             return False, f"Unknown skill pattern: '{keyword_text}'"
-        
+
         # Rule 5: Must-haves should have language signals
         if keyword_type in ['HARD_SKILL', 'TOOL_PLATFORM']:
             if not signals and len(keyword_text.split()) > 3:
                 # No signals + long phrase = probably not a must-have
                 pass  # Don't reject, but mark lower confidence
-        
+
+        # Rule 6 (TASK 8): confidence-based rejection for anything that
+        # slipped past the pattern rules above but still scores low.
+        confidence = self._calculate_extraction_confidence(keyword_text)
+        if confidence < 0.7:
+            return False, f"Low confidence: {confidence:.2f} < 0.70"
+
         # All checks passed
         return True, "Valid"
     
     def _extract_all_keywords(self, jd_text: str, jd_sections: Dict) -> List[Dict]:
         """
         Extract raw keywords from JD.
-        
+
         For now: simple keyword tokenization. Later: can use NER.
         """
         keywords = []
-        
+
         # Extract multi-word phrases first
         # Common technical phrases like "machine learning", "rest api"
         phrases = re.findall(
             r'\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|[a-z]+(?:\s+[a-z]+)+)\b',
             jd_text
         )
-        
+
         for phrase in phrases:
             if len(phrase) > 2:  # Skip very short phrases
                 keywords.append({
@@ -202,7 +311,32 @@ class SemanticKeywordExtractor:
                     'sections': self._find_sections_for_keyword(phrase, jd_sections),
                     'frequency': jd_text.lower().count(phrase.lower()),
                 })
-        
+
+        # TASK 11 fix: the phrase regex above requires TWO OR MORE
+        # consecutive words of matching case, so a lone technical term
+        # ("Python", "AWS", "SQL", "Kubernetes", "React"...) was NEVER
+        # proposed as a candidate here — meaning it could never reach
+        # must_haves/important no matter how explicitly the JD asked for
+        # it. HARD_SKILL_KEYWORDS (class attribute above) existed for
+        # exactly this gap but was never referenced anywhere. Rather than
+        # wiring in that separate, shorter, unbounded set (a bare 'sql' or
+        # 'r' substring check would false-positive constantly), this
+        # reuses _TOOL_PATTERNS/_HARD_SKILL_PATTERNS — the same
+        # word-boundary-safe, already-curated regexes _classify_single_
+        # keyword() (Task 6) already relies on — to scan jd_text directly
+        # for known single/short technical-term mentions.
+        seen_lower = {kw['text'].lower() for kw in keywords}
+        for pattern in self._TOOL_PATTERNS + self._HARD_SKILL_PATTERNS:
+            for match in re.finditer(pattern, jd_text, re.IGNORECASE):
+                text = match.group()
+                if text.lower() not in seen_lower:
+                    keywords.append({
+                        'text': text,
+                        'sections': self._find_sections_for_keyword(text, jd_sections),
+                        'frequency': jd_text.lower().count(text.lower()),
+                    })
+                    seen_lower.add(text.lower())
+
         return keywords
     
     def _find_sections_for_keyword(self, keyword: str, jd_sections: Dict) -> List[str]:

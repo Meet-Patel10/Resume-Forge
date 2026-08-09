@@ -8,6 +8,24 @@ Chunks:
 - 10.3: Evidence requirement validator
 - 10.4: Categorization validator
 - 10.5: Role level consistency validator
+- 10.6: Keyword/language naturalness validator (AI-cliché phrasing)
+
+TASK 10 fix: this framework (run_quality_gates + its five chunks) already
+existed and was already unit-tested (tests/test_tailoring_fixes.py::
+TestQualityGates) — but nothing in app/routes/tailor.py ever called it.
+Resumes were generated and sent with a fully-built quality gate sitting
+unused, exactly matching TASK_10_COMPLETE_SOLUTION.md's Problem 1 ("no
+comprehensive quality checks after tailoring") and Problem 6 ("no way to
+know if resume is suitable for submission"). The doc's proposed fix was a
+brand-new parallel framework (ResumeIntegrityValidator/KeywordQuality
+Scorer/NaturalLanguageValidator in a from-scratch quality_validator.py) —
+not implemented as-is since it would have discarded this real, working,
+tested module and assumed a resume schema this app doesn't use (flat
+`skills: List[str]` and `experience[].description`, vs. this app's real
+`skills: [{category, items}]` and `experience[].bullets`). The actual fix:
+add the one genuinely missing check (10.6, Problem 4 — keyword/language
+naturalness, which nothing here covered) and wire run_quality_gates into
+the real tailor pipeline (see app/routes/tailor.py, "TASK 10" block).
 """
 
 import re
@@ -254,6 +272,74 @@ def validate_role_consistency(resume_json, detected_role_level):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# CHUNK 10.6: Keyword/Language Naturalness Validator (TASK 10 fix)
+#
+# TASK_10_COMPLETE_SOLUTION.md's Problem 4 ("Missing Validation for
+# Keyword Naturalness") is real: nothing in this file checked resume
+# prose for AI-cliché phrasing before this fix. But the doc's proposed
+# KeywordQualityScorer/NaturalLanguageValidator classes weren't wired in
+# as-is — this codebase already has a production-confirmed AI-phrasing
+# pattern list (validate_soft_skill_grammaticality in app/routes/
+# tailor.py, added for TASK 7), scoped to soft-skill-injected bullets
+# only. This reuses that same pattern list, generalized to scan the
+# WHOLE resume (summary + every experience/project bullet), so a bullet
+# that becomes AI-sounding from some OTHER pipeline step (hard-skill
+# injection, convergence-engine edits) is also caught — not just soft
+# skill injections.
+# ═══════════════════════════════════════════════════════════════════
+
+AI_WRITTEN_PATTERNS = [
+    (r'\bInnovatively\s+\w+', "AI-sounding adverb: 'Innovatively'"),
+    (r'\bCommunicated\s+automation', "Unnatural phrase: 'Communicated automation'"),
+    (r'\bCollaboratively\s+developed', "AI-sounding: 'Collaboratively developed'"),
+    (r'\bProactively\s+\w+ed', "AI-sounding adverb: 'Proactively'"),
+    (r'^(Innovatively|Communicatively|Collaboratively|Adaptably|Accountably)\s',
+     "Opens with an awkward -ly adverb"),
+    (r'\bDynamically\s+(optimized|implemented)', "AI-sounding adverb: 'Dynamically'"),
+    (r'\bSeamlessly\s+(integrated|implemented)', "AI-sounding adverb: 'Seamlessly'"),
+    (r'\bLeveraging\s+(cutting-edge|advanced)\b', "Cliché phrase: 'leveraging cutting-edge/advanced'"),
+    (r'\b(cutting-edge|state-of-the-art)\s+(solutions|technologies)\b', "Cliché phrase"),
+]
+
+
+def validate_keyword_naturalness(resume_json):
+    """
+    Chunk 10.6: scan the resume's prose (summary + experience/project
+    bullets) for AI-cliché phrasing.
+
+    Returns: {
+        'is_valid': bool,       # True if no flagged phrases found
+        'score': float (0-100),
+        'flagged_phrases': list of (location, message, matched_text),
+    }
+    """
+    flagged = []
+
+    def _scan(text, location):
+        if not isinstance(text, str) or not text:
+            return
+        for pattern, message in AI_WRITTEN_PATTERNS:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                flagged.append((location, message, match.group()))
+
+    _scan(resume_json.get('summary', ''), 'summary')
+    for i, exp in enumerate(resume_json.get('experience', [])):
+        for j, bullet in enumerate(exp.get('bullets', [])):
+            _scan(bullet, f'experience[{i}].bullets[{j}]')
+    for i, proj in enumerate(resume_json.get('projects', [])):
+        for j, bullet in enumerate(proj.get('bullets', [])):
+            _scan(bullet, f'projects[{i}].bullets[{j}]')
+
+    score = max(0.0, 100.0 - len(flagged) * 15)
+
+    return {
+        'is_valid': len(flagged) == 0,
+        'score': score,
+        'flagged_phrases': flagged,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Master Quality Gate — Runs all validators
 # ═══════════════════════════════════════════════════════════════════
 
@@ -276,21 +362,24 @@ def run_quality_gates(resume_json, detected_role_level='mid_level'):
     evidence_result = validate_skill_evidence(resume_json)
     categorization_result = validate_skill_categorization(resume_json)
     role_result = validate_role_consistency(resume_json, detected_role_level)
-    
+    naturalness_result = validate_keyword_naturalness(resume_json)  # TASK 10 fix
+
     overall_pass = all([
         summary_result['is_valid'],
         skills_result['is_valid'],
         categorization_result['is_valid'],
         role_result['is_valid'],
+        naturalness_result['is_valid'],
     ])
-    
+
     overall_score = (
-        summary_result['score'] * 0.25 +
-        skills_result['score'] * 0.25 +
-        evidence_result['coverage_percentage'] * 0.25 +
-        (100 if categorization_result['is_valid'] else 50) * 0.25
+        summary_result['score'] * 0.20 +
+        skills_result['score'] * 0.20 +
+        evidence_result['coverage_percentage'] * 0.20 +
+        (100 if categorization_result['is_valid'] else 50) * 0.20 +
+        naturalness_result['score'] * 0.20
     )
-    
+
     return {
         'overall_pass': overall_pass,
         'summary': summary_result,
@@ -298,5 +387,6 @@ def run_quality_gates(resume_json, detected_role_level='mid_level'):
         'evidence': evidence_result,
         'categorization': categorization_result,
         'role_consistency': role_result,
+        'naturalness': naturalness_result,
         'overall_score': overall_score,
     }

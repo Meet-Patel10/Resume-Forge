@@ -516,108 +516,71 @@ _COMPREHENSIVE_CATEGORY_MAP = {
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CHUNK 7.1: Natural Language Templates for Soft Skills
-# Templates that sound human-written, not AI-generated
-# ═══════════════════════════════════════════════════════════════════
-
-SOFT_SKILL_TEMPLATES = {
-    'collaboration': [
-        'collaborating with cross-functional teams',
-        'working closely with stakeholders',
-        'partnering with engineering and product teams',
-    ],
-    'communication': [
-        'communicating technical concepts to non-technical stakeholders',
-        'presenting findings to leadership',
-        'documenting technical decisions and architecture',
-    ],
-    'innovation': [
-        'identifying opportunities for process improvement',
-        'proposing and implementing novel solutions',
-        'driving adoption of modern engineering practices',
-    ],
-    'mentoring': [
-        'mentoring junior developers',
-        'conducting code reviews and providing constructive feedback',
-        'sharing best practices with the team',
-    ],
-    'problem_solving': [
-        'debugging and resolving complex production issues',
-        'analyzing root causes and implementing preventive measures',
-        'troubleshooting system performance bottlenecks',
-    ],
-    'curiosity': [
-        'exploring new technologies and frameworks',
-        'staying current with industry trends',
-        'continuously learning and applying new skills',
-    ],
-}
-
-
-# ═══════════════════════════════════════════════════════════════════
-# CHUNK 7.2: Inject Soft Skills at Clause Boundaries
-# Adds soft skills naturally at sentence boundaries
-# ═══════════════════════════════════════════════════════════════════
-
-def inject_soft_skill_naturally(bullet_text, soft_skill, templates=None):
-    """
-    Inject a soft skill into a bullet point at a natural clause boundary.
-    
-    Returns: Modified bullet text with soft skill naturally integrated
-    """
-    if templates is None:
-        templates = SOFT_SKILL_TEMPLATES
-    
-    # Get template for this skill
-    skill_key = soft_skill.lower().replace(' ', '_')
-    skill_templates = templates.get(skill_key, [])
-    
-    if not skill_templates:
-        # Fallback: use skill name directly at clause boundary
-        if ', ' in bullet_text:
-            # Insert at existing clause boundary
-            parts = bullet_text.rsplit(', ', 1)
-            return f"{parts[0]}, {soft_skill.lower()}, {parts[1]}"
-        else:
-            return bullet_text
-    
-    # Use first available template
-    template = skill_templates[0]
-    
-    # Insert at end of bullet, before period
-    if bullet_text.rstrip().endswith('.'):
-        return f"{bullet_text.rstrip()[:-1]}, {template}."
-    else:
-        return f"{bullet_text}, {template}"
-
-
-# ═══════════════════════════════════════════════════════════════════
-# CHUNK 7.3: Grammaticality Validation for Soft Skills
-# Validates injected soft skills sound natural
+# TASK 7: Naturalness validation for injected soft skills
+#
+# Supersedes the old dead "CHUNK 7.1/7.2" block that used to live here
+# (a static template-splice engine from an earlier abandoned attempt,
+# never wired into the real pipeline, and which shadowed the real
+# Stage-2 SOFT_SKILL_TEMPLATES dict defined near the top of this file —
+# a landmine left for whoever next tried to use skill_config).
+#
+# The real injection (below, "SOFT SKILLS INJECTION INTO BULLETS") asks
+# the AI to rewrite the whole bullet and requires the literal skill
+# stem to appear (see SOFT_SKILL_STRICT_VARIANTS) so ATS keyword
+# scanners still match — synonym-based templates would silently
+# reopen that bug. This validator instead catches AI-sounding SURFACE
+# patterns post-generation so we can ask the AI to retry, without ever
+# giving up the literal-stem requirement.
 # ═══════════════════════════════════════════════════════════════════
 
 def validate_soft_skill_grammaticality(bullet_text):
     """
-    Validate that a bullet with injected soft skill sounds natural.
-    
+    Validate that a bullet with an injected soft skill sounds natural.
+
     Returns: (is_valid, issues)
     """
     import re
     issues = []
-    
+
     # Check for AI-sounding patterns
     ai_patterns = [
-        (r'Innovatively\s+\w+', "AI-sounding adverb: 'Innovatively'"),
-        (r'Communicated\s+automation', "Unnatural phrase: 'Communicated automation'"),
-        (r'Collaboratively\s+developed', "AI-sounding: 'Collaboratively developed'"),
-        (r'Proactively\s+\w+ed', "AI-sounding adverb: 'Proactively'"),
+        (r'\bInnovatively\s+\w+', "AI-sounding adverb: 'Innovatively'"),
+        (r'\bCommunicated\s+automation', "Unnatural phrase: 'Communicated automation'"),
+        (r'\bCollaboratively\s+developed', "AI-sounding: 'Collaboratively developed'"),
+        (r'\bProactively\s+\w+ed', "AI-sounding adverb: 'Proactively'"),
+        (r'^(Innovatively|Communicatively|Collaboratively|Adaptably|Accountably)\s',
+         "Bullet opens with an awkward -ly adverb"),
+        (r'\bCommunicated\s+.*\s+by\s+(developing|creating)', "Awkward structure: 'Communicated ... by developing/creating'"),
+        (r'\bCollaborative\s+(approach|solution|effort)\b', "Stiff phrasing: 'Collaborative approach/solution/effort'"),
+        (r'\b(and|with)\s+creative\s+(solutions|approaches)\b', "Tacked-on phrase: 'and/with creative solutions/approaches'"),
     ]
-    
+
     for pattern, message in ai_patterns:
         if re.search(pattern, bullet_text, re.IGNORECASE):
             issues.append(message)
-    
+
     return len(issues) == 0, issues
+
+
+def get_natural_skill_guidance(skill_lower):
+    """
+    Per-skill guidance for the soft-skill injection prompt (TASK 7 fix).
+
+    Ordering matters: the AI tends to lead with whichever variant is
+    listed first, so awkward adverb forms ("innovatively") are listed
+    last instead of first, favoring natural adjective/verb forms
+    ("innovative", "innovated") while keeping every listed word a
+    literal stem variant of the skill (required for ATS matching —
+    see SOFT_SKILL_STRICT_VARIANTS, SOFT_SKILLS_SYNONYM_BUG).
+    """
+    guidance = {
+        'innovation': "- Use: 'innovative' (as an adjective), 'innovated', or 'innovation' — avoid opening the bullet with 'Innovatively'\n",
+        'communication': "- Use: 'communicated', 'communication', 'clearly explained', or 'documented' — integrate mid-sentence, not as a bolted-on clause\n",
+        'accountability': "- Use: 'accountability', 'accountable', 'took ownership', or 'responsible'\n",
+        'collaboration': "- Use: 'collaborated', 'collaboration', 'worked together', or 'team effort' — avoid the stiff phrase 'collaborative approach'\n",
+        'adaptability': "- Use: 'adapted', 'adaptability', 'flexible', 'adjusted to', or 'pivoted'\n",
+    }
+    return guidance.get(skill_lower, '')
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2742,7 +2705,12 @@ def api_tailor():
                 if guarantee_metadata.get('all_protected_found', False):
                     print(f"[tailor] ✓ GUARANTEE COMPLETE: 100% of must-haves + important injected")
                 else:
-                    print(f"[tailor] ⚠ WARNING: Some keywords not guaranteed")
+                    # TASK 9: surface which keywords are still missing and why,
+                    # instead of just a bare warning with no audit trail.
+                    print(f"[tailor] ⚠ WARNING: Some keywords not guaranteed: "
+                          f"{guarantee_metadata.get('still_missing', [])}")
+                    for skipped in guarantee_metadata.get('skipped_log', []):
+                        print(f"[tailor]     - '{skipped['keyword']}': {skipped['reason']}")
             else:
                 if verification.get('status') == 'GUARANTEE_COMPLETE':
                     print(f"[tailor] ✓ GUARANTEE COMPLETE: 100% of must-haves + important injected")
@@ -4579,11 +4547,11 @@ def api_tailor():
                     original_bullet = all_bullets[bullet_position]
 
                     skill_lower = skill.lower()
-                    skill_config = SOFT_SKILL_TEMPLATES.get(skill_lower, {})
 
-                    # Create soft skill evidence prompt — force the literal keyword
-                    # or a direct variant, not a synonym (see SOFT_SKILLS_SYNONYM_BUG)
-                    soft_skill_prompt = f"""
+                    def _build_soft_skill_prompt(skill, skill_lower, original_bullet, retry_issues=None):
+                        # Force the literal keyword or a direct variant, not a
+                        # synonym (see SOFT_SKILLS_SYNONYM_BUG)
+                        prompt = f"""
 Rewrite this bullet to EXPLICITLY include the soft skill '{skill}':
 
 Original: "{original_bullet}"
@@ -4595,66 +4563,88 @@ CRITICAL REQUIREMENTS:
    - Place the skill keyword in the first 15 words
 2. Keep the original technical achievement and impact
 3. Sound natural and professional (no awkward forced insertion)
+   - Do NOT open the bullet with an "-ly" adverb (e.g. "Innovatively...", "Collaboratively...")
+   - Integrate the skill mid-sentence rather than bolting it onto the end
 4. Keep under 155 characters (important for PDF formatting)
 
 Rewriting strategy for '{skill}':
 """
+                        # Add skill-specific guidance (TASK 7: natural forms first)
+                        prompt += get_natural_skill_guidance(skill_lower)
 
-                    # Add skill-specific guidance
-                    if skill_lower == 'innovation':
-                        soft_skill_prompt += "- Use: 'innovatively', 'innovation', 'innovative', 'innovated'\n"
-                    elif skill_lower == 'communication':
-                        soft_skill_prompt += "- Use: 'communicated', 'communication', 'clearly explained', 'documented'\n"
-                    elif skill_lower == 'accountability':
-                        soft_skill_prompt += "- Use: 'accountability', 'accountable', 'took ownership', 'responsible'\n"
-                    elif skill_lower == 'collaboration':
-                        soft_skill_prompt += "- Use: 'collaborated', 'collaboration', 'worked together', 'team effort'\n"
-                    elif skill_lower == 'adaptability':
-                        soft_skill_prompt += "- Use: 'adapted', 'adaptability', 'flexible', 'adjusted to', 'pivoted'\n"
+                        if retry_issues:
+                            prompt += (
+                                "\nYour previous attempt sounded AI-written for these reasons:\n"
+                                + "\n".join(f"- {issue}" for issue in retry_issues)
+                                + "\nTry again, avoiding those specific patterns.\n"
+                            )
 
-                    soft_skill_prompt += f"""
-Return ONLY the rewritten bullet text. Include the keyword. No explanation.
-"""
+                        prompt += "\nReturn ONLY the rewritten bullet text. Include the keyword. No explanation.\n"
+                        return prompt
 
                     try:
-                        # Use AI to enhance bullet
-                        soft_skill_result = ai_client.analyze(
-                            "You are a professional resume writer. Enhance bullets with soft skills.",
-                            soft_skill_prompt,
-                            max_tokens=150,
-                        )
+                        enhanced_bullet = None
+                        naturalness_issues = None
+                        skill_keywords = SOFT_SKILL_STRICT_VARIANTS.get(skill_lower, [])
 
-                        if not soft_skill_result.get('error'):
+                        # TASK 7: up to 2 attempts — retry once if the first
+                        # pass is ATS-valid but sounds AI-written.
+                        for attempt in range(2):
+                            soft_skill_prompt = _build_soft_skill_prompt(
+                                skill, skill_lower, original_bullet,
+                                retry_issues=naturalness_issues if attempt > 0 else None,
+                            )
+
+                            soft_skill_result = ai_client.analyze(
+                                "You are a professional resume writer. Enhance bullets with soft skills.",
+                                soft_skill_prompt,
+                                max_tokens=150,
+                            )
+
+                            if soft_skill_result.get('error'):
+                                print(f"[tailor] ⚠ Failed to inject '{skill}': {soft_skill_result['error']}")
+                                enhanced_bullet = None
+                                break
+
                             enhanced_raw = soft_skill_result['response']
                             if isinstance(enhanced_raw, str):
                                 enhanced_bullet = enhanced_raw.strip('"').strip()
                             else:
                                 enhanced_bullet = str(enhanced_raw).strip('"').strip()
 
+                            total_tokens += soft_skill_result.get('tokens_used', 0)
+                            total_cost += soft_skill_result.get('cost_usd', 0.0)
+
                             # VERIFY the enhanced bullet contains the literal skill keyword
                             # or a direct stem-variant — NOT a synonym (SOFT_SKILLS_SYNONYM_BUG)
-                            skill_keywords = SOFT_SKILL_STRICT_VARIANTS.get(skill_lower, [])
                             keyword_found = any(keyword in enhanced_bullet.lower() for keyword in skill_keywords)
-
-                            if keyword_found:
-                                # Update the bullet in the appropriate location
-                                if section == 'experience':
-                                    tailored_data['experience'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
-                                else:
-                                    tailored_data['projects'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
-
-                                total_tokens += soft_skill_result.get('tokens_used', 0)
-                                total_cost += soft_skill_result.get('cost_usd', 0.0)
-
-                                print(f"[tailor] ✓ Soft skill '{skill}' injected into {section} bullet #{bullet_idx}")
-                                print(f"[tailor]   Before: {original_bullet[:60]}...")
-                                print(f"[tailor]   After:  {enhanced_bullet[:60]}...")
-                            else:
+                            if not keyword_found:
                                 print(f"[tailor] ✗ Soft skill '{skill}' enhancement failed (no keywords in result)")
                                 print(f"[tailor]   Expected one of: {', '.join(skill_keywords)}")
                                 print(f"[tailor]   Got: {enhanced_bullet[:60]}...")
-                        else:
-                            print(f"[tailor] ⚠ Failed to inject '{skill}': {soft_skill_result['error']}")
+                                enhanced_bullet = None
+                                break
+
+                            # TASK 7: naturalness check — retry once if it fails,
+                            # but an ATS-valid rewrite is always kept even if the
+                            # retry doesn't improve naturalness.
+                            is_natural, naturalness_issues = validate_soft_skill_grammaticality(enhanced_bullet)
+                            if is_natural:
+                                break
+                            elif attempt == 0:
+                                print(f"[tailor] ⟳ Soft skill '{skill}' sounds AI-written, retrying: {naturalness_issues}")
+
+                        if enhanced_bullet:
+                            if section == 'experience':
+                                tailored_data['experience'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+                            else:
+                                tailored_data['projects'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
+
+                            print(f"[tailor] ✓ Soft skill '{skill}' injected into {section} bullet #{bullet_idx}")
+                            print(f"[tailor]   Before: {original_bullet[:60]}...")
+                            print(f"[tailor]   After:  {enhanced_bullet[:60]}...")
+                            if naturalness_issues:
+                                print(f"[tailor]   (kept despite naturalness flag after retry: {naturalness_issues})")
 
                     except Exception as e:
                         print(f"[tailor] ⚠ Soft skill injection error for '{skill}': {e}")
@@ -4815,6 +4805,38 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
                 print(f"[tailor] TASK 5: final summary integrity check made a correction")
         except Exception as e:
             print(f"[tailor] TASK 5 summary integrity check failed (non-fatal): {e}")
+
+    # ========== TASK 10: QUALITY VALIDATION GATE (final safety net) ==========
+    # run_quality_gates() (app/validators/quality_validator.py) already existed
+    # — summary completeness, skill validity, evidence coverage, categorization,
+    # role consistency, and (TASK 10 addition) keyword/language naturalness —
+    # and was already unit-tested, but nothing in this pipeline ever called it:
+    # resumes were generated and sent without the quality gate ever running.
+    # Wired in here, non-fatal like every other check in this block: it logs
+    # the score/issues and stores them on the resume for visibility instead of
+    # silently sending a low-quality resume.
+    if isinstance(tailored_data, dict):
+        try:
+            from app.validators.quality_validator import run_quality_gates
+            _role_level_for_qa = detected_role_level if 'detected_role_level' in locals() else 'mid_level'
+            quality_report = run_quality_gates(tailored_data, _role_level_for_qa)
+            tailored_data['_quality_report'] = quality_report
+
+            print(f"[tailor] TASK 10: Quality gate — score {quality_report['overall_score']:.1f}/100, "
+                  f"pass={quality_report['overall_pass']}")
+            if not quality_report['overall_pass']:
+                if not quality_report['summary']['is_valid']:
+                    print(f"[tailor]   ⚠ Summary issues: {quality_report['summary']['issues']}")
+                if not quality_report['skills']['is_valid']:
+                    print(f"[tailor]   ⚠ Invalid skills: {quality_report['skills']['invalid_skills']}")
+                if not quality_report['categorization']['is_valid']:
+                    print(f"[tailor]   ⚠ Categorization issues: {quality_report['categorization']['issues']}")
+                if not quality_report['naturalness']['is_valid']:
+                    print(f"[tailor]   ⚠ AI-sounding phrases: {quality_report['naturalness']['flagged_phrases']}")
+                if not quality_report['role_consistency']['is_valid']:
+                    print(f"[tailor]   ⚠ Role consistency issues: {quality_report['role_consistency']['issues']}")
+        except Exception as e:
+            print(f"[tailor] TASK 10 quality gate failed (non-fatal): {e}")
 
     # generate the latex
     latex_output = ''

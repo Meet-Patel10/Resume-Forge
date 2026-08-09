@@ -239,15 +239,15 @@ class MustHaveGuaranteeEngine:
                                confidence_threshold=0.75):
         """
         FIX #7: Guarantee injection of protected keywords only.
-        
+
         CRITICAL CHANGE: Only work with protected_keywords_registry.
         Do NOT accept raw keyword lists (prevents hallucination).
-        
+
         Args:
             resume_json: Tailored resume from AI
             protected_keywords_registry: Dict of {normalized_key: {original_text, tier, ...}}
             confidence_threshold: Min confidence to inject (default 0.75)
-            
+
         Returns:
             {
                 'resume_json': guaranteed_resume,
@@ -256,29 +256,59 @@ class MustHaveGuaranteeEngine:
                     'important_coverage': float,
                     'injections_made': int,
                     'all_protected_found': bool,
+                    'still_missing': list,
                     'audit_details': dict,
+                    'injection_log': list,
+                    'skipped_log': list,
+                    'placement_check': dict,
                 }
             }
+
+        TASK 9 fix: this path (the one tailor.py actually calls whenever
+        protected_keywords_registry is available — see "FIX #7 preferred")
+        used to be a single pass with three real gaps, found by comparing
+        it against GuaranteeVerifier/AuditEngine — the more thorough,
+        already-tested modules `guarantee_injection` (v1, below) already
+        uses but this v2 path bypassed:
+          1. Presence checks used a bare `json.dumps(resume).lower()`
+             substring match instead of the existing fuzzy word-match
+             checker (self.verifier._keyword_present). A keyword present
+             as a known variant (e.g. "REST APIs" vs. resume text
+             "RESTful APIs") was scored MISSING, triggering a pointless
+             duplicate-injection attempt and an inaccurate coverage number.
+          2. Deduplication ran, but nothing retried keywords that failed
+             injection *before* dedup — even though dedup can free up the
+             exact density room ("category full") that caused the failure.
+             That's the real "fallback only tries once" gap (not literally
+             the guide's generic 6-step class hierarchy, which doesn't
+             match this codebase's actual guarantee-engine architecture).
+          3. Per-keyword success/failure reasons were tracked in
+             self.injection_log/self.skipped_log by _inject_keyword() (the
+             v1 code path) but v2 never touched those logs, so the caller
+             (tailor.py) only ever saw aggregate counts — no audit trail,
+             no failure-reason breakdown.
+        Fixed by reusing self.verifier's existing matcher/placement-check
+        methods instead of a second, weaker inline implementation, and by
+        recording + returning the full injection/skip log plus a genuine
+        post-dedup retry.
         """
-        import json
-        
         guaranteed = copy.deepcopy(resume_json)
-        
+
         print("[guarantee] Step 1: Auditing resume...")
-        
-        resume_text = json.dumps(guaranteed).lower()
-        
+
+        resume_text = self.verifier._build_searchable_text(guaranteed)
+
         audit = {
             'found': [],
             'missing': [],
         }
-        
+
         # ONLY check protected keywords
         for protected_key, protected_info in protected_keywords_registry.items():
             original_text = protected_info['original_text']
             confidence = protected_info['confidence']
             tier = protected_info['tier']
-            
+
             # Skip low-confidence keywords (they may be wrongly extracted)
             if confidence < confidence_threshold:
                 audit['missing'].append({
@@ -287,9 +317,11 @@ class MustHaveGuaranteeEngine:
                     'action': 'SKIP'
                 })
                 continue
-            
-            # Check if in resume
-            if protected_key in resume_text or original_text.lower() in resume_text:
+
+            # Check if in resume (fuzzy match — same matcher used by the
+            # final verification below, so "found" here can't drift from
+            # "found" at the end)
+            if self.verifier._keyword_present(original_text, resume_text, guaranteed):
                 audit['found'].append(original_text)
             else:
                 audit['missing'].append({
@@ -298,17 +330,18 @@ class MustHaveGuaranteeEngine:
                     'action': 'INJECT' if confidence >= confidence_threshold else 'SKIP',
                     'tier': tier,
                 })
-        
+
         print(f"[guarantee]   Found: {len(audit['found'])}")
         print(f"[guarantee]   Missing: {len(audit['missing'])}")
-        
+
         # Inject missing (high-confidence only)
         injections_made = 0
+        pending_retry = []  # keywords whose primary + fallback strategy both failed pre-dedup
         for item in audit['missing']:
             if item['action'] == 'INJECT':
                 keyword = item['keyword']
                 keyword_lower = keyword.lower()
-                
+
                 # ═══════════════════════════════════════════════════════
                 # CHUNK 9.1: Validate keyword before injection
                 # CHUNK 9.2: Only inject from protected_keywords_registry
@@ -318,42 +351,73 @@ class MustHaveGuaranteeEngine:
                 is_valid_keyword, reject_reason = validate_skill(keyword)
                 if not is_valid_keyword:
                     print(f"[guarantee]   ✗ SKIPPED invalid keyword: '{keyword}' ({reject_reason})")
+                    self.skipped_log.append({'keyword': keyword, 'reason': f'Invalid: {reject_reason}'})
                     continue
-                
+
                 # Use existing injection strategies
                 is_soft = keyword_lower in SOFT_SKILLS
-                
+
                 if is_soft:
                     success, reason = experience_injection_strategy(guaranteed, keyword)
                 else:
                     success, reason = skills_injection_strategy(guaranteed, keyword)
-                
+
                 if not success:
                     success, reason = fallback_injection_strategy(guaranteed, keyword)
-                
+
                 if success:
                     injections_made += 1
+                    self.injection_log.append({
+                        'keyword': keyword,
+                        'strategy': 'experience' if is_soft else 'skills',
+                        'reason': reason,
+                    })
                     print(f"[guarantee]   ✓ Injected: {keyword}")
                 else:
+                    pending_retry.append(keyword)
                     print(f"[guarantee]   ✗ Failed to inject: {keyword} ({reason})")
-        
+
         # Deduplicate after injection
         guaranteed, dedup_count = self.dedup_engine.deduplicate_skills(guaranteed)
         if dedup_count > 0:
             print(f"[guarantee]   Deduplicated: removed {dedup_count} duplicates")
-        
+
+        # TASK 9: genuine emergency retry — dedup can free the exact
+        # density room that made the first attempt fail, so retry keywords
+        # that failed pre-dedup instead of dropping them silently.
+        if pending_retry:
+            print(f"[guarantee]   Retrying {len(pending_retry)} keyword(s) post-dedup...")
+        for keyword in pending_retry:
+            success, reason = fallback_injection_strategy(guaranteed, keyword)
+            if success:
+                injections_made += 1
+                self.injection_log.append({
+                    'keyword': keyword,
+                    'strategy': 'emergency_retry_post_dedup',
+                    'reason': reason,
+                })
+                print(f"[guarantee]   ✓ Emergency retry succeeded: {keyword}")
+            else:
+                self.skipped_log.append({
+                    'keyword': keyword,
+                    'reason': f'All strategies failed (incl. post-dedup retry): {reason}',
+                })
+                print(f"[guarantee]   ✗ Emergency retry also failed: {keyword} ({reason})")
+
         # Final verification
         print("[guarantee] Step 2: Final verification...")
         all_found = True
-        resume_text_final = json.dumps(guaranteed).lower()
-        
+        still_missing = []
+        resume_text_final = self.verifier._build_searchable_text(guaranteed)
+
         for protected_key, protected_info in protected_keywords_registry.items():
             if protected_info['confidence'] >= confidence_threshold:
                 original_text = protected_info['original_text']
-                if original_text.lower() not in resume_text_final:
+                if not self.verifier._keyword_present(original_text, resume_text_final, guaranteed):
                     print(f"[guarantee]   ✗ Still missing: {original_text}")
                     all_found = False
-        
+                    still_missing.append(original_text)
+
         # Calculate coverage
         must_have_coverage = self._calc_tier_coverage(
             guaranteed, protected_keywords_registry, 'must_have', confidence_threshold
@@ -361,7 +425,10 @@ class MustHaveGuaranteeEngine:
         important_coverage = self._calc_tier_coverage(
             guaranteed, protected_keywords_registry, 'important', confidence_threshold
         )
-        
+
+        # QA: placement check (e.g. soft skills leaking into Skills section)
+        placement_check = self.verifier._verify_placement(guaranteed)
+
         return {
             'resume_json': guaranteed,
             'metadata': {
@@ -369,25 +436,35 @@ class MustHaveGuaranteeEngine:
                 'important_coverage': important_coverage,
                 'injections_made': injections_made,
                 'all_protected_found': all_found,
+                'still_missing': still_missing,
                 'audit_details': audit,
+                'injection_log': list(self.injection_log),
+                'skipped_log': list(self.skipped_log),
+                'placement_check': placement_check,
             }
         }
-    
+
     def _calc_tier_coverage(self, resume_json, registry, tier_value, threshold):
-        """Calculate coverage for a specific tier."""
-        import json
-        resume_text = json.dumps(resume_json).lower()
-        
+        """Calculate coverage for a specific tier.
+
+        TASK 9 fix: reuse the same fuzzy matcher as guarantee_injection_v2's
+        audit/verification steps instead of a third, separate naive
+        json.dumps() substring check — otherwise this could report a
+        different coverage number than the 'all_protected_found' flag
+        computed moments earlier from the same resume.
+        """
+        resume_text = self.verifier._build_searchable_text(resume_json)
+
         tier_keywords = {k: v for k, v in registry.items()
                          if v['tier'] == tier_value and v['confidence'] >= threshold}
-        
+
         if not tier_keywords:
             return 1.0  # No keywords of this tier = 100% coverage
-        
+
         found = 0
         for key, info in tier_keywords.items():
-            if key in resume_text or info['original_text'].lower() in resume_text:
+            if self.verifier._keyword_present(info['original_text'], resume_text, resume_json):
                 found += 1
-        
+
         return found / len(tier_keywords)
 

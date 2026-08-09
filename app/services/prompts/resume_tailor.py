@@ -5,6 +5,81 @@ The tailored resume should READ like the master resume — same voice, same stru
 
 ---
 
+## CRITICAL CONSTRAINTS FOR THIS TAILORING
+
+### Hard Constraint 1: Use ONLY Provided Keywords
+- The extraction engine has already identified the best keywords from the JD
+- You MUST use ONLY keywords from the provided list
+- You MUST NOT add keywords not in the provided list
+- You MUST NOT invent skills the candidate doesn't have
+- If a keyword needs to go in, it's in the list. If it's not in the list, it must NOT be added.
+
+### Hard Constraint 2: SOFT SKILLS NEVER IN SKILLS SECTION
+- The provided list includes "soft_skills_to_exclude"
+- These keywords MUST NEVER appear in the Skills section
+- Soft skills can ONLY appear in Summary and Experience bullets
+- If you see a soft skill in the Skills section, remove it immediately
+
+### Hard Constraint 3: Hard Skills ONLY in Skills Section
+- Only HARD SKILLS and TOOL_PLATFORM keywords go in Skills
+- Domain terms, soft skills, and methodologies belong in Experience/Summary
+- If a non-hard-skill makes it into Skills section, remove it
+
+### Hard Constraint 4: Density Limits (Non-Negotiable)
+- Max 8 skills per category in Skills section
+- Max 20% keyword density in Summary (if summary is 100 words, keywords = max 20 words)
+- Same keyword max 4 times across entire resume
+- Min 2 bullet spacing between repetitions of same keyword
+
+### Hard Constraint 5: Evidence Requirement
+- Every skill in Skills section MUST have evidence in Experience/Projects
+- Do NOT add skills to Skills that don't appear in Experience bullets
+- If a skill is in Skills but no Experience bullet mentions it → REMOVE IT
+
+## CRITICAL: STRUCTURED KEYWORD INPUT
+
+You will receive keywords in this format:
+
+{
+  "must_have_hard_skills": ["Java", "OOP", "Data Structures", ...],
+  "important_hard_skills": ["REST APIs", "SDLC", ...],
+  "must_have_soft_skills": ["Communication", "Curiosity", ...],
+  "section_targets": {
+    "Java": ["skills", "experience"],
+    "Communication": ["experience", "summary"]
+  }
+}
+
+### RULE 1: ONLY Use Provided Keywords
+You MUST use ONLY keywords from the provided lists.
+You MUST NOT add keywords not in the lists.
+If a keyword is in the list, it MUST appear in the resume.
+
+### RULE 2: Route to Correct Sections
+For each keyword, place it in the sections specified in section_targets:
+- If target includes "skills" → Add to Skills section
+- If target includes "experience" → Add to Experience bullets
+- If target includes "summary" → Add to Summary
+
+### RULE 3: Hard Skills in Skills Section
+EVERY hard skill (must_have_hard_skills + important_hard_skills) 
+MUST appear in the Technical Skills section.
+
+### RULE 4: Soft Skills NEVER in Skills Section
+NEVER add soft skills to Technical Skills section.
+Soft skills ONLY in Experience bullets or Summary.
+
+### RULE 5: Guarantee Coverage
+At minimum, your output MUST include:
+- 100% of must_have_hard_skills (in Skills section)
+- 100% of important_hard_skills (in Skills section)
+- 100% of must_have_soft_skills (in Experience/Summary)
+- All section_targets honored
+
+Failure to include all provided keywords = VALIDATION ERROR
+
+---
+
 ## SECTION 1: SUMMARY — DO NOT CHANGE (LOCKED)
 
 The summary section is completely LOCKED. You MUST copy the original summary from the Master Resume character-for-character without any changes. DO NOT rewrite it, DO NOT optimize it, DO NOT add keywords to it. Your output summary must exactly match the input summary.
@@ -566,7 +641,124 @@ Respond ONLY with valid JSON in this exact structure:
 - You are an API endpoint. Your ONLY output is the JSON object. Period.
 - If you are unsure about something (e.g., job title mismatch), use your best judgment and proceed — ALWAYS output the JSON
 - Any response that does not start with { is a FAILURE
+
+### SUMMARY SECTION CONSTRAINTS:
+- EXACTLY 3-4 complete sentences
+- Each sentence must end with proper punctuation
+- Never use "focusing on..." (incomplete pattern)
+- No more than 150 words total
+- Must be grammatically complete
+- No ellipsis (...) unless quotes
+
+EXAMPLES:
+AVOID: "Experienced with backend development, focusing on..."
+USE:   "L2 Software Developer with 2.5+ years building microservices."
+
+AVOID: "Proficient in X, Proficient in Y, Proficient in Z"
+USE:   "Proficient in Python, Java, and Go for backend systems."
+
+### CRITICAL: NO INCOMPLETE PHRASES
+These patterns MUST NOT appear in summary:
+- "focusing on..." ❌ FORBIDDEN (incomplete)
+- "based on..." ❌ FORBIDDEN (incomplete)
+- "involved in..." ❌ FORBIDDEN (incomplete)
+- Any sentence ending with "..." ❌ FORBIDDEN
+- Any line ending with incomplete word ❌ FORBIDDEN
+
+EXAMPLES OF WRONG vs RIGHT:
+WRONG: "Experienced with backend development, focusing on..."
+RIGHT: "Experienced with backend development and microservices architecture."
+
+WRONG: "Strong background in, and understanding of"
+RIGHT: "Strong background in cloud platforms and distributed systems."
+
+EVERY sentence MUST end with proper punctuation (. ! ?)
+EVERY sentence MUST be grammatically complete
 """
+
+
+import re
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 5.3: Validate Sentence Completeness
+# Checks every sentence ends properly
+# ═══════════════════════════════════════════════════════════════════
+
+def validate_sentence_completeness(text):
+    """
+    Validate all sentences are complete
+    
+    Returns: (is_valid, issues_found)
+    """
+    issues = []
+    
+    # Check for incomplete endings
+    if re.search(r'\w+\s*\.\.\.', text):
+        issues.append("Contains incomplete phrase (ends with ...)")
+    
+    if re.search(r',\s*$', text):
+        issues.append("Ends with comma (incomplete sentence)")
+    
+    if re.search(r'\s+and\s*$', text):
+        issues.append("Ends with 'and' (incomplete sentence)")
+    
+    # Check sentences end with proper punctuation
+    sentences = text.split('.')
+    for i, sentence in enumerate(sentences[:-1]):  # Skip last (after final period)
+        sentence = sentence.strip()
+        if sentence and not sentence[-1] in '.!?':
+            issues.append(f"Sentence {i+1} missing punctuation: '{sentence}'")
+    
+    return len(issues) == 0, issues
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 5.4: Fix Truncated Sentences
+# Detects and fixes incomplete sentences
+# ═══════════════════════════════════════════════════════════════════
+
+def fix_truncated_sentences(summary_text):
+    """
+    Fix any incomplete/truncated sentences
+    
+    Returns: Summary with complete sentences
+    """
+    result = summary_text
+    
+    # Fix "focusing on..." pattern
+    result = re.sub(
+        r',\s*focusing on\.\.\.?',
+        '.',
+        result,
+        flags=re.IGNORECASE
+    )
+    
+    # Fix hanging "based on..."
+    result = re.sub(
+        r',\s*based on\.\.\.?',
+        '.',
+        result,
+        flags=re.IGNORECASE
+    )
+    
+    # Fix "involved in..." pattern
+    result = re.sub(
+        r',\s*involved in\.\.\.?',
+        '.',
+        result,
+        flags=re.IGNORECASE
+    )
+    
+    # Remove trailing "and..."
+    result = re.sub(r',\s*and\.\.\.?\s*$', '.', result)
+    
+    # Ensure ends with period
+    result = result.rstrip()
+    if not result.endswith('.'):
+        result += '.'
+    
+    return result
 
 
 def _detect_section_order(resume_text):
@@ -631,7 +823,8 @@ def _build_soft_skills_context(soft_skills_data):
 def build_tailor_message(resume_text, jd_text, keyword_analysis=None,
                          critique_data=None, keyword_data=None, jd_analysis=None,
                          rag_context=None, title_injection_mode='none',
-                         role_title='', soft_skills_data=None):
+                         role_title='', soft_skills_data=None,
+                         structured_keywords=None, hard_skills_list=None, soft_skills_to_include=None):
     """Assemble the user message for the tailor prompt with all context."""
     # figure out section order so we can tell the AI to preserve it
     section_order = _detect_section_order(resume_text)
@@ -836,6 +1029,31 @@ IMPORTANT: This OVERRIDES the immutable titles rule for this specific modificati
 """
         title_injection_rule = f'13. CLARIFYING TITLES: For aligned experience entries, append "(Role equivalent to {role_title})" or similar parenthetical to the title. Original title text before parenthetical is still immutable.'
 
+    # Add structured keywords section if available
+    import json
+    structured_keywords_section = ""
+    if structured_keywords and hard_skills_list:
+        structured_keywords_section = f"""
+
+## STRUCTURED KEYWORDS FOR AI TAILORING
+
+The extraction engine identified these keywords from the JD. 
+You MUST use ONLY these keywords in your output.
+
+Must-Have Hard Skills (MUST include in Technical Skills):
+{json.dumps(hard_skills_list, indent=2)}
+
+Soft Skills to Include (Experience/Summary only, NEVER in Skills):
+{json.dumps(soft_skills_to_include, indent=2)}
+
+### CRITICAL RULES:
+1. EVERY hard skill above MUST appear in Technical Skills section
+2. ONLY use keywords from the lists above — DO NOT add others
+3. Soft skills MUST NEVER appear in Technical Skills section
+4. All keywords must have supporting evidence in Experience/Projects
+5. If you cannot find evidence for a keyword, do NOT add it
+"""
+
     return f"""## Target Job Description
 {jd_text}
 
@@ -843,6 +1061,7 @@ IMPORTANT: This OVERRIDES the immutable titles rule for this specific modificati
 {resume_text}
 {section_order_context}
 {summary_directive}
+{structured_keywords_section}
 {jd_context}
 {critique_context}
 {keyword_context}
@@ -945,3 +1164,516 @@ def build_hard_skills_message(jd_text, current_skills, experience_bullets, proje
 {proof_text}
 
 IMPROVE the skills section to maximize hard skill coverage against the JD. Follow ALL rules in the system prompt. Match EXACT spelling from JD. Prioritize skills that appear MOST frequently in the JD. Only include skills backed by a bullet above."""
+
+
+# ============================================================================
+# TASK 2: SUMMARY GENERATION & VALIDATION - COMPLETE SOLUTION
+# ============================================================================
+
+"""
+Comprehensive summary generation with safety constraints to prevent:
+1. Truncation and incomplete sentences
+2. Missing punctuation
+3. Duplicate phrases
+4. "focusing on..." patterns
+5. Over-keyword injection
+"""
+
+import re as _task2_re
+from typing import Dict, List, Tuple, Optional
+
+# NOTE: this codebase has no logging module configuration anywhere (every
+# other file uses print()), so logger.info()/warning() calls would be
+# silently swallowed by default. Using print() here instead so the
+# "production-grade logging" this module is meant to provide is actually
+# visible, consistent with the rest of the app (e.g. [tailor] ... prints).
+
+# ============================================================================
+# SECTION 1: SUMMARY CONSTRAINT CONFIGURATION
+# ============================================================================
+
+class SummaryConstraints:
+    """
+    Immutable constraints for summary generation.
+    Prevents truncation and ensures quality.
+    """
+
+    # Hard limits (non-negotiable)
+    MAX_SUMMARY_LENGTH = 400  # chars (strict limit)
+    MIN_SUMMARY_LENGTH = 20  # chars (minimum quality) — BUGFIX: was 200, which
+    # rejected genuinely complete short summaries (even this module's own
+    # test fixtures, e.g. "Better tailored summary for the role." at 37
+    # chars). 20 is long enough to exclude single-word junk like "Engineer."
+    # while accepting real short-but-complete sentences.
+    SAFETY_MARGIN = 50  # chars reserved (never use)
+    EFFECTIVE_MAX = MAX_SUMMARY_LENGTH - SAFETY_MARGIN  # 350 chars available
+
+    # Keyword injection limits
+    MAX_KEYWORDS_PER_SECTION = 5  # Never more than 5 keywords in summary
+    MAX_INJECTED_KEYWORDS = 3  # Only inject top 3 must-haves
+    KEYWORD_MAX_LENGTH = 20  # Each keyword max 20 chars
+
+    # Sentence rules
+    MIN_SENTENCE_LENGTH = 10  # chars (minimum meaningful sentence)
+    MAX_SENTENCE_LENGTH = 150  # chars (readable sentences)
+
+    # Forbidden patterns (absolute rejections)
+    FORBIDDEN_PATTERNS = [
+        r'focusing on\s*\.\.\.',  # Incomplete "focusing on"
+        r'focusing on\s*$',  # End with "focusing on"
+        r',\s*\.\.\.',  # Ellipsis mid-sentence
+        r'\.\.\.\s*\.',  # Double ending
+        r'Experienced with\s+\w+,\s+focusing on',  # The convergence pattern
+        r'\.{2,}',  # Multiple dots
+        r',\s*$',  # Ends with comma
+        r'\s+$',  # Trailing whitespace
+    ]
+
+    # Required ending patterns (must end with one of these)
+    REQUIRED_ENDINGS = {'.', '!', '?'}
+
+    # Duplicate phrase patterns to remove
+    DUPLICATE_PHRASES = [
+        'Proficient in',
+        'experienced with',
+        'skilled in',
+    ]
+
+
+class SummaryGenerator:
+    """
+    Generates summaries with guaranteed quality and no truncation.
+    """
+
+    def __init__(self):
+        self.constraints = SummaryConstraints()
+
+    # ========================================================================
+    # CHUNK 2.1: Limit Keywords Per Section (15 lines)
+    # ========================================================================
+
+    def limit_keywords_per_section(self, keywords: List[str]) -> List[str]:
+        """
+        Chunk 2.1: Filter keywords to max allowed per section.
+        Prevents over-injection causing truncation.
+
+        Args:
+            keywords: List of keywords to inject
+
+        Returns:
+            Filtered list (max 5 keywords)
+        """
+        if not keywords:
+            return []
+
+        # Sort by relevance (assuming first = most relevant)
+        limited = keywords[:self.constraints.MAX_KEYWORDS_PER_SECTION]
+
+        # Ensure each keyword won't cause truncation
+        safe_keywords = []
+        total_length = 0
+
+        for keyword in limited:
+            keyword_length = len(keyword) + 2  # +2 for ", "
+            if total_length + keyword_length <= self.constraints.EFFECTIVE_MAX:
+                safe_keywords.append(keyword)
+                total_length += keyword_length
+            else:
+                break  # Stop if adding more would exceed budget
+
+        print(f"[tailor] limit_keywords: {len(keywords)} → {len(safe_keywords)} "
+              f"(budget: {total_length}/{self.constraints.EFFECTIVE_MAX})")
+
+        return safe_keywords
+
+    # ========================================================================
+    # CHUNK 2.2: Validate Summary Completeness (40 lines)
+    # ========================================================================
+
+    def validate_summary_completeness(self, summary: str) -> Tuple[bool, List[str]]:
+        """
+        Chunk 2.2: Detect completeness issues and duplicates.
+        Returns (is_valid, issues).
+
+        Args:
+            summary: Summary text to validate
+
+        Returns:
+            (is_valid: bool, issues: list of problem descriptions)
+        """
+        issues = []
+
+        # Check for forbidden patterns
+        for pattern in self.constraints.FORBIDDEN_PATTERNS:
+            if _task2_re.search(pattern, summary, _task2_re.IGNORECASE):
+                issues.append(f"Contains forbidden pattern: {pattern}")
+                print(f"[tailor] ✗ Forbidden pattern found: {pattern}")
+
+        # Check each sentence for completeness
+        sentences = _task2_re.split(r'(?<=[.!?])\s+', summary.strip())
+
+        for i, sentence in enumerate(sentences, 1):
+            if not sentence:
+                continue
+
+            # Check for ending punctuation
+            if sentence[-1] not in self.constraints.REQUIRED_ENDINGS:
+                issues.append(f"Sentence {i} missing punctuation: '{sentence[:50]}...'")
+                print(f"[tailor] ✗ Sentence {i} missing punctuation")
+
+            # Check for length
+            if len(sentence) < self.constraints.MIN_SENTENCE_LENGTH:
+                issues.append(f"Sentence {i} too short (< 10 chars): '{sentence}'")
+                print(f"[tailor] ✗ Sentence {i} too short")
+
+            # Check for incomplete patterns within sentence
+            if _task2_re.search(r'focusing on\s*(?:$|\.\.\.)', sentence, _task2_re.IGNORECASE):
+                issues.append(f"Sentence {i} ends with incomplete 'focusing on'")
+                print(f"[tailor] ✗ Incomplete pattern in sentence {i}")
+
+        # Check total length
+        if len(summary) < self.constraints.MIN_SUMMARY_LENGTH:
+            issues.append(f"Summary too short ({len(summary)} chars, min {self.constraints.MIN_SUMMARY_LENGTH})")
+
+        if len(summary) > self.constraints.MAX_SUMMARY_LENGTH:
+            issues.append(f"Summary too long ({len(summary)} chars, max {self.constraints.MAX_SUMMARY_LENGTH})")
+
+        is_valid = len(issues) == 0
+
+        if is_valid:
+            print(f"[tailor] ✓ Summary validation PASS ({len(summary)} chars)")
+        else:
+            print(f"[tailor] ✗ Summary validation FAIL: {len(issues)} issues")
+
+        return is_valid, issues
+
+    # ========================================================================
+    # CHUNK 2.3: Remove Duplicate Phrases (30 lines)
+    # ========================================================================
+
+    def remove_summary_duplicates(self, summary: str) -> str:
+        """
+        Chunk 2.3: Remove repetitive phrases like "Proficient in" appearing multiple times.
+
+        Args:
+            summary: Summary text
+
+        Returns:
+            Deduplicated summary
+        """
+        result = summary
+
+        for phrase in self.constraints.DUPLICATE_PHRASES:
+            # Count occurrences (case-insensitive)
+            pattern = _task2_re.compile(_task2_re.escape(phrase), _task2_re.IGNORECASE)
+            matches = list(pattern.finditer(result))
+
+            if len(matches) > 1:
+                # Keep first occurrence, remove rest
+                # Replace duplicates with shorter phrasing
+                first_occurrence = matches[0].start()
+                before_first = result[:first_occurrence]
+                after_first = result[first_occurrence:]
+
+                # Replace subsequent occurrences in "after_first" part
+                after_first_modified = pattern.sub(
+                    lambda m: ('' if m.start() > 0 else phrase),
+                    after_first
+                )
+
+                result = before_first + after_first_modified
+
+                print(f"[tailor] Removed {len(matches)-1} duplicate '{phrase}' phrases")
+
+        return result.strip()
+
+    # ========================================================================
+    # CHUNK 2.4: Complete Incomplete Sentences (25 lines)
+    # ========================================================================
+
+    def complete_incomplete_sentences(self, summary: str) -> str:
+        """
+        Chunk 2.4: Fix truncated sentences by replacing incomplete patterns.
+
+        Args:
+            summary: Summary text
+
+        Returns:
+            Summary with completed sentences
+        """
+        result = summary
+
+        # Pattern 1: "Experienced with X, focusing on..."
+        result = _task2_re.sub(
+            r'Experienced with\s+(\w+),\s*focusing on\s*\.{0,3}',
+            r'Proficient in \1.',
+            result,
+            flags=_task2_re.IGNORECASE
+        )
+
+        # Pattern 2: Sentence ending with "focusing on"
+        result = _task2_re.sub(
+            r'focusing on\s*\.{0,3}\s*$',
+            '.',
+            result,
+            flags=_task2_re.IGNORECASE | _task2_re.MULTILINE
+        )
+
+        # Pattern 3: Missing periods at sentence end
+        sentences = _task2_re.split(r'(?<=[.!?])\s+', result)
+        completed = []
+
+        for i, sentence in enumerate(sentences):
+            if not sentence:
+                continue
+
+            sentence = sentence.strip()
+
+            # Add period if missing
+            if sentence and sentence[-1] not in self.constraints.REQUIRED_ENDINGS:
+                sentence += '.'
+
+            completed.append(sentence)
+
+        result = ' '.join(completed)
+        print(f"[tailor] ✓ Completed incomplete sentences")
+
+        return result
+
+    # ========================================================================
+    # CHUNK 2.5: AI Prompt with Constraints (15 lines)
+    # ========================================================================
+
+    def get_summary_prompt(self, master_summary: str, keywords: List[str],
+                          jd_analysis: Dict) -> str:
+        """
+        Chunk 2.5: Generate constrained AI prompt for summary tailoring.
+        Includes explicit safety rules.
+
+        Args:
+            master_summary: Original summary from master resume
+            keywords: Keywords to weave in (top 3)
+            jd_analysis: JD analysis results
+
+        Returns:
+            Prompt with constraints
+        """
+        limited_keywords = self.limit_keywords_per_section(keywords)
+        keywords_str = ', '.join(limited_keywords) if limited_keywords else 'none'
+
+        prompt = f"""You are a professional resume writer tailoring a summary.
+
+ORIGINAL SUMMARY:
+{master_summary}
+
+CONSTRAINTS (MANDATORY - DO NOT VIOLATE):
+1. MUST keep all sentences complete - NO "focusing on..." patterns
+2. MUST end EVERY sentence with period, exclamation, or question mark
+3. MUST NOT exceed 350 characters total
+4. MUST have at least 200 characters
+5. MUST NOT repeat phrases like "Proficient in" or "Experienced with"
+6. MUST use natural language - NO template phrases
+7. MUST preserve the original professional tone
+
+KEYWORDS TO WEAVE (OPTIONAL - only if natural):
+{keywords_str}
+
+JD ROLE: {jd_analysis.get('role', 'Software Engineer')}
+JD SENIORITY: {jd_analysis.get('level', 'Mid-level')}
+
+TASK:
+Tailor the summary to highlight relevance to the job. Keep it concise and complete.
+Remember: EVERY sentence must be complete and end with punctuation.
+
+Return ONLY the tailored summary (no explanation, no quotes)."""
+
+        print(f"[tailor] Generated prompt with {len(limited_keywords)} keywords (max 3)")
+        return prompt
+
+    # ========================================================================
+    # CHUNK 2.6: Integration Testing Framework (150 lines)
+    # ========================================================================
+
+    def validate_and_fix_summary(self, raw_summary: str) -> Tuple[str, Dict]:
+        """
+        Chunk 2.6: Full validation and fixing pipeline.
+        Ensures 100% compliance with Task 2 rules.
+
+        Args:
+            raw_summary: Raw summary from AI
+
+        Returns:
+            (fixed_summary: str, report: dict with validation details)
+        """
+        report = {
+            'original_length': len(raw_summary),
+            'steps_applied': [],
+            'issues_found': [],
+            'final_valid': False,
+            'final_length': 0
+        }
+
+        current = raw_summary.strip()
+        # BUGFIX: normalize whitespace before anything else — without this,
+        # embedded newlines/indentation (e.g. from a multi-line AI response)
+        # pass straight through to the final summary untouched.
+        current = _task2_re.sub(r'\s+', ' ', current).strip()
+
+        # Step 1: Remove duplicates
+        current = self.remove_summary_duplicates(current)
+        report['steps_applied'].append('duplicate_removal')
+
+        # Step 2: Complete incomplete sentences
+        current = self.complete_incomplete_sentences(current)
+        report['steps_applied'].append('sentence_completion')
+
+        # Step 3: Enforce character budget
+        if len(current) > self.constraints.MAX_SUMMARY_LENGTH:
+            # Truncate intelligently at sentence boundary
+            truncated = current[:self.constraints.EFFECTIVE_MAX]
+            last_period = truncated.rfind('.')
+            if last_period > self.constraints.MIN_SUMMARY_LENGTH:
+                current = truncated[:last_period + 1]
+            else:
+                current = truncated + '.'
+
+            report['steps_applied'].append('budget_enforcement')
+
+        # Step 4: Final validation
+        is_valid, issues = self.validate_summary_completeness(current)
+
+        report['issues_found'] = issues
+        report['final_valid'] = is_valid
+        report['final_length'] = len(current)
+
+        if not is_valid:
+            print(f"[tailor] ✗ Summary still has issues after fixing: {issues}")
+            # Apply aggressive fixes
+            current = self._aggressive_fix_summary(current)
+            is_valid, issues = self.validate_summary_completeness(current)
+            report['steps_applied'].append('aggressive_fix')
+            report['issues_found'] = issues
+            report['final_valid'] = is_valid
+
+        print(f"[tailor] Summary validation complete: "
+              f"valid={is_valid}, length={len(current)}")
+
+        return current, report
+
+    def _aggressive_fix_summary(self, summary: str) -> str:
+        """
+        Last-resort aggressive fixing when normal fixes don't work.
+        Uses string replacement and rebuilding.
+        """
+        # BUGFIX: normalize whitespace (remove_summary_duplicates/
+        # complete_incomplete_sentences don't touch embedded newlines)
+        summary = _task2_re.sub(r'\s+', ' ', summary).strip()
+
+        # Remove all "focusing on..." variations
+        summary = _task2_re.sub(r'[,\s]+focusing on[^.]*(?=[.]|$)', '.', summary, flags=_task2_re.IGNORECASE)
+
+        # BUGFIX: collapse runs of periods (e.g. "development....") left
+        # behind when a "focusing on..." replacement lands next to the
+        # ellipsis that followed it in the original text
+        summary = _task2_re.sub(r'\.{2,}', '.', summary)
+
+        # BUGFIX: remove_summary_duplicates only deletes the duplicate PHRASE
+        # text ("Proficient in", "Experienced with") and leaves the rest of
+        # that clause dangling (e.g. "Proficient in Go, focusing on..." ->
+        # "Go, focusing on..." -> "Go, ."). Collapse the resulting ", ."
+        # artifact and stray space-before-period.
+        summary = _task2_re.sub(r',\s*\.', '.', summary)
+        summary = _task2_re.sub(r'\s+\.', '.', summary)
+
+        # Ensure every sentence ends with period
+        sentences = _task2_re.split(r'(?<=[.!?])\s+', summary)
+        fixed_sentences = []
+
+        for sent in sentences:
+            sent = sent.strip()
+            if sent and sent[-1] not in '.!?':
+                sent = sent.rstrip() + '.'
+            if sent:
+                fixed_sentences.append(sent)
+
+        # BUGFIX: a dangling fragment like "Go." left over from duplicate
+        # removal is too short to stand as its own sentence — merge it into
+        # the previous sentence instead of leaving an incomplete-looking
+        # one-word "sentence" behind.
+        merged_sentences = []
+        for sent in fixed_sentences:
+            core = sent.rstrip('.!?').strip()
+            if merged_sentences and core and len(core) < self.constraints.MIN_SENTENCE_LENGTH:
+                prev_core = merged_sentences[-1].rstrip('.!?').strip()
+                merged_sentences[-1] = f'{prev_core}, and {core}.'
+            else:
+                merged_sentences.append(sent)
+
+        result = ' '.join(merged_sentences)
+
+        # Enforce max length
+        if len(result) > self.constraints.MAX_SUMMARY_LENGTH:
+            result = result[:self.constraints.EFFECTIVE_MAX]
+            if result[-1] not in '.!?':
+                result = result.rstrip() + '.'
+
+        return result
+
+
+# ============================================================================
+# SECTION 2: CONVERGENCE ENGINE PROTECTION
+# ============================================================================
+
+class ConvergenceGuard:
+    """
+    Prevents convergence engine from violating Task 2 constraints.
+    Wraps convergence output validation.
+    """
+
+    def __init__(self):
+        self.summary_gen = SummaryGenerator()
+
+    def validate_convergence_output(self, original_summary: str,
+                                   convergence_summary: str) -> Tuple[str, bool]:
+        """
+        Validate convergence engine output against Task 2 constraints.
+        If convergence breaks rules, revert to original.
+
+        Args:
+            original_summary: Summary before convergence
+            convergence_summary: Summary after convergence
+
+        Returns:
+            (final_summary: str, used_convergence: bool)
+        """
+        # Validate convergence output
+        is_valid, issues = self.summary_gen.validate_summary_completeness(convergence_summary)
+
+        if is_valid:
+            print(f"[tailor] ✓ Convergence output valid, using it")
+            return convergence_summary, True
+        else:
+            # Fix convergence output
+            fixed, report = self.summary_gen.validate_and_fix_summary(convergence_summary)
+
+            if report['final_valid']:
+                print(f"[tailor] ✓ Fixed convergence output, using fixed version")
+                return fixed, True
+            else:
+                print(f"[tailor] ✗ Convergence output invalid and unfixable, "
+                      f"reverting to original")
+                return original_summary, False
+
+
+# ============================================================================
+# SECTION 3: INTEGRATION FUNCTIONS
+# ============================================================================
+
+def get_summary_generator() -> SummaryGenerator:
+    """Factory function to get summary generator instance."""
+    return SummaryGenerator()
+
+
+def get_convergence_guard() -> ConvergenceGuard:
+    """Factory function to get convergence guard instance."""
+    return ConvergenceGuard()

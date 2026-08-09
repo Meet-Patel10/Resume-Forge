@@ -6,7 +6,10 @@ from app.models.application import Application
 from app.models.analysis import AnalysisHistory
 from app.models.resume_version import ResumeVersion
 from app.services.claude_client import claude
-from app.services.prompts.resume_tailor import RESUME_TAILOR_SYSTEM, build_tailor_message
+from app.services.prompts.resume_tailor import (
+    RESUME_TAILOR_SYSTEM, build_tailor_message,
+    get_summary_generator, get_convergence_guard,
+)
 from app.services.prompts.bullet_rewriter import BULLET_REWRITER_SYSTEM, build_bullet_message
 from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, COVER_LETTER_ADJUST_SYSTEM, build_cover_letter_message, build_adjust_message
 from app.services.prompts.brutal_critic import BRUTAL_CRITIC_SYSTEM, build_critique_message
@@ -23,7 +26,8 @@ from app.extractors.aws_extractor import AWSServiceExtractor
 from app.extractors.soft_skills_extractor import SoftSkillsExtractor
 from app.scoring.weighted_scorer import WeightedKeywordScorer
 from app.validators.cover_letter_validator import validate_cover_letter_resume_alignment, flatten_resume_to_text
-from app.validators.role_validator import detect_role_level, validate_role_skill_coherence, ROLE_SKILL_MATRIX
+from app.validators.role_validator import detect_role_level, detect_role_level_by_years, validate_role_level_consistency, validate_role_skill_coherence, calculate_years_experience, ROLE_SKILL_MATRIX, ROLE_LEVEL_MAPPING
+from app.validators.skill_validator import validate_skill, cleanup_skills_section
 from app.validators.timeline_validator import analyze_employment_timeline
 from app.validators.email_optimizer import optimize_email_subject_line
 from app.services.jd_tier_extractor import JDTierExtractor
@@ -326,6 +330,1661 @@ def run_convergence(tailored_resume, jd_text, max_iterations=4, target_score=85)
         }
     }
 
+
+
+# ============================================================================
+# COMPREHENSIVE CATEGORY MAPPING FOR ALL SKILL TYPES
+# Used by cleanup function to validate and fix AI categorization
+# ============================================================================
+_COMPREHENSIVE_CATEGORY_MAP = {
+    # ======== PROGRAMMING LANGUAGES (ONLY actual languages) ========
+    'python': 'Languages', 'java': 'Languages', 'javascript': 'Languages',
+    'typescript': 'Languages', 'c++': 'Languages', 'c#': 'Languages',
+    'cpp': 'Languages', 'rust': 'Languages', 'go': 'Languages', 'golang': 'Languages',
+    'ruby': 'Languages', 'php': 'Languages', 'swift': 'Languages',
+    'kotlin': 'Languages', 'scala': 'Languages', 'perl': 'Languages',
+    'r': 'Languages', 'matlab': 'Languages', 'julia': 'Languages',
+    'haskell': 'Languages', 'erlang': 'Languages', 'lua': 'Languages',
+    'sql': 'Languages', 'html': 'Languages', 'html5': 'Languages',
+    'css': 'Languages', 'css3': 'Languages', 'bash': 'Languages',
+    'shell': 'Languages', 'groovy': 'Languages', 'clojure': 'Languages',
+    'elixir': 'Languages', 'f#': 'Languages', 'ocaml': 'Languages',
+    'c programming': 'Languages', 'c language': 'Languages',
+
+    # ======== FRAMEWORKS & LIBRARIES ========
+    'react': 'Frameworks & Libraries', 'react.js': 'Frameworks & Libraries',
+    'reactjs': 'Frameworks & Libraries', 'react native': 'Frameworks & Libraries',
+    'angular': 'Frameworks & Libraries', 'angularjs': 'Frameworks & Libraries',
+    'angular.js': 'Frameworks & Libraries', 'vue': 'Frameworks & Libraries',
+    'vue.js': 'Frameworks & Libraries', 'vuejs': 'Frameworks & Libraries',
+    'svelte': 'Frameworks & Libraries', 'next.js': 'Frameworks & Libraries',
+    'nextjs': 'Frameworks & Libraries', 'nuxt': 'Frameworks & Libraries',
+    'spring': 'Frameworks & Libraries', 'spring boot': 'Frameworks & Libraries',
+    'spring framework': 'Frameworks & Libraries', 'django': 'Frameworks & Libraries',
+    'flask': 'Frameworks & Libraries', 'fastapi': 'Frameworks & Libraries',
+    'express': 'Frameworks & Libraries', 'express.js': 'Frameworks & Libraries',
+    'node.js': 'Frameworks & Libraries', 'nodejs': 'Frameworks & Libraries',
+    'asp.net': 'Frameworks & Libraries', '.net': 'Frameworks & Libraries',
+    'dotnet': 'Frameworks & Libraries', 'laravel': 'Frameworks & Libraries',
+    'symfony': 'Frameworks & Libraries', 'rails': 'Frameworks & Libraries',
+    'ruby on rails': 'Frameworks & Libraries',
+    'pytorch': 'Frameworks & Libraries', 'tensorflow': 'Frameworks & Libraries',
+    'keras': 'Frameworks & Libraries', 'scikit-learn': 'Frameworks & Libraries',
+    'sklearn': 'Frameworks & Libraries', 'pandas': 'Frameworks & Libraries',
+    'numpy': 'Frameworks & Libraries', 'scipy': 'Frameworks & Libraries',
+    'hugging face': 'Frameworks & Libraries', 'huggingface': 'Frameworks & Libraries',
+    'transformers': 'Frameworks & Libraries', 'peft': 'Frameworks & Libraries',
+    'langchain': 'Frameworks & Libraries', 'openai': 'Frameworks & Libraries',
+    'opencv': 'Frameworks & Libraries', 'sqlalchemy': 'Frameworks & Libraries',
+    'jinja2': 'Frameworks & Libraries', 'jinja': 'Frameworks & Libraries',
+    'bootstrap': 'Frameworks & Libraries', 'tailwind': 'Frameworks & Libraries',
+    'tailwind css': 'Frameworks & Libraries', 'jquery': 'Frameworks & Libraries',
+    'lodash': 'Frameworks & Libraries', 'graphql': 'Frameworks & Libraries',
+    'rest api': 'Frameworks & Libraries', 'restful apis': 'Frameworks & Libraries',
+    'grpc': 'Frameworks & Libraries', 'socket.io': 'Frameworks & Libraries',
+
+    # ======== TOOLS & PLATFORMS ========
+    'docker': 'Tools & Platforms', 'kubernetes': 'Tools & Platforms', 'k8s': 'Tools & Platforms',
+    'aws': 'Tools & Platforms', 'amazon web services': 'Tools & Platforms',
+    'azure': 'Tools & Platforms', 'microsoft azure': 'Tools & Platforms',
+    'gcp': 'Tools & Platforms', 'google cloud': 'Tools & Platforms',
+    'google cloud platform': 'Tools & Platforms',
+    'git': 'Tools & Platforms', 'github': 'Tools & Platforms', 'gitlab': 'Tools & Platforms',
+    'bitbucket': 'Tools & Platforms', 'jenkins': 'Tools & Platforms',
+    'circleci': 'Tools & Platforms', 'circle ci': 'Tools & Platforms',
+    'gitlab ci': 'Tools & Platforms', 'github actions': 'Tools & Platforms',
+    'travis ci': 'Tools & Platforms', 'travis': 'Tools & Platforms',
+    'jira': 'Tools & Platforms', 'confluence': 'Tools & Platforms',
+    'slack': 'Tools & Platforms', 'asana': 'Tools & Platforms',
+    'monday.com': 'Tools & Platforms', 'trello': 'Tools & Platforms',
+    'linux': 'Tools & Platforms', 'ubuntu': 'Tools & Platforms',
+    'centos': 'Tools & Platforms', 'macos': 'Tools & Platforms', 'mac': 'Tools & Platforms',
+    'windows server': 'Tools & Platforms',
+    'mysql': 'Tools & Platforms', 'postgresql': 'Tools & Platforms', 'postgres': 'Tools & Platforms',
+    'mongodb': 'Tools & Platforms', 'redis': 'Tools & Platforms',
+    'elasticsearch': 'Tools & Platforms', 'cassandra': 'Tools & Platforms',
+    'dynamodb': 'Tools & Platforms', 'firestore': 'Tools & Platforms',
+    'oracle': 'Tools & Platforms', 'sql server': 'Tools & Platforms', 'mssql': 'Tools & Platforms',
+    'mariadb': 'Tools & Platforms', 'couchdb': 'Tools & Platforms',
+    'rabbitmq': 'Tools & Platforms', 'kafka': 'Tools & Platforms',
+    'apache kafka': 'Tools & Platforms', 'spark': 'Tools & Platforms',
+    'hadoop': 'Tools & Platforms', 'hive': 'Tools & Platforms',
+    'airflow': 'Tools & Platforms', 'dbt': 'Tools & Platforms',
+    'terraform': 'Tools & Platforms', 'ansible': 'Tools & Platforms',
+    'vagrant': 'Tools & Platforms', 'docker compose': 'Tools & Platforms',
+    'docker-compose': 'Tools & Platforms',
+    'prometheus': 'Tools & Platforms', 'grafana': 'Tools & Platforms',
+    'datadog': 'Tools & Platforms', 'new relic': 'Tools & Platforms',
+    'splunk': 'Tools & Platforms', 'elk stack': 'Tools & Platforms',
+    'postman': 'Tools & Platforms', 'insomnia': 'Tools & Platforms',
+    'vs code': 'Tools & Platforms', 'vscode': 'Tools & Platforms',
+    'intellij': 'Tools & Platforms', 'pycharm': 'Tools & Platforms',
+    'visual studio': 'Tools & Platforms', 'xcode': 'Tools & Platforms',
+    'sublime text': 'Tools & Platforms', 'atom': 'Tools & Platforms',
+    'vim': 'Tools & Platforms', 'neovim': 'Tools & Platforms',
+    'maven': 'Tools & Platforms', 'gradle': 'Tools & Platforms',
+    'npm': 'Tools & Platforms', 'yarn': 'Tools & Platforms',
+    'pip': 'Tools & Platforms', 'conda': 'Tools & Platforms',
+    'docker registry': 'Tools & Platforms', 'artifactory': 'Tools & Platforms',
+    'nexus': 'Tools & Platforms', 'sonarqube': 'Tools & Platforms',
+
+    # ======== PROGRAMMING CONCEPTS ========
+    'data structures': 'Programming Concepts', 'algorithms': 'Programming Concepts',
+    'object-oriented programming': 'Programming Concepts', 'oop': 'Programming Concepts',
+    'functional programming': 'Programming Concepts', 'design patterns': 'Programming Concepts',
+    'multithreading': 'Programming Concepts', 'concurrency': 'Programming Concepts',
+    'parallel processing': 'Programming Concepts', 'time complexity': 'Programming Concepts',
+    'space complexity': 'Programming Concepts', 'big o notation': 'Programming Concepts',
+    'recursion': 'Programming Concepts', 'dynamic programming': 'Programming Concepts',
+    'sorting algorithms': 'Programming Concepts', 'searching algorithms': 'Programming Concepts',
+    'graph algorithms': 'Programming Concepts', 'tree algorithms': 'Programming Concepts',
+    'memory management': 'Programming Concepts', 'garbage collection': 'Programming Concepts',
+    'heap': 'Programming Concepts', 'stack': 'Programming Concepts',
+    'queue': 'Programming Concepts', 'linked list': 'Programming Concepts',
+    'hash table': 'Programming Concepts', 'binary tree': 'Programming Concepts',
+
+    # ======== CONCEPTS (Methodologies, Patterns, Architectures) ========
+    'agile': 'Concepts', 'scrum': 'Concepts', 'kanban': 'Concepts',
+    'waterfall': 'Concepts', 'devops': 'Concepts', 'ci/cd': 'Concepts',
+    'api design': 'Concepts', 'microservices': 'Concepts', 'monolithic': 'Concepts',
+    'distributed systems': 'Concepts', 'message queuing': 'Concepts',
+    'event-driven architecture': 'Concepts', 'serverless': 'Concepts',
+    'machine learning': 'Concepts', 'deep learning': 'Concepts',
+    'natural language processing': 'Concepts', 'nlp': 'Concepts',
+    'computer vision': 'Concepts', 'data analysis': 'Concepts',
+    'statistical analysis': 'Concepts', 'big data': 'Concepts', 'big data analysis': 'Concepts',
+    'data mining': 'Concepts', 'business intelligence': 'Concepts',
+    'optimization': 'Concepts', 'linear optimization': 'Concepts',
+    'non-linear optimization': 'Concepts', 'algorithm tuning': 'Concepts',
+    'performance optimization': 'Concepts', 'scalability': 'Concepts',
+    'high availability': 'Concepts', 'disaster recovery': 'Concepts',
+    'backup and recovery': 'Concepts', 'security': 'Concepts',
+    'encryption': 'Concepts', 'authentication': 'Concepts', 'authorization': 'Concepts',
+    'oauth': 'Concepts', 'jwt': 'Concepts', 'ssl/tls': 'Concepts',
+    'code review': 'Concepts', 'testing': 'Concepts', 'unit testing': 'Concepts',
+    'integration testing': 'Concepts', 'automated testing': 'Concepts',
+    'test-driven development': 'Concepts', 'tdd': 'Concepts',
+    'behavior-driven development': 'Concepts', 'bdd': 'Concepts',
+    'continuous integration': 'Concepts', 'continuous deployment': 'Concepts',
+    'automated test suites': 'Concepts', 'automation': 'Concepts',
+    'automation tools': 'Concepts',
+    'agile methodology': 'Concepts', 'lean': 'Concepts',
+    'process improvement': 'Concepts', 'root cause analysis': 'Concepts',
+    'problem solving': 'Concepts', 'critical thinking': 'Concepts',
+    'technical documentation': 'Concepts', 'technical writing': 'Concepts',
+    'api documentation': 'Concepts',
+
+    # ======== DOMAIN CONCEPTS - DO NOT PUT IN LANGUAGES ========
+    # Engineering/Geomatics
+    'gnss': 'Concepts', 'gnss error modeling': 'Concepts', 'positioning algorithms': 'Concepts',
+    'satellite positioning': 'Concepts', 'positioning systems': 'Concepts',
+    'embedded systems': 'Concepts', 'real-time systems': 'Concepts',
+    'iot': 'Concepts', 'internet of things': 'Concepts', 'firmware': 'Concepts',
+    'hardware': 'Concepts', 'signal processing': 'Concepts',
+    'computational numerical methods': 'Concepts', 'numerical methods': 'Concepts',
+    'electrical engineering': 'Concepts', 'geomatics engineering': 'Concepts',
+    'software engineering': 'Concepts', 'computer science': 'Concepts',
+    'civil engineering': 'Concepts', 'mechanical engineering': 'Concepts',
+
+    # Finance/Business
+    'capital markets': 'Concepts', 'risk analytics': 'Concepts',
+    'pricing model': 'Concepts', 'pricing models': 'Concepts',
+    'pricing model integration': 'Concepts', 'risk systems': 'Concepts',
+    'fintech': 'Concepts', 'financial systems': 'Concepts',
+    'trading systems': 'Concepts', 'risk management': 'Concepts',
+    'compliance': 'Concepts', 'regulatory compliance': 'Concepts',
+    'sar reporting': 'Concepts', 'aml': 'Concepts', 'kyc': 'Concepts',
+    'derivatives': 'Concepts', 'fixed income': 'Concepts',
+    'portfolio management': 'Concepts', 'quantitative analysis': 'Concepts',
+    'financial modeling': 'Concepts', 'valuation': 'Concepts',
+    'investment banking': 'Concepts', 'wealth management': 'Concepts',
+    'treasury management': 'Concepts', 'forex': 'Concepts', 'foreign exchange': 'Concepts',
+
+    # Healthcare
+    'ehr systems': 'Concepts', 'electronic health records': 'Concepts',
+    'patient management': 'Concepts', 'medical imaging': 'Concepts',
+    'healthcare it': 'Concepts', 'hipaa': 'Concepts', 'hl7': 'Concepts',
+    'fhir': 'Concepts', 'telemedicine': 'Concepts', 'clinical workflows': 'Concepts',
+
+    # General/Soft Skills (DO NOT PUT IN LANGUAGES)
+    'customer support': 'Concepts', 'technical communication': 'Concepts',
+    'communication': 'Concepts', 'collaboration': 'Concepts',
+    'leadership': 'Concepts', 'project management': 'Concepts',
+    'team collaboration': 'Concepts', 'problem-solving': 'Concepts',
+    'innovation': 'Concepts', 'adaptability': 'Concepts', 'accountability': 'Concepts',
+}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 7.1: Natural Language Templates for Soft Skills
+# Templates that sound human-written, not AI-generated
+# ═══════════════════════════════════════════════════════════════════
+
+SOFT_SKILL_TEMPLATES = {
+    'collaboration': [
+        'collaborating with cross-functional teams',
+        'working closely with stakeholders',
+        'partnering with engineering and product teams',
+    ],
+    'communication': [
+        'communicating technical concepts to non-technical stakeholders',
+        'presenting findings to leadership',
+        'documenting technical decisions and architecture',
+    ],
+    'innovation': [
+        'identifying opportunities for process improvement',
+        'proposing and implementing novel solutions',
+        'driving adoption of modern engineering practices',
+    ],
+    'mentoring': [
+        'mentoring junior developers',
+        'conducting code reviews and providing constructive feedback',
+        'sharing best practices with the team',
+    ],
+    'problem_solving': [
+        'debugging and resolving complex production issues',
+        'analyzing root causes and implementing preventive measures',
+        'troubleshooting system performance bottlenecks',
+    ],
+    'curiosity': [
+        'exploring new technologies and frameworks',
+        'staying current with industry trends',
+        'continuously learning and applying new skills',
+    ],
+}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 7.2: Inject Soft Skills at Clause Boundaries
+# Adds soft skills naturally at sentence boundaries
+# ═══════════════════════════════════════════════════════════════════
+
+def inject_soft_skill_naturally(bullet_text, soft_skill, templates=None):
+    """
+    Inject a soft skill into a bullet point at a natural clause boundary.
+    
+    Returns: Modified bullet text with soft skill naturally integrated
+    """
+    if templates is None:
+        templates = SOFT_SKILL_TEMPLATES
+    
+    # Get template for this skill
+    skill_key = soft_skill.lower().replace(' ', '_')
+    skill_templates = templates.get(skill_key, [])
+    
+    if not skill_templates:
+        # Fallback: use skill name directly at clause boundary
+        if ', ' in bullet_text:
+            # Insert at existing clause boundary
+            parts = bullet_text.rsplit(', ', 1)
+            return f"{parts[0]}, {soft_skill.lower()}, {parts[1]}"
+        else:
+            return bullet_text
+    
+    # Use first available template
+    template = skill_templates[0]
+    
+    # Insert at end of bullet, before period
+    if bullet_text.rstrip().endswith('.'):
+        return f"{bullet_text.rstrip()[:-1]}, {template}."
+    else:
+        return f"{bullet_text}, {template}"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 7.3: Grammaticality Validation for Soft Skills
+# Validates injected soft skills sound natural
+# ═══════════════════════════════════════════════════════════════════
+
+def validate_soft_skill_grammaticality(bullet_text):
+    """
+    Validate that a bullet with injected soft skill sounds natural.
+    
+    Returns: (is_valid, issues)
+    """
+    import re
+    issues = []
+    
+    # Check for AI-sounding patterns
+    ai_patterns = [
+        (r'Innovatively\s+\w+', "AI-sounding adverb: 'Innovatively'"),
+        (r'Communicated\s+automation', "Unnatural phrase: 'Communicated automation'"),
+        (r'Collaboratively\s+developed', "AI-sounding: 'Collaboratively developed'"),
+        (r'Proactively\s+\w+ed', "AI-sounding adverb: 'Proactively'"),
+    ]
+    
+    for pattern, message in ai_patterns:
+        if re.search(pattern, bullet_text, re.IGNORECASE):
+            issues.append(message)
+    
+    return len(issues) == 0, issues
+
+
+# ═══════════════════════════════════════════════════════════════
+# FIX #2 & #3: Structured keyword preparation for AI
+# ═══════════════════════════════════════════════════════════════
+def _prepare_structured_keywords(must_haves, important, extraction_result):
+    """
+    Prepare keywords for AI in structured format with section targets.
+    
+    FIX: Ensures hard skills are explicitly provided and routed to Skills section.
+    """
+    from app.extractors.keyword_models import KeywordType
+    
+    # Separate by type and tier
+    must_have_hard = [kw for kw in must_haves 
+                      if kw.keyword_type in [KeywordType.HARD_SKILL, KeywordType.TOOL_PLATFORM]]
+    must_have_soft = [kw for kw in must_haves 
+                      if kw.keyword_type == KeywordType.SOFT_SKILL]
+    must_have_domain = [kw for kw in must_haves 
+                        if kw.keyword_type == KeywordType.DOMAIN_TERM]
+    
+    important_hard = [kw for kw in important 
+                      if kw.keyword_type in [KeywordType.HARD_SKILL, KeywordType.TOOL_PLATFORM]]
+    important_soft = [kw for kw in important 
+                      if kw.keyword_type == KeywordType.SOFT_SKILL]
+    important_domain = [kw for kw in important 
+                        if kw.keyword_type == KeywordType.DOMAIN_TERM]
+    
+    return {
+        'must_have_hard_skills': [kw.text for kw in must_have_hard],
+        'must_have_soft_skills': [kw.text for kw in must_have_soft],
+        'must_have_domain_terms': [kw.text for kw in must_have_domain],
+        
+        'important_hard_skills': [kw.text for kw in important_hard],
+        'important_soft_skills': [kw.text for kw in important_soft],
+        'important_domain_terms': [kw.text for kw in important_domain],
+        
+        # CRITICAL: Specify section targets
+        'section_targets': {
+            **{kw.text: ['skills', 'experience'] for kw in must_have_hard + important_hard},
+            **{kw.text: ['experience', 'summary'] for kw in must_have_soft + important_soft},
+            **{kw.text: ['experience'] for kw in must_have_domain + important_domain},
+        },
+        
+        'total_must_have_hard': len(must_have_hard),
+        'total_important_hard': len(important_hard),
+        'total_must_have_soft': len(must_have_soft),
+        
+        'soft_skills_to_include': [kw.text for kw in must_have_soft + important_soft],
+        'soft_skills_to_exclude': [],  # Never put in Skills section
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 6.1: Extract section_targets from Structured Keywords
+# Maps keyword → target sections for proper routing
+# ═══════════════════════════════════════════════════════════════════
+
+def extract_section_targets(structured_keywords):
+    """
+    Extract section routing information from structured keywords
+    
+    Returns: {keyword: [target_sections]}
+    """
+    if not structured_keywords:
+        return {}
+    
+    section_targets = structured_keywords.get('section_targets', {})
+    
+    print(f"[tailor] Section targets loaded: {len(section_targets)} keywords")
+    
+    return section_targets
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 6.2: Update Routing Logic to Use section_targets
+# Routes keywords to appropriate resume sections
+# ═══════════════════════════════════════════════════════════════════
+
+def route_keywords_to_sections(keywords, section_targets, keyword_types):
+    """
+    Route keywords to appropriate resume sections
+    
+    Uses section_targets first, then type-based fallback
+    """
+    route_to_skills = []
+    route_to_experience = []
+    route_to_summary = []
+    
+    for keyword in keywords:
+        keyword_type = keyword_types.get(keyword, 'UNKNOWN')
+        
+        # FIRST PRIORITY: Use explicit section targets
+        if keyword in section_targets:
+            targets = section_targets[keyword]
+            if 'skills' in targets:
+                route_to_skills.append(keyword)
+                print(f"[tailor] → {keyword} routed to Skills (explicit)")
+            if 'experience' in targets and keyword not in route_to_skills:
+                route_to_experience.append(keyword)
+            if 'summary' in targets and keyword not in route_to_skills:
+                route_to_summary.append(keyword)
+        else:
+            # FALLBACK: Type-based routing
+            if keyword_type == 'HARD_SKILL':
+                route_to_skills.append(keyword)
+                print(f"[tailor] → {keyword} routed to Skills (hard skill)")
+            elif keyword_type == 'SOFT_SKILL':
+                route_to_experience.append(keyword)
+                print(f"[tailor] → {keyword} routed to Experience (soft skill)")
+            else:
+                route_to_experience.append(keyword)
+    
+    return route_to_skills, route_to_experience, route_to_summary
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 6.3: Validate All Hard Skills Reached Skills Section
+# Verifies and force-adds any missing hard skills
+# ═══════════════════════════════════════════════════════════════════
+
+def validate_hard_skills_in_skills_section(
+    hard_skills_list,
+    routed_to_skills,
+    all_keywords
+):
+    """
+    Validate all hard skills made it to Skills section
+    
+    Returns: corrected route_to_skills
+    """
+    missing_hard_skills = [
+        skill for skill in hard_skills_list
+        if skill not in routed_to_skills
+    ]
+    
+    if missing_hard_skills:
+        print(f"[tailor] ⚠️ Hard skills missing from Skills section:")
+        for skill in missing_hard_skills:
+            print(f"[tailor]   - {skill}")
+            routed_to_skills.append(skill)
+            print(f"[tailor]   ✓ Force-added to Skills section")
+    
+    print(f"[tailor] Hard skills in Skills section: {len(routed_to_skills)}/{len(hard_skills_list)}")
+    
+    return routed_to_skills
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHUNK 6.4: Prevent Soft Skills from Skills Section
+# Ensures soft skills NOT in Skills section
+# ═══════════════════════════════════════════════════════════════════
+
+def prevent_soft_skills_in_skills_section(
+    routed_to_skills,
+    soft_skills_list
+):
+    """
+    Ensure soft skills are NOT in Skills section
+    
+    Returns: cleaned route_to_skills
+    """
+    soft_skills_set = set(s.lower() for s in soft_skills_list)
+    
+    cleaned = []
+    moved = []
+    
+    for skill in routed_to_skills:
+        if skill.lower() in soft_skills_set:
+            moved.append(skill)
+            print(f"[tailor] ⚠️ Soft skill '{skill}' removed from Skills")
+        else:
+            cleaned.append(skill)
+    
+    if moved:
+        print(f"[tailor] Moved {len(moved)} soft skills out of Skills section")
+    
+    return cleaned
+
+# ═══════════════════════════════════════════════════════════════
+# FIX #4: Protect must-haves during master resume merge
+# ═══════════════════════════════════════════════════════════════
+def _merge_with_protection(ai_skills, master_skills, protected_keywords, max_skills_allowed=16):
+    """
+    Merge AI-tailored skills with master resume skills.
+    
+    CRITICAL: NEVER remove protected keywords, even if over skill limit.
+    
+    Algorithm:
+    1. Identify which master skills are protected
+    2. Keep ALL protected skills (never remove)
+    3. Keep AI-tailored high-relevance skills
+    4. Remove only unprotected, low-relevance skills if over limit
+    """
+    
+    merged = {}
+    protected_count = 0
+    removed_count = 0
+    
+    # Step 1: Collect all skills with metadata
+    all_skills = {}
+    
+    # From AI
+    for group in ai_skills:
+        category = group.get('category', '')
+        if category not in merged:
+            merged[category] = {'category': category, 'items': []}
+        
+        for item in group.get('items', []):
+            item_key = item.lower().strip()
+            all_skills[item_key] = {
+                'text': item,
+                'source': 'ai',
+                'category': category,
+                'is_protected': item_key in protected_keywords,
+            }
+    
+    # From Master
+    for group in master_skills:
+        category = group.get('category', '')
+        if category not in merged:
+            merged[category] = {'category': category, 'items': []}
+        
+        for item in group.get('items', []):
+            item_key = item.lower().strip()
+            if item_key not in all_skills:  # Don't overwrite AI version
+                all_skills[item_key] = {
+                    'text': item,
+                    'source': 'master',
+                    'category': category,
+                    'is_protected': item_key in protected_keywords,
+                }
+    
+    # Step 2: Prioritize and place skills
+    # Priority 1: Protected keywords (MUST keep)
+    protected_skills = {k: v for k, v in all_skills.items() if v['is_protected']}
+    protected_count = len(protected_skills)
+    
+    # Priority 2: AI skills (high confidence)
+    ai_unprotected = {k: v for k, v in all_skills.items() 
+                      if v['source'] == 'ai' and not v['is_protected']}
+    
+    # Priority 3: Master skills (backup)
+    master_unprotected = {k: v for k, v in all_skills.items() 
+                          if v['source'] == 'master' and not v['is_protected']}
+    
+    # Step 3: Build final list respecting max_skills_allowed
+    final_skills_by_category = {}
+    total_skills = 0
+    
+    # ALWAYS include protected skills (don't count against limit)
+    for skill_key, skill_data in protected_skills.items():
+        category = skill_data['category']
+        if category not in final_skills_by_category:
+            final_skills_by_category[category] = []
+        
+        final_skills_by_category[category].append(skill_data['text'])
+        total_skills += 1
+        
+        print(f"[tailor] ✓ PROTECTED: '{skill_data['text']}' (won't be removed)")
+    
+    # Then add unprotected skills up to limit
+    for skill_key, skill_data in ai_unprotected.items():
+        if total_skills >= max_skills_allowed:
+            removed_count += 1
+            print(f"[tailor] ✗ REMOVED (limit): '{skill_data['text']}'")
+            continue
+        
+        category = skill_data['category']
+        if category not in final_skills_by_category:
+            final_skills_by_category[category] = []
+        
+        final_skills_by_category[category].append(skill_data['text'])
+        total_skills += 1
+    
+    # Finally add master skills if still under limit
+    for skill_key, skill_data in master_unprotected.items():
+        if total_skills >= max_skills_allowed:
+            removed_count += 1
+            continue
+        
+        category = skill_data['category']
+        if category not in final_skills_by_category:
+            final_skills_by_category[category] = []
+        
+        final_skills_by_category[category].append(skill_data['text'])
+        total_skills += 1
+    
+    # Step 4: Convert back to resume format
+    result = []
+    for category in final_skills_by_category:
+        result.append({
+            'category': category,
+            'items': final_skills_by_category[category]
+        })
+    
+    print(f"[tailor] Merge complete: {total_skills} skills ({protected_count} protected, {removed_count} removed)")
+    
+    return result
+
+
+def _verify_protection(skills_list, protected_keywords):
+    """
+    Verify that all protected keywords are in the skills list.
+    
+    Returns: True if ALL protected keywords present, False otherwise
+    """
+    
+    all_skills_lower = set()
+    for group in skills_list:
+        for item in group.get('items', []):
+            all_skills_lower.add(item.lower().strip())
+    
+    protected_lower = {k.lower().strip(): k for k, v in protected_keywords.items()}
+    
+    missing = []
+    for protected_key, original_text in protected_lower.items():
+        if protected_key not in all_skills_lower:
+            missing.append(original_text)
+    
+    if missing:
+        print(f"[tailor] ⚠️ PROTECTION FAILED: Missing {len(missing)} protected keywords:")
+        for m in missing:
+            print(f"[tailor]   ✗ {m}")
+        return False
+    
+    print(f"[tailor] ✓ All {len(protected_keywords)} protected keywords verified in resume")
+    return True
+
+
+def validate_and_fix_skill_categories(tailored_data, category_map):
+    """
+    Scan all skills in tailored resume and move to correct category if misplaced.
+
+    Args:
+        tailored_data: The resume dict from AI
+        category_map: Comprehensive mapping of skill → correct category
+
+    Returns:
+        tailored_data with skills in correct categories
+    """
+    if not isinstance(tailored_data, dict):
+        return tailored_data
+
+    skills = tailored_data.get('skills', [])
+    if not skills:
+        return tailored_data
+
+    print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+    print(f"[tailor] ║ SKILLS VALIDATION & CLEANUP                          ║")
+    print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
+
+    # Step 1: Build map of all current skills and their categories
+    current_skill_category = {}  # skill → current_category
+    for skill_group in skills:
+        category = skill_group.get('category', '')
+        for item in skill_group.get('items', []):
+            current_skill_category[item] = category
+
+    # Step 2: Determine correct category for each skill
+    skill_correct_category = {}  # skill → correct_category
+    for skill, current_cat in current_skill_category.items():
+        skill_lower = skill.lower()
+
+        # Try exact match first
+        correct_cat = category_map.get(skill_lower)
+
+        # Try fuzzy match (partial match)
+        if not correct_cat:
+            for key, cat in category_map.items():
+                if key in skill_lower or skill_lower in key:
+                    correct_cat = cat
+                    break
+
+        # Use default heuristic for unmapped skills
+        if not correct_cat:
+            # Multi-word → Concepts, single-word → Tools & Platforms
+            correct_cat = 'Concepts' if len(skill.split()) >= 2 else 'Tools & Platforms'
+
+        skill_correct_category[skill] = correct_cat
+
+    # Step 3: Identify skills that need moving
+    moves = []  # List of (skill, from_cat, to_cat)
+    for skill, correct_cat in skill_correct_category.items():
+        current_cat = current_skill_category[skill]
+        if current_cat.lower() != correct_cat.lower():
+            moves.append((skill, current_cat, correct_cat))
+
+    # Step 4: Perform moves (rebuild skills structure)
+    if moves:
+        # Create new skills structure
+        new_skills_dict = {}
+        for skill_group in skills:
+            category = skill_group.get('category', '')
+            new_skills_dict[category] = {
+                'category': category,
+                'items': []
+            }
+
+        # Re-assign all skills
+        for skill, correct_cat in skill_correct_category.items():
+            # Ensure correct_cat exists in new structure
+            if correct_cat not in new_skills_dict:
+                new_skills_dict[correct_cat] = {
+                    'category': correct_cat,
+                    'items': []
+                }
+
+            new_skills_dict[correct_cat]['items'].append(skill)
+
+        # Update tailored_data
+        tailored_data['skills'] = list(new_skills_dict.values())
+
+        # Log all moves
+        print(f"[tailor] Found {len(moves)} skills in wrong categories:")
+        for skill, from_cat, to_cat in moves:
+            print(f"[tailor]   ✓ {skill:35s} {from_cat:20s} → {to_cat}")
+        print(f"[tailor] Re-categorized {len(moves)} skills")
+    else:
+        print(f"[tailor] All skills correctly categorized ✓")
+
+    print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
+
+    return tailored_data
+
+
+# ============================================================================
+# PHASE 2: KEYWORD-TO-SECTION MAPPING ENGINE
+# Programmatic keyword routing with validation and correction
+# ============================================================================
+
+# --- Layer 1: Keyword Classification System (Enhanced) ---
+
+# Sub-type classification sets
+_PROGRAMMING_LANGUAGES = {
+    'python', 'java', 'javascript', 'typescript', 'c++', 'c#', 'cpp', 'rust',
+    'go', 'golang', 'ruby', 'php', 'swift', 'kotlin', 'scala', 'perl', 'r',
+    'matlab', 'julia', 'haskell', 'erlang', 'lua', 'sql', 'html', 'css',
+    'bash', 'shell', 'groovy', 'clojure', 'elixir', 'f#', 'ocaml',
+}
+
+_FRAMEWORKS = {
+    'react', 'angular', 'angularjs', 'vue', 'vue.js', 'svelte', 'next.js',
+    'spring', 'spring boot', 'django', 'flask', 'fastapi', 'express',
+    'node.js', '.net', 'asp.net', 'laravel', 'rails', 'ruby on rails',
+    'pytorch', 'tensorflow', 'keras', 'scikit-learn', 'pandas', 'numpy',
+    'langchain', 'hugging face', 'opencv', 'bootstrap', 'tailwind',
+    'jquery', 'graphql', 'rest api', 'restful apis', 'grpc',
+}
+
+_METHODOLOGIES = {
+    'agile', 'scrum', 'kanban', 'tdd', 'test-driven development', 'bdd',
+    'behavior-driven development', 'waterfall', 'lean', 'devops', 'ci/cd',
+    'continuous integration', 'continuous deployment', 'pair programming',
+}
+
+_CLOUD_SERVICES = {
+    'aws', 'azure', 'gcp', 'google cloud', 'amazon web services',
+    'microsoft azure', 'google cloud platform', 'heroku', 'vercel',
+    'netlify', 'digitalocean', 'aws lambda', 'sagemaker', 'aws bedrock',
+    's3', 'ec2', 'rds', 'cloudformation', 'cloudwatch',
+}
+
+_DEV_TOOLS = {
+    'docker', 'kubernetes', 'k8s', 'jenkins', 'git', 'github', 'gitlab',
+    'bitbucket', 'circleci', 'travis ci', 'github actions', 'terraform',
+    'ansible', 'vagrant', 'prometheus', 'grafana', 'datadog', 'splunk',
+    'postman', 'maven', 'gradle', 'npm', 'yarn', 'sonarqube', 'airflow',
+    'mlflow', 'wandb', 'dvc', 'jira', 'confluence',
+}
+
+_BUSINESS_TOOLS = {
+    'salesforce', 'workday', 'servicenow', 'sap', 'oracle', 'tableau',
+    'power bi', 'looker', 'snowflake', 'databricks', 'segment',
+    'hubspot', 'marketo', 'zendesk', 'freshdesk',
+}
+
+_INDUSTRY_VERTICALS = {
+    'fintech', 'healthcare', 'healthtech', 'edtech', 'biotech',
+    'insurtech', 'regtech', 'proptech', 'agritech', 'cleantech',
+    'e-commerce', 'retail', 'manufacturing', 'automotive',
+    'telecommunications', 'media', 'entertainment', 'gaming',
+    'aerospace', 'defense', 'energy', 'logistics', 'supply chain',
+}
+
+_BUSINESS_DOMAINS = {
+    'go-to-market', 'supply chain', 'capital markets', 'risk analytics',
+    'pricing model', 'risk systems', 'trading systems', 'risk management',
+    'regulatory compliance', 'portfolio management', 'financial modeling',
+    'patient management', 'ehr systems', 'medical imaging', 'gnss',
+    'positioning algorithms', 'embedded systems', 'iot', 'signal processing',
+}
+
+_ACHIEVEMENT_VERBS = {
+    'built', 'optimized', 'scaled', 'architected', 'engineered', 'designed',
+    'implemented', 'developed', 'created', 'launched', 'deployed',
+    'automated', 'reduced', 'increased', 'improved', 'accelerated',
+    'streamlined', 'modernized', 'migrated', 'refactored', 'delivered',
+}
+
+_PROCESS_VERBS = {
+    'managed', 'coordinated', 'designed', 'led', 'supervised',
+    'maintained', 'planned', 'organized', 'facilitated', 'reviewed',
+    'analyzed', 'evaluated', 'configured', 'administered', 'monitored',
+}
+
+_SOFT_SKILL_LEADERSHIP = {
+    'team leadership', 'mentoring', 'coaching', 'people management',
+    'team management', 'cross-functional leadership', 'technical leadership',
+    'strategic planning', 'decision making', 'vision setting',
+}
+
+_SOFT_SKILL_COMMUNICATION = {
+    'technical communication', 'presenting', 'public speaking', 'writing',
+    'documentation', 'stakeholder communication', 'client communication',
+    'technical writing', 'reporting', 'storytelling',
+}
+
+_SOFT_SKILL_ANALYTICAL = {
+    'problem-solving', 'problem solving', 'analysis', 'critical thinking',
+    'analytical thinking', 'troubleshooting', 'debugging', 'root cause analysis',
+    'data-driven decision making', 'research',
+}
+
+_SOFT_SKILL_INTERPERSONAL = {
+    'collaboration', 'teamwork', 'stakeholder management', 'negotiation',
+    'conflict resolution', 'empathy', 'adaptability', 'flexibility',
+    'communication', 'relationship building', 'customer support',
+}
+
+
+def classify_keyword(keyword, jd_title=''):
+    """
+    Layer 1: Classify keyword into type and sub-type.
+
+    Returns: (keyword_type, sub_type)
+    Types: HARD_SKILL, TOOL_PLATFORM, DOMAIN_TERM, RESPONSIBILITY_PHRASE,
+           SOFT_SKILL, CORE_COMPETENCY
+    """
+    kw_lower = keyword.lower().strip()
+
+    # Check if it's a core competency (role-defining skill)
+    # A core competency appears in the job title itself
+    if jd_title and kw_lower in jd_title.lower():
+        return ('CORE_COMPETENCY', 'role_defining')
+
+    # HARD_SKILL sub-types
+    if kw_lower in _PROGRAMMING_LANGUAGES:
+        return ('HARD_SKILL', 'programming_language')
+    if kw_lower in _FRAMEWORKS:
+        return ('HARD_SKILL', 'framework')
+    if kw_lower in _METHODOLOGIES:
+        return ('HARD_SKILL', 'methodology')
+
+    # TOOL_PLATFORM sub-types
+    if kw_lower in _CLOUD_SERVICES:
+        return ('TOOL_PLATFORM', 'cloud_service')
+    if kw_lower in _DEV_TOOLS:
+        return ('TOOL_PLATFORM', 'dev_tool')
+    if kw_lower in _BUSINESS_TOOLS:
+        return ('TOOL_PLATFORM', 'business_tool')
+
+    # SOFT_SKILL sub-types
+    if kw_lower in _SOFT_SKILL_LEADERSHIP:
+        return ('SOFT_SKILL', 'leadership')
+    if kw_lower in _SOFT_SKILL_COMMUNICATION:
+        return ('SOFT_SKILL', 'communication')
+    if kw_lower in _SOFT_SKILL_ANALYTICAL:
+        return ('SOFT_SKILL', 'analytical')
+    if kw_lower in _SOFT_SKILL_INTERPERSONAL:
+        return ('SOFT_SKILL', 'interpersonal')
+
+    # DOMAIN_TERM sub-types
+    if kw_lower in _INDUSTRY_VERTICALS:
+        return ('DOMAIN_TERM', 'industry_vertical')
+    if kw_lower in _BUSINESS_DOMAINS:
+        return ('DOMAIN_TERM', 'business_domain')
+
+    # RESPONSIBILITY_PHRASE sub-types
+    first_word = kw_lower.split()[0] if kw_lower.split() else ''
+    if first_word in _ACHIEVEMENT_VERBS:
+        return ('RESPONSIBILITY_PHRASE', 'achievement')
+    if first_word in _PROCESS_VERBS:
+        return ('RESPONSIBILITY_PHRASE', 'process')
+
+    # Fuzzy classification: check partial matches
+    for lang in _PROGRAMMING_LANGUAGES:
+        if lang in kw_lower or kw_lower in lang:
+            return ('HARD_SKILL', 'programming_language')
+    for fw in _FRAMEWORKS:
+        if fw in kw_lower or kw_lower in fw:
+            return ('HARD_SKILL', 'framework')
+    for tool in _DEV_TOOLS | _CLOUD_SERVICES:
+        if tool in kw_lower or kw_lower in tool:
+            return ('TOOL_PLATFORM', 'dev_tool')
+    for soft in _SOFT_SKILL_LEADERSHIP | _SOFT_SKILL_COMMUNICATION | _SOFT_SKILL_ANALYTICAL | _SOFT_SKILL_INTERPERSONAL:
+        if soft in kw_lower or kw_lower in soft:
+            return ('SOFT_SKILL', 'interpersonal')
+    for domain in _INDUSTRY_VERTICALS | _BUSINESS_DOMAINS:
+        if domain in kw_lower or kw_lower in domain:
+            return ('DOMAIN_TERM', 'business_domain')
+
+    # Default: multi-word → DOMAIN_TERM, single-word with technical context → HARD_SKILL
+    if len(keyword.split()) >= 2:
+        return ('DOMAIN_TERM', 'business_domain')
+    return ('HARD_SKILL', 'methodology')
+
+
+# --- Layer 2: Priority Scoring Algorithm ---
+
+def calculate_keyword_priority(keyword, jd_text, resume_text, jd_title='',
+                                jd_requirements='', jd_responsibilities='',
+                                jd_preferred=''):
+    """
+    Layer 2: Calculate keyword priority score (0-7).
+
+    Components:
+    - Base Priority (0-3): Where in JD does keyword appear?
+    - Frequency Bonus (0-2): How many times in JD?
+    - Domain Relevance Bonus (0-1): Matches candidate's industry?
+    - Match Quality Bonus (0-1): Is keyword in resume?
+
+    Scoring Bands:
+      6-7: CRITICAL (4 mentions across sections)
+      4-5: HIGH (3 mentions)
+      2-3: MEDIUM (2 mentions)
+      1: LOW (1 mention)
+      0 or below: DISCARD
+    """
+    kw_lower = keyword.lower()
+    jd_lower = jd_text.lower()
+    resume_lower = resume_text.lower()
+
+    # Base Priority (0-3)
+    base = 0
+    if jd_title and kw_lower in jd_title.lower():
+        base = 3
+    elif jd_requirements and kw_lower in jd_requirements.lower():
+        base = 3
+    elif jd_responsibilities and kw_lower in jd_responsibilities.lower():
+        base = 2
+    elif jd_preferred and kw_lower in jd_preferred.lower():
+        base = 0  # preferred = discard priority
+    else:
+        # General JD mention
+        base = 2 if kw_lower in jd_lower else 0
+
+    # Frequency Bonus (0-2)
+    count = jd_lower.count(kw_lower)
+    if count >= 3:
+        freq_bonus = 2
+    elif count == 2:
+        freq_bonus = 1
+    else:
+        freq_bonus = 0
+
+    # Domain Relevance Bonus (0-1)
+    # If keyword appears in resume, candidate has domain relevance
+    relevance_bonus = 1 if kw_lower in resume_lower else 0
+
+    # Match Quality Bonus (-1 to 1)
+    if kw_lower in resume_lower:
+        match_bonus = 1  # Strong match
+    elif any(word in resume_lower for word in kw_lower.split() if len(word) > 3):
+        match_bonus = 0  # Partial match (transferable)
+    else:
+        match_bonus = -1  # No match
+
+    priority = base + freq_bonus + relevance_bonus + match_bonus
+    return max(0, min(7, priority))  # Clamp to 0-7
+
+
+def get_priority_band(priority_score):
+    """Map priority score to band label and required mentions."""
+    if priority_score >= 6:
+        return ('CRITICAL', 4)
+    elif priority_score >= 4:
+        return ('HIGH', 3)
+    elif priority_score >= 2:
+        return ('MEDIUM', 2)
+    elif priority_score >= 1:
+        return ('LOW', 1)
+    else:
+        return ('DISCARD', 0)
+
+
+# --- Layer 3: Section-Specific Routing Rules ---
+
+def get_section_targets(keyword_type, priority_score, is_core_competency=False):
+    """
+    Layer 3: Map (type + priority) → target sections with frequency.
+
+    Returns: {
+        'sections': ['TECHNICAL_SKILLS', 'EXPERIENCE', ...],
+        'frequency': {'TECHNICAL_SKILLS': 1, 'EXPERIENCE': 2, ...},
+        'max_mentions': int,
+        'rules': [str, ...]
+    }
+    """
+    # Core Competencies override all rules
+    if is_core_competency or keyword_type == 'CORE_COMPETENCY':
+        return {
+            'sections': ['TECHNICAL_SKILLS', 'SUMMARY', 'EXPERIENCE'],
+            'frequency': {'TECHNICAL_SKILLS': 2, 'SUMMARY': 1, 'EXPERIENCE': 3},
+            'max_mentions': 6,
+            'rules': ['Role-defining skill — highest redundancy',
+                      'Must appear in multiple variations if applicable'],
+        }
+
+    # Hard Skills + Tool/Platform
+    if keyword_type in ('HARD_SKILL', 'TOOL_PLATFORM'):
+        if priority_score >= 3:
+            return {
+                'sections': ['TECHNICAL_SKILLS', 'EXPERIENCE'],
+                'frequency': {'TECHNICAL_SKILLS': 1, 'EXPERIENCE': 2},
+                'max_mentions': 3,
+                'rules': ['Must have evidence in Experience bullets'],
+            }
+        elif priority_score == 2:
+            return {
+                'sections': ['TECHNICAL_SKILLS', 'EXPERIENCE'],
+                'frequency': {'TECHNICAL_SKILLS': 1, 'EXPERIENCE': 1},
+                'max_mentions': 2,
+                'rules': [],
+            }
+        elif priority_score == 1:
+            return {
+                'sections': ['EXPERIENCE'],
+                'frequency': {'EXPERIENCE': 1},
+                'max_mentions': 1,
+                'rules': [],
+            }
+        else:
+            return {
+                'sections': [],
+                'frequency': {},
+                'max_mentions': 0,
+                'rules': ['DISCARD — priority too low'],
+            }
+
+    # Soft Skills
+    if keyword_type == 'SOFT_SKILL':
+        if priority_score >= 2:
+            return {
+                'sections': ['EXPERIENCE', 'SUMMARY'],
+                'frequency': {'EXPERIENCE': 2, 'SUMMARY': 1},
+                'max_mentions': 2,
+                'rules': ['Must have evidence in experience',
+                          'NEVER in Technical Skills section'],
+            }
+        elif priority_score == 1:
+            return {
+                'sections': ['EXPERIENCE'],
+                'frequency': {'EXPERIENCE': 1},
+                'max_mentions': 1,
+                'rules': ['NEVER in Technical Skills section'],
+            }
+        else:
+            return {
+                'sections': [],
+                'frequency': {},
+                'max_mentions': 0,
+                'rules': ['DISCARD or EXPERIENCE only',
+                          'NEVER in Technical Skills section'],
+            }
+
+    # Domain Terms
+    if keyword_type == 'DOMAIN_TERM':
+        if priority_score >= 2:
+            return {
+                'sections': ['SUMMARY', 'EXPERIENCE'],
+                'frequency': {'SUMMARY': 1, 'EXPERIENCE': 1},
+                'max_mentions': 2,
+                'rules': ['Shows domain understanding'],
+            }
+        elif priority_score >= 1:
+            return {
+                'sections': ['SUMMARY'],
+                'frequency': {'SUMMARY': 1},
+                'max_mentions': 1,
+                'rules': [],
+            }
+        else:
+            return {
+                'sections': [],
+                'frequency': {},
+                'max_mentions': 0,
+                'rules': ['DISCARD'],
+            }
+
+    # Responsibility Phrases
+    if keyword_type == 'RESPONSIBILITY_PHRASE':
+        if priority_score >= 2:
+            return {
+                'sections': ['EXPERIENCE'],
+                'frequency': {'EXPERIENCE': 2},
+                'max_mentions': 2,
+                'rules': ['Different bullets, different achievements'],
+            }
+        elif priority_score >= 1:
+            return {
+                'sections': ['EXPERIENCE'],
+                'frequency': {'EXPERIENCE': 1},
+                'max_mentions': 1,
+                'rules': [],
+            }
+        else:
+            return {
+                'sections': [],
+                'frequency': {},
+                'max_mentions': 0,
+                'rules': ['DISCARD'],
+            }
+
+    # Default fallback
+    return {
+        'sections': ['EXPERIENCE'],
+        'frequency': {'EXPERIENCE': 1},
+        'max_mentions': 1,
+        'rules': [],
+    }
+
+
+# --- Layer 4: Frequency & Saturation Control ---
+
+# Per-section keyword density limits
+_SECTION_DENSITY_LIMITS = {
+    'TECHNICAL_SKILLS': {
+        'max_new_keywords_per_category': 5,
+        'total_skills_per_category': 8,
+        'max_keywords_same_priority_tier': 3,
+    },
+    'SUMMARY': {
+        'max_new_keywords_total': 3,
+        'target_keyword_density_pct': 20,  # 15-20% of summary words
+    },
+    'EXPERIENCE': {
+        'max_new_keywords_per_bullet': 2,
+        'max_new_keywords_total': 8,
+        'max_same_keyword_mentions': 4,
+        'min_bullet_spacing': 2,  # 2+ bullets between same keyword
+    },
+    'PROJECTS': {
+        'max_new_keywords_per_project': 2,
+    },
+}
+
+
+def check_frequency_saturation(tailored_data, keyword_routes):
+    """
+    Layer 4: Enforce per-section keyword density limits.
+
+    Returns list of violations found.
+    """
+    violations = []
+
+    if not isinstance(tailored_data, dict):
+        return violations
+
+    # Check TECHNICAL_SKILLS density
+    limits = _SECTION_DENSITY_LIMITS['TECHNICAL_SKILLS']
+    for skill_group in tailored_data.get('skills', []):
+        items = skill_group.get('items', [])
+        category = skill_group.get('category', '')
+        if len(items) > limits['total_skills_per_category']:
+            violations.append({
+                'section': 'TECHNICAL_SKILLS',
+                'type': 'OVER_DENSITY',
+                'detail': f"{category} has {len(items)} skills (max {limits['total_skills_per_category']})",
+            })
+
+    # Check SUMMARY density
+    summary = tailored_data.get('summary', '')
+    if summary:
+        summary_words = summary.split()
+        kw_count = 0
+        for route in keyword_routes:
+            if route['keyword_text'].lower() in summary.lower():
+                kw_count += 1
+        if summary_words:
+            density = (kw_count / len(summary_words)) * 100
+            if density > _SECTION_DENSITY_LIMITS['SUMMARY']['target_keyword_density_pct']:
+                violations.append({
+                    'section': 'SUMMARY',
+                    'type': 'OVER_DENSITY',
+                    'detail': f"Keyword density {density:.1f}% exceeds {_SECTION_DENSITY_LIMITS['SUMMARY']['target_keyword_density_pct']}%",
+                })
+
+    # Check EXPERIENCE frequency
+    exp_limits = _SECTION_DENSITY_LIMITS['EXPERIENCE']
+    all_bullets = []
+    for exp in tailored_data.get('experience', []):
+        all_bullets.extend(exp.get('bullets', []))
+
+    for route in keyword_routes:
+        kw = route['keyword_text'].lower()
+        mention_positions = []
+        for i, bullet in enumerate(all_bullets):
+            if kw in bullet.lower():
+                mention_positions.append(i)
+
+        # Max same keyword mentions
+        if len(mention_positions) > exp_limits['max_same_keyword_mentions']:
+            violations.append({
+                'section': 'EXPERIENCE',
+                'type': 'OVER_FREQUENCY',
+                'detail': f"'{route['keyword_text']}' appears {len(mention_positions)} times (max {exp_limits['max_same_keyword_mentions']})",
+            })
+
+        # Min bullet spacing
+        for j in range(1, len(mention_positions)):
+            if mention_positions[j] - mention_positions[j-1] < exp_limits['min_bullet_spacing']:
+                violations.append({
+                    'section': 'EXPERIENCE',
+                    'type': 'SPACING_VIOLATION',
+                    'detail': f"'{route['keyword_text']}' appears in consecutive/nearby bullets (positions {mention_positions[j-1]}, {mention_positions[j]})",
+                })
+
+    return violations
+
+
+# --- Layer 5: Natural Language Validation ---
+
+def validate_natural_language(tailored_data, keyword_routes):
+    """
+    Layer 5: Validate keyword placements for natural language quality.
+
+    Checks:
+    1. Context Check — keyword surrounded by related context
+    2. Coherence Check — bullet makes sense to human
+    3. Frequency Check — no duplicate keywords in same/consecutive bullets
+    4. Integration Check — keyword is part of sentence, not appended
+    """
+    issues = []
+
+    if not isinstance(tailored_data, dict):
+        return issues
+
+    all_bullets = []
+    for exp in tailored_data.get('experience', []):
+        all_bullets.extend(exp.get('bullets', []))
+    for proj in tailored_data.get('projects', []):
+        all_bullets.extend(proj.get('bullets', []))
+
+    for route in keyword_routes:
+        kw = route['keyword_text'].lower()
+
+        # Check 3: Frequency — same keyword in same bullet
+        for i, bullet in enumerate(all_bullets):
+            bullet_lower = bullet.lower()
+            count_in_bullet = bullet_lower.count(kw)
+            if count_in_bullet > 1:
+                issues.append({
+                    'keyword': route['keyword_text'],
+                    'check': 'FREQUENCY',
+                    'detail': f"Appears {count_in_bullet} times in same bullet (position {i})",
+                    'severity': 'HIGH',
+                })
+
+        # Check 3: Frequency — same keyword in consecutive bullets
+        prev_had_kw = False
+        for i, bullet in enumerate(all_bullets):
+            has_kw = kw in bullet.lower()
+            if has_kw and prev_had_kw:
+                issues.append({
+                    'keyword': route['keyword_text'],
+                    'check': 'FREQUENCY',
+                    'detail': f"Appears in consecutive bullets (positions {i-1}, {i})",
+                    'severity': 'MEDIUM',
+                })
+            prev_had_kw = has_kw
+
+        # Check 4: Integration — keyword appended rather than integrated
+        for i, bullet in enumerate(all_bullets):
+            bullet_lower = bullet.lower()
+            if kw in bullet_lower:
+                # Check if keyword is at the very end after a period (appended)
+                stripped = bullet.rstrip('. ')
+                if stripped.lower().endswith(kw):
+                    # Check if it's a natural ending vs. appended
+                    before_kw = stripped[:-(len(kw))].rstrip('. ,')
+                    if before_kw.endswith('.') or before_kw.endswith(','):
+                        issues.append({
+                            'keyword': route['keyword_text'],
+                            'check': 'INTEGRATION',
+                            'detail': f"Appears appended to bullet rather than integrated (position {i})",
+                            'severity': 'LOW',
+                        })
+
+    return issues
+
+
+# --- 6 Validation Checkpoints ---
+
+def _checkpoint_1_pre_placement(keyword_routes):
+    """CHECKPOINT 1: Pre-Placement — verify classification and priority."""
+    results = []
+    for route in keyword_routes:
+        if route['priority_score'] <= 0:
+            results.append(f"DISCARD: '{route['keyword_text']}' (priority {route['priority_score']})")
+        elif not route['keyword_type']:
+            results.append(f"UNCLASSIFIED: '{route['keyword_text']}'")
+    return results
+
+
+def _checkpoint_2_section_specific(tailored_data, keyword_routes):
+    """CHECKPOINT 2: Section-Specific — verify correct section placement."""
+    results = []
+    if not isinstance(tailored_data, dict):
+        return results
+
+    # Collect all skills in Technical Skills section
+    tech_skills_items = set()
+    for group in tailored_data.get('skills', []):
+        for item in group.get('items', []):
+            tech_skills_items.add(item.lower())
+
+    summary_lower = (tailored_data.get('summary', '') or '').lower()
+
+    exp_text = ''
+    for exp in tailored_data.get('experience', []):
+        for bullet in exp.get('bullets', []):
+            exp_text += bullet.lower() + ' '
+
+    for route in keyword_routes:
+        kw_lower = route['keyword_text'].lower()
+        kw_type = route['keyword_type']
+
+        # Soft skills MUST NOT be in Technical Skills
+        if kw_type == 'SOFT_SKILL' and kw_lower in tech_skills_items:
+            results.append(f"VIOLATION: Soft skill '{route['keyword_text']}' found in Technical Skills (should be Experience/Summary)")
+            route['status'] = 'NEEDS_VERIFICATION'
+            route['failure_reason'] = 'Soft skill in Technical Skills section'
+
+        # Hard skills with priority >= 3 MUST be in Technical Skills + Experience
+        if kw_type in ('HARD_SKILL', 'TOOL_PLATFORM') and route['priority_score'] >= 3:
+            in_skills = kw_lower in tech_skills_items or any(kw_lower in item for item in tech_skills_items)
+            in_exp = kw_lower in exp_text
+            if not in_skills:
+                results.append(f"MISSING: Hard skill '{route['keyword_text']}' not in Technical Skills (priority {route['priority_score']})")
+            if not in_exp:
+                results.append(f"MISSING: Hard skill '{route['keyword_text']}' not in Experience (priority {route['priority_score']})")
+
+        # Domain terms with priority >= 2 SHOULD be in Summary
+        if kw_type == 'DOMAIN_TERM' and route['priority_score'] >= 2:
+            if kw_lower not in summary_lower:
+                results.append(f"MISSING: Domain term '{route['keyword_text']}' not in Summary")
+
+    return results
+
+
+def _checkpoint_3_integration(tailored_data, keyword_routes):
+    """CHECKPOINT 3: Integration — natural language quality."""
+    return validate_natural_language(tailored_data, keyword_routes)
+
+
+def _checkpoint_4_frequency(tailored_data, keyword_routes):
+    """CHECKPOINT 4: Frequency — keyword density limits."""
+    return check_frequency_saturation(tailored_data, keyword_routes)
+
+
+def _checkpoint_5_consistency(tailored_data):
+    """CHECKPOINT 5: Consistency — skills in Skills match Experience."""
+    results = []
+    if not isinstance(tailored_data, dict):
+        return results
+
+    # Build experience text
+    exp_text = ''
+    for exp in tailored_data.get('experience', []):
+        for bullet in exp.get('bullets', []):
+            exp_text += bullet.lower() + ' '
+    for proj in tailored_data.get('projects', []):
+        for bullet in proj.get('bullets', []):
+            exp_text += bullet.lower() + ' '
+
+    # Check each skill has evidence in Experience/Projects
+    for group in tailored_data.get('skills', []):
+        for item in group.get('items', []):
+            item_lower = item.lower()
+            # Check for any word from the skill in experience
+            words = [w for w in item_lower.split() if len(w) > 2]
+            has_evidence = any(w in exp_text for w in words) if words else item_lower in exp_text
+            if not has_evidence:
+                results.append(f"NO_EVIDENCE: '{item}' in {group.get('category', '')} has no proof in Experience/Projects")
+
+    return results
+
+
+def _checkpoint_6_coverage(keyword_routes):
+    """CHECKPOINT 6: Coverage — high-priority keywords reached target sections."""
+    results = []
+    for route in keyword_routes:
+        if route['priority_score'] >= 4 and route['status'] != 'APPROVED':
+            results.append(f"COVERAGE_GAP: High-priority '{route['keyword_text']}' (score {route['priority_score']}) status: {route['status']}")
+        if route['priority_score'] >= 2 and not route['target_sections']:
+            results.append(f"NO_TARGETS: '{route['keyword_text']}' has no target sections assigned")
+    return results
+
+
+# --- Main Orchestrator: Keyword Section Routing Engine ---
+
+def keyword_section_routing_engine(tailored_data, jd_analysis, keyword_data,
+                                    soft_skills_data, jd_text, resume_text):
+    """
+    Phase 2 Main Orchestrator: Run the full keyword-to-section mapping engine.
+
+    Steps:
+    1. Build KeywordRoute objects for all extracted keywords
+    2. Classify each keyword (Layer 1)
+    3. Score priority for each keyword (Layer 2)
+    4. Determine section targets (Layer 3)
+    5. Check frequency saturation (Layer 4)
+    6. Validate natural language (Layer 5)
+    7. Run 6 validation checkpoints
+    8. Fix violations (move soft skills out of Technical Skills)
+    9. Log results
+
+    Returns: (tailored_data, routing_report)
+    """
+    if not isinstance(tailored_data, dict):
+        return tailored_data, {}
+
+    print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+    print(f"[tailor] ║ PHASE 2: KEYWORD SECTION ROUTING ENGINE              ║")
+    print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
+
+    # Extract JD title
+    jd_title = ''
+    if jd_analysis and isinstance(jd_analysis, dict):
+        jd_title = jd_analysis.get('job_title', '') or ''
+
+    # --- Build keyword list from all sources ---
+    all_keywords = set()
+
+    # From jd_analysis hard_skills
+    if jd_analysis and isinstance(jd_analysis, dict):
+        for skill in jd_analysis.get('hard_skills', []):
+            if isinstance(skill, str):
+                all_keywords.add(skill)
+            elif isinstance(skill, dict):
+                all_keywords.add(skill.get('keyword', skill.get('skill', '')))
+
+    # From jd_analysis soft_skills
+    if jd_analysis and isinstance(jd_analysis, dict):
+        for skill in jd_analysis.get('soft_skills', []):
+            if isinstance(skill, str):
+                all_keywords.add(skill)
+
+    # From keyword_data top_keywords
+    if keyword_data and isinstance(keyword_data, dict):
+        for kw_obj in keyword_data.get('top_keywords', []):
+            if isinstance(kw_obj, dict):
+                all_keywords.add(kw_obj.get('keyword', ''))
+            elif isinstance(kw_obj, str):
+                all_keywords.add(kw_obj)
+
+    # From soft_skills_data
+    if soft_skills_data and isinstance(soft_skills_data, dict):
+        for skill in soft_skills_data.get('jd_soft_skills', []):
+            all_keywords.add(skill)
+
+    # Remove empty strings
+    all_keywords.discard('')
+
+    if not all_keywords:
+        print(f"[tailor] No keywords to route")
+        return tailored_data, {}
+
+    print(f"[tailor] Processing {len(all_keywords)} keywords through routing engine")
+
+    # --- Step 1-3: Build KeywordRoute objects ---
+    keyword_routes = []
+    for kw in all_keywords:
+        kw_type, sub_type = classify_keyword(kw, jd_title)
+        priority = calculate_keyword_priority(kw, jd_text, resume_text, jd_title=jd_title)
+        targets = get_section_targets(kw_type, priority)
+        band, required_mentions = get_priority_band(priority)
+
+        route = {
+            'keyword_text': kw,
+            'keyword_type': kw_type,
+            'sub_type': sub_type,
+            'priority_score': priority,
+            'priority_band': band,
+            'target_sections': targets['sections'],
+            'max_mentions': targets['max_mentions'],
+            'section_frequency': targets['frequency'],
+            'placement_evidence': {},
+            'natural_language_check': False,
+            'status': 'APPROVED' if priority >= 1 else 'REJECTED',
+            'failure_reason': 'Priority too low' if priority < 1 else '',
+            'rules': targets['rules'],
+        }
+        keyword_routes.append(route)
+
+    # Sort by priority (highest first)
+    keyword_routes.sort(key=lambda r: -r['priority_score'])
+
+    # Log classification summary
+    type_counts = {}
+    for route in keyword_routes:
+        t = route['keyword_type']
+        type_counts[t] = type_counts.get(t, 0) + 1
+    print(f"[tailor] Classification: {type_counts}")
+
+    band_counts = {}
+    for route in keyword_routes:
+        b = route['priority_band']
+        band_counts[b] = band_counts.get(b, 0) + 1
+    print(f"[tailor] Priority bands: {band_counts}")
+
+    # --- Step 4: Frequency Saturation Control (Layer 4) ---
+    saturation_violations = check_frequency_saturation(tailored_data, keyword_routes)
+    if saturation_violations:
+        print(f"[tailor] Frequency violations: {len(saturation_violations)}")
+        for v in saturation_violations[:5]:
+            print(f"[tailor]   ⚠ {v['type']}: {v['detail']}")
+
+    # --- Step 5: Natural Language Validation (Layer 5) ---
+    nl_issues = validate_natural_language(tailored_data, keyword_routes)
+    if nl_issues:
+        print(f"[tailor] Natural language issues: {len(nl_issues)}")
+        for issue in nl_issues[:5]:
+            print(f"[tailor]   ⚠ {issue['check']}: {issue['detail']}")
+
+    # --- Step 6: Run 6 Validation Checkpoints ---
+    print(f"\n[tailor] Running 6 validation checkpoints...")
+
+    cp1 = _checkpoint_1_pre_placement(keyword_routes)
+    if cp1:
+        print(f"[tailor] CP1 Pre-Placement: {len(cp1)} issues")
+        for msg in cp1[:3]:
+            print(f"[tailor]   {msg}")
+
+    cp2 = _checkpoint_2_section_specific(tailored_data, keyword_routes)
+    if cp2:
+        print(f"[tailor] CP2 Section-Specific: {len(cp2)} issues")
+        for msg in cp2[:5]:
+            print(f"[tailor]   {msg}")
+
+    cp3 = _checkpoint_3_integration(tailored_data, keyword_routes)
+    if cp3:
+        print(f"[tailor] CP3 Integration: {len(cp3)} issues")
+
+    cp4 = _checkpoint_4_frequency(tailored_data, keyword_routes)
+    if cp4:
+        print(f"[tailor] CP4 Frequency: {len(cp4)} violations")
+
+    cp5 = _checkpoint_5_consistency(tailored_data)
+    if cp5:
+        print(f"[tailor] CP5 Consistency: {len(cp5)} issues")
+        for msg in cp5[:3]:
+            print(f"[tailor]   {msg}")
+
+    cp6 = _checkpoint_6_coverage(keyword_routes)
+    if cp6:
+        print(f"[tailor] CP6 Coverage: {len(cp6)} gaps")
+        for msg in cp6[:3]:
+            print(f"[tailor]   {msg}")
+
+    # --- Step 7: Auto-fix violations ---
+    fixes_applied = 0
+
+    # FIX: Remove soft skills from Technical Skills section
+    soft_skill_keywords = {r['keyword_text'].lower() for r in keyword_routes
+                           if r['keyword_type'] == 'SOFT_SKILL'}
+    if soft_skill_keywords:
+        for skill_group in tailored_data.get('skills', []):
+            original_count = len(skill_group.get('items', []))
+            skill_group['items'] = [
+                item for item in skill_group.get('items', [])
+                if item.lower() not in soft_skill_keywords
+            ]
+            removed = original_count - len(skill_group['items'])
+            if removed > 0:
+                fixes_applied += removed
+                print(f"[tailor] ✓ Removed {removed} soft skills from {skill_group.get('category', '')} (should be in Experience/Summary)")
+
+    # FIX: Ensure high-priority hard skills are in Technical Skills
+    tech_skills_items_lower = set()
+    for group in tailored_data.get('skills', []):
+        for item in group.get('items', []):
+            tech_skills_items_lower.add(item.lower())
+
+    for route in keyword_routes:
+        if (route['keyword_type'] in ('HARD_SKILL', 'TOOL_PLATFORM', 'CORE_COMPETENCY')
+                and route['priority_score'] >= 3
+                and route['keyword_text'].lower() not in tech_skills_items_lower):
+
+            # Determine which category to add to
+            kw_type, sub_type = route['keyword_type'], route['sub_type']
+            if sub_type == 'programming_language':
+                target_category = 'Languages'
+            elif sub_type == 'framework':
+                target_category = 'Frameworks & Libraries'
+            elif sub_type in ('cloud_service', 'dev_tool', 'business_tool'):
+                target_category = 'Tools & Platforms'
+            elif sub_type == 'methodology':
+                target_category = 'Concepts'
+            else:
+                # Use _COMPREHENSIVE_CATEGORY_MAP if available
+                target_category = _COMPREHENSIVE_CATEGORY_MAP.get(
+                    route['keyword_text'].lower(), 'Concepts')
+
+            # Find or create category group
+            target_group = None
+            for group in tailored_data.get('skills', []):
+                if group.get('category', '').lower() == target_category.lower():
+                    target_group = group
+                    break
+            if not target_group:
+                # Try partial match
+                for group in tailored_data.get('skills', []):
+                    if target_category.split()[0].lower() in group.get('category', '').lower():
+                        target_group = group
+                        break
+            if not target_group:
+                target_group = {'category': target_category, 'items': []}
+                tailored_data['skills'].append(target_group)
+
+            # Respect density limits
+            if len(target_group['items']) < _SECTION_DENSITY_LIMITS['TECHNICAL_SKILLS']['total_skills_per_category']:
+                target_group['items'].insert(0, route['keyword_text'])  # JD skills first
+                fixes_applied += 1
+                print(f"[tailor] ✓ Added '{route['keyword_text']}' to {target_category} (priority {route['priority_score']})")
+
+    # Remove empty skill groups
+    tailored_data['skills'] = [g for g in tailored_data.get('skills', []) if g.get('items')]
+
+    # --- Final Summary ---
+    approved = sum(1 for r in keyword_routes if r['status'] == 'APPROVED')
+    rejected = sum(1 for r in keyword_routes if r['status'] == 'REJECTED')
+    needs_verify = sum(1 for r in keyword_routes if r['status'] == 'NEEDS_VERIFICATION')
+
+    total_issues = len(cp1) + len(cp2) + len(cp3) + len(cp4) + len(cp5) + len(cp6)
+    print(f"\n[tailor] Phase 2 Results:")
+    print(f"[tailor]   Keywords processed: {len(keyword_routes)}")
+    print(f"[tailor]   Approved: {approved}, Rejected: {rejected}, Needs verification: {needs_verify}")
+    print(f"[tailor]   Checkpoint issues: {total_issues}")
+    print(f"[tailor]   Fixes applied: {fixes_applied}")
+    print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
+
+    # Build routing report
+    routing_report = {
+        'keywords_processed': len(keyword_routes),
+        'approved': approved,
+        'rejected': rejected,
+        'needs_verification': needs_verify,
+        'fixes_applied': fixes_applied,
+        'checkpoint_issues': total_issues,
+        'saturation_violations': len(saturation_violations),
+        'nl_issues': len(nl_issues),
+        'keyword_routes': [
+            {
+                'keyword': r['keyword_text'],
+                'type': r['keyword_type'],
+                'priority': r['priority_score'],
+                'band': r['priority_band'],
+                'sections': r['target_sections'],
+                'status': r['status'],
+            }
+            for r in keyword_routes[:20]  # Top 20 for report
+        ],
+    }
+
+    return tailored_data, routing_report
 
 @tailor_bp.route('/api/tailor-converge', methods=['POST'])
 @login_required
@@ -667,18 +2326,172 @@ def api_tailor():
     # FIX #3: Initialize rag_context to None (will run AFTER tailoring on the tailored resume)
     rag_context = None
 
-    # step 3: actually tailor the resume using all the context we gathered
+    # ============================================================================
+    # NEW PHASE 0: UNIFIED KEYWORD EXTRACTION (Approach 1 + Approach 2)
+    # Runs BEFORE AI tailoring to provide structured keywords
+    # ============================================================================
+
+    # Import new extractors
+    from app.extractors.semantic_keyword_extractor import SemanticKeywordExtractor
+    from app.extractors.frequency_placement_validator import FrequencyPlacementValidator
+    from app.keyword_router.section_router import SectionRouter
+    from app.extractors.keyword_models import Tier
+
+    structured_keywords = None
+    extraction_result = None
+    try:
+        # STEP 1: Approach 2 - Semantic Extraction (PRIMARY)
+        print("[tailor] ═══════════════════════════════════════════════════════")
+        print("[tailor] PHASE 0: UNIFIED KEYWORD EXTRACTION")
+        print("[tailor] STEP 1: Semantic Extraction (Approach 2) - Primary")
+        print("[tailor] ═══════════════════════════════════════════════════════")
+
+        semantic_extractor = SemanticKeywordExtractor()
+        extraction_result = semantic_extractor.extract(jd_text, resume_text)
+
+        print(f"[tailor] Extracted:")
+        print(f"[tailor]   Must-haves: {len(extraction_result.must_haves)}")
+        print(f"[tailor]   Important: {len(extraction_result.important)}")
+        print(f"[tailor]   Nice-to-have: {len(extraction_result.nice_to_have)}")
+        print(f"[tailor]   Soft skills (excluded): {len(extraction_result.soft_skills_to_exclude)}")
+        print(f"[tailor]   Avg confidence: {extraction_result.confidence_average:.1%}")
+
+        # STEP 2: Approach 1 - Frequency + Placement Validation (CROSS-CHECK)
+        print(f"\n[tailor] STEP 2: Frequency + Placement Validation (Approach 1)")
+
+        all_keywords = extraction_result.must_haves + extraction_result.important + extraction_result.nice_to_have
+        validator = FrequencyPlacementValidator()
+        validation_report = validator.validate(all_keywords, jd_text)
+
+        high_confidence_count = len(validation_report['high_confidence_keywords'])
+        approach2_only_count = len(validation_report['medium_confidence_keywords'])
+
+        print(f"[tailor] Validation results:")
+        print(f"[tailor]   High confidence (both approaches): {high_confidence_count}")
+        print(f"[tailor]   Approach 2 only: {approach2_only_count}")
+        print(f"[tailor]   → Keeping {high_confidence_count + approach2_only_count} total keywords")
+
+        # STEP 3: Route keywords to sections
+        print(f"\n[tailor] STEP 3: Section Routing")
+
+        all_validated = validation_report['high_confidence_keywords'] + validation_report['medium_confidence_keywords']
+        router = SectionRouter()
+        routed_keywords = router.route(all_validated)
+
+        print(f"[tailor] Routed:")
+        print(f"[tailor]   Skills section: {len(routed_keywords['skills'])}")
+        print(f"[tailor]   Summary: {len(routed_keywords['summary'])}")
+        print(f"[tailor]   Experience: {len(routed_keywords['experience'])}")
+
+        # STEP 4: Prepare structured keyword data for AI prompt
+        print(f"\n[tailor] STEP 4: Preparing structured keywords for AI")
+
+        structured_keywords = {
+            'must_have_hard_skills': [
+                kw.text for kw in routed_keywords['skills']
+                if kw.tier == Tier.MUST_HAVE
+            ],
+            'important_hard_skills': [
+                kw.text for kw in routed_keywords['skills']
+                if kw.tier == Tier.IMPORTANT
+            ],
+            'nice_to_have_skills': [
+                kw.text for kw in routed_keywords['experience']
+                if kw.tier == Tier.NICE_TO_HAVE
+            ],
+            'summary_keywords': [kw.text for kw in routed_keywords['summary']],
+            'soft_skills_to_exclude': [kw.text for kw in extraction_result.soft_skills_to_exclude],
+            'total_keywords': len(all_validated),
+            'high_confidence_count': high_confidence_count,
+            'approach_agreement_pct': (high_confidence_count / max(len(all_validated), 1)) * 100,
+        }
+
+        print(f"[tailor] Ready for AI:")
+        print(f"[tailor]   Hard skills: {len(structured_keywords['must_have_hard_skills']) + len(structured_keywords['important_hard_skills'])}")
+        print(f"[tailor]   Soft skills (EXCLUDED): {len(structured_keywords['soft_skills_to_exclude'])}")
+        print(f"[tailor]   Approach agreement: {structured_keywords['approach_agreement_pct']:.0f}%")
+
+    except Exception as e:
+        print(f"[tailor] Phase 0 keyword extraction failed (non-fatal): {e}")
+        structured_keywords = None
+
+    # ═══════════════════════════════════════════════════════════════
+    # NEW PHASE 1: Build Protected Keywords Registry
+    # ═══════════════════════════════════════════════════════════════
+    protected_keywords_registry = {}
+    try:
+        if extraction_result is not None:
+            print("[tailor] PHASE 1: Building must-have protection registry...")
+
+            # Create master list of protected keywords (NEVER to be removed)
+            for keyword in extraction_result.must_haves + extraction_result.important:
+                normalized_key = keyword.text.lower().strip()
+                protected_keywords_registry[normalized_key] = {
+                    'original_text': keyword.text,
+                    'tier': keyword.tier.value,  # 'must_have' or 'important'
+                    'keyword_type': keyword.keyword_type.value,
+                    'confidence': keyword.overall_confidence,
+                    'sections_target': keyword.target_sections,
+                }
+
+            print(f"[tailor] Protected keywords registry: {len(protected_keywords_registry)} keywords")
+            print(f"[tailor]   Must-haves: {len(extraction_result.must_haves)}")
+            print(f"[tailor]   Important: {len(extraction_result.important)}")
+
+            # FIX #2 & #3: Also prepare structured keywords with section targets
+            structured_keywords_for_ai = _prepare_structured_keywords(
+                must_haves=extraction_result.must_haves,
+                important=extraction_result.important,
+                extraction_result=extraction_result
+            )
+            print(f"[tailor]   Structured hard skills for AI: {structured_keywords_for_ai['total_must_have_hard'] + structured_keywords_for_ai['total_important_hard']}")
+            print(f"[tailor]   Structured soft skills for AI: {len(structured_keywords_for_ai['soft_skills_to_include'])}")
+        else:
+            print("[tailor] Phase 1 skipped — Phase 0 extraction not available")
+    except Exception as e:
+        print(f"[tailor] Phase 1 protection registry failed (non-fatal): {e}")
+
+    # ============================================================================
+    # Now call AI with STRUCTURED keywords (not raw extraction)
+    # ============================================================================
+
+    # STEP 5: Call AI with constrained keyword list
+    print(f"\n[tailor] STEP 5: AI Tailoring (constrained)")
+
+    # Prepare structured keywords if extraction succeeded
+    if extraction_result:
+        structured_keywords_for_ai = _prepare_structured_keywords(
+            must_haves=extraction_result.must_haves,
+            important=extraction_result.important,
+            extraction_result=extraction_result
+        )
+    else:
+        structured_keywords_for_ai = None
+    
     user_message = build_tailor_message(
         resume_text, jd_text,
         keyword_analysis=keyword_analysis,
         critique_data=critique_data,
-        keyword_data=keyword_data,
+        keyword_data=structured_keywords_for_ai if structured_keywords_for_ai else (structured_keywords if structured_keywords else keyword_data),
         jd_analysis=jd_analysis,
         rag_context=rag_context,
         title_injection_mode=title_injection_mode,
         role_title=role_title,
         soft_skills_data=soft_skills_data,
+        # NEW: Pass structured keywords
+        structured_keywords=structured_keywords_for_ai,
+        hard_skills_list=(
+            [kw.text for kw in extraction_result.must_haves 
+             if kw.keyword_type.value in ['HARD_SKILL', 'TOOL_PLATFORM']] +
+            [kw.text for kw in extraction_result.important 
+             if kw.keyword_type.value in ['HARD_SKILL', 'TOOL_PLATFORM']]
+        ) if extraction_result else [],
+        soft_skills_to_include=(
+            [kw.text for kw in extraction_result.must_haves + extraction_result.important 
+             if kw.keyword_type.value == 'SOFT_SKILL']
+        ) if extraction_result else [],
     )
+    print(f"[tailor] ✓ CHECKPOINT 2: Structured keywords prepared ({len(structured_keywords_for_ai.get('must_have_hard_skills', [])) + len(structured_keywords_for_ai.get('important_hard_skills', [])) if structured_keywords_for_ai else 0} hard skills)")
 
     # retry up to 4 times -- the tailor call is the most critical and must return valid JSON
     # We use force_json=True (assistant prefill with '{') to make conversational responses impossible
@@ -827,8 +2640,107 @@ def api_tailor():
         if parsed and isinstance(parsed, dict):
             tailored_data = parsed
             print(f"[tailor] json parsed ok ({len(str(parsed))} chars)")
+
+            # ========= CLEANUP: Validate and fix skill categorization =========
+            try:
+                tailored_data = validate_and_fix_skill_categories(tailored_data, _COMPREHENSIVE_CATEGORY_MAP)
+            except Exception as e:
+                print(f"[tailor] Skills cleanup failed (non-fatal): {e}")
         else:
             print(f"[tailor] json parse failed ({len(raw_str)} chars)")
+
+    # ========== PHASE 3: GUARANTEE MUST-HAVES & IMPORTANT (IMMEDIATELY AFTER AI) ==========
+    try:
+        # Only run if Phase 0 extraction succeeded (extraction_result is available)
+        if structured_keywords is not None and extraction_result is not None:
+            print("[tailor] ═══════════════════════════════════════════════════════")
+            print("[tailor] PHASE 3: GUARANTEE MUST-HAVES & IMPORTANT INJECTED")
+            print("[tailor] ═══════════════════════════════════════════════════════")
+
+            from app.services.guarantee_engine.must_have_guarantee_engine import MustHaveGuaranteeEngine
+            from app.services.guarantee_engine.guarantee_verifier import GuaranteeVerifier
+
+            # Prepare guarantee engine
+            guarantee_engine = MustHaveGuaranteeEngine()
+
+            # FIX #7: Use v2 with protected_keywords_registry if available
+            if protected_keywords_registry:
+                print(f"[tailor] Using guarantee_injection_v2 with {len(protected_keywords_registry)} protected keywords")
+
+                guarantee_result = guarantee_engine.guarantee_injection_v2(
+                    resume_json=tailored_data,
+                    protected_keywords_registry=protected_keywords_registry,
+                    confidence_threshold=0.75,
+                )
+
+                guaranteed_resume = guarantee_result['resume_json']
+                guarantee_metadata = guarantee_result['metadata']
+
+                print(f"[tailor] Guarantee results:")
+                print(f"[tailor]   Must-have coverage: {guarantee_metadata['must_have_coverage']:.1%}")
+                print(f"[tailor]   Important coverage: {guarantee_metadata['important_coverage']:.1%}")
+                print(f"[tailor]   Injections made: {guarantee_metadata['injections_made']}")
+                print(f"[tailor]   All protected found: {guarantee_metadata['all_protected_found']}")
+
+                # Update tailored_data with guaranteed resume
+                tailored_data = guaranteed_resume
+
+                # Store guarantee metadata and protected keywords for downstream phases
+                if isinstance(tailored_data, dict):
+                    tailored_data['_guarantee_metadata'] = guarantee_metadata
+                    tailored_data['_protected_keywords'] = protected_keywords_registry
+
+            else:
+                # Fallback: use v1 with extraction_result
+                all_critical_keywords = (
+                    extraction_result.must_haves +
+                    extraction_result.important
+                )
+                critical_keyword_list = [kw.text for kw in all_critical_keywords]
+                keyword_metadata = {kw.text: kw for kw in all_critical_keywords}
+
+                print(f"[tailor] Total critical keywords: {len(critical_keyword_list)}")
+
+                guaranteed_resume = guarantee_engine.guarantee_injection(
+                    resume_json=tailored_data,
+                    critical_keywords=critical_keyword_list,
+                    keyword_metadata=keyword_metadata,
+                    must_haves=[kw.text for kw in extraction_result.must_haves],
+                    important_keywords=[kw.text for kw in extraction_result.important],
+                )
+
+                verifier = GuaranteeVerifier()
+                verification = verifier.verify_guarantee(
+                    resume_json=guaranteed_resume,
+                    expected_must_haves=[kw.text for kw in extraction_result.must_haves],
+                    expected_important=[kw.text for kw in extraction_result.important],
+                )
+
+                print(f"[tailor] Guarantee verification: {verification['status']}")
+                print(f"[tailor]   Coverage: {verification['total_coverage']:.1%}")
+
+                tailored_data = guaranteed_resume
+                if isinstance(tailored_data, dict):
+                    tailored_data['_guarantee_report'] = verification
+
+            if protected_keywords_registry:
+                if guarantee_metadata.get('all_protected_found', False):
+                    print(f"[tailor] ✓ GUARANTEE COMPLETE: 100% of must-haves + important injected")
+                else:
+                    print(f"[tailor] ⚠ WARNING: Some keywords not guaranteed")
+            else:
+                if verification.get('status') == 'GUARANTEE_COMPLETE':
+                    print(f"[tailor] ✓ GUARANTEE COMPLETE: 100% of must-haves + important injected")
+                else:
+                    print(f"[tailor] ⚠ WARNING: Some keywords not guaranteed")
+
+            print(f"[tailor] ═══════════════════════════════════════════════════════\n")
+            print("[tailor] ✓ CHECKPOINT 1: Guarantee phase moved (after AI tailoring)")
+        else:
+            print("[tailor] Phase 3 skipped — Phase 0 extraction not available")
+
+    except Exception as e:
+        print(f"[tailor] Phase 3 guarantee engine failed (non-fatal): {e}")
 
     # overwrite experience/projects/education with master resume data
     # this guarantees bullets are exactly what the user uploaded
@@ -861,6 +2773,21 @@ def api_tailor():
 
                 # education from DB
                 tailored_data['education'] = master.education or []
+
+                # ========== PHASE 4: PRESERVE MASTER SKILLS ==========
+                # Extract all master skill names for tracking
+                master_skill_names = set()
+                # lowercase -> original casing, so any code that needs to
+                # re-insert a master skill by its lowercase key (e.g. the
+                # Step D3 backfill) writes back "Kubernetes", not "kubernetes"
+                master_skill_casing = {}
+                for master_group in (master.skills or []):
+                    for item in master_group.get('items', []):
+                        item_clean = item.strip()
+                        master_skill_names.add(item_clean.lower())
+                        master_skill_casing.setdefault(item_clean.lower(), item_clean)
+
+                print(f"[tailor] PHASE 4: Extracted {len(master_skill_names)} master skills for preservation")
 
                 # ---- SKILLS ENFORCEMENT: JD-dominant, competing tech suppressed, global dedup ----
                 master_skills = master.skills or []
@@ -943,12 +2870,18 @@ def api_tailor():
                     def _should_suppress(skill_name):
                         """Check if a skill should be suppressed as a competing technology."""
                         sl = skill_name.strip().lower()
+                        # FIX #4: NEVER suppress protected keywords
+                        if protected_keywords_registry and sl in protected_keywords_registry:
+                            return False  # Protected — never suppress
                         # Check exact match
                         if sl in skills_to_suppress:
                             return True
                         # Check if skill contains a suppressed term (e.g., "Amazon Web Services (AWS)" contains "aws")
                         for suppressed in skills_to_suppress:
                             if suppressed in sl or sl in suppressed:
+                                # FIX #4: Check if this suppressed term itself is protected
+                                if protected_keywords_registry and suppressed in protected_keywords_registry:
+                                    return False
                                 return True
                         return False
 
@@ -1053,21 +2986,36 @@ def api_tailor():
 
                     # ---- COMPETING TECH SUPPRESSION (server-side enforcement) ----
                     # Remove skills that compete with JD-specified technologies.
-                    # The AI prompt should have already done this, but we enforce it
-                    # programmatically as a safety net.
+                    # BUT PHASE 4: Never suppress master skills
                     if skills_to_suppress:
                         suppressed_log = []
+                        preserved_log = []
                         for group in enforced_skills:
                             original_items = group['items']
                             filtered = []
                             for item in original_items:
-                                if _should_suppress(item) and item.strip().lower() not in jd_hard_skills_lower:
-                                    suppressed_log.append(item)
+                                item_lower = item.strip().lower()
+                                # Check if this is a master skill
+                                is_master_skill = item_lower in master_skill_names
+
+                                if _should_suppress(item) and item_lower not in jd_hard_skills_lower:
+                                    if is_master_skill:
+                                        # PHASE 4: Preserve master skills even if competing
+                                        filtered.append(item)
+                                        preserved_log.append((item, "master override"))
+                                    else:
+                                        # OK to suppress AI-suggested skill
+                                        suppressed_log.append(item)
                                 else:
                                     filtered.append(item)
                             group['items'] = filtered
+
                         if suppressed_log:
                             print(f"[tailor] competing tech suppressed: {suppressed_log}")
+                        if preserved_log:
+                            print(f"[tailor] PHASE 4: competing tech NOT suppressed (master override):")
+                            for skill, reason in preserved_log:
+                                print(f"[tailor]   ✓ {skill} ({reason})")
 
                     # ---- GLOBAL CROSS-CATEGORY DEDUPLICATION ----
                     # A skill must appear EXACTLY ONCE across ALL categories.
@@ -1167,7 +3115,39 @@ def api_tailor():
                     # ---- ROLE-LEVEL VALIDATION (Fix #3) ----
                     try:
                         detected_role_level = detect_role_level(tailored_data, jd_text)
-                        print(f"[tailor] detected role level: {detected_role_level}")
+
+                        # TASK 3 bugfix: use the real computed years (date math),
+                        # not len(experience) — that's a count of jobs, not years;
+                        # someone with 2 jobs held 8 years each was being validated
+                        # as if they had "2 years" of experience.
+                        years_exp = calculate_years_experience(tailored_data)
+
+                        # CHUNK 3.5: Detailed logging of role level detection
+                        print(f"[tailor] Role Level Detection:")
+                        print(f"[tailor]   Years of experience: {years_exp}")
+                        print(f"[tailor]   Detected role level: {detected_role_level}")
+
+                        # Validate consistency against the real computed years
+                        try:
+                            is_valid, msg = validate_role_level_consistency(
+                                years_exp,
+                                detected_role_level
+                            )
+                            if is_valid:
+                                print(f"[tailor]   Validation: ✓ PASS - {msg}")
+                            else:
+                                print(f"[tailor]   Validation: ✗ FAIL - {msg}")
+                                # TASK 3 bugfix: validation used to catch this and
+                                # then continue with the wrong level anyway — now
+                                # it actually corrects it.
+                                corrected_level = detect_role_level_by_years(years_exp)
+                                print(f"[tailor]   ✓ Auto-corrected role level: {detected_role_level} → {corrected_level}")
+                                detected_role_level = corrected_level
+                        except Exception as rlv_err:
+                            print(f"[tailor]   Validation skipped: {rlv_err}")
+
+                        skill_cap_for_level = ROLE_SKILL_MATRIX.get(detected_role_level, {}).get('max_total_skills', 16)
+                        print(f"[tailor]   Applied skill cap: {skill_cap_for_level}")
 
                         coherence_check = validate_role_skill_coherence(tailored_data, detected_role_level)
 
@@ -1255,6 +3235,36 @@ def api_tailor():
                                     for item in group.get('items', []):
                                         skill_to_category[item] = group['category']
 
+                                # PHASE 1 (Step D2): Master skills are ALWAYS included, seeded
+                                # before tier truncation. The guide's own snippet for this step
+                                # referenced `all_items_by_category`, which does not exist anywhere
+                                # in this codebase, and built its own `final_skills = []` that gets
+                                # unconditionally overwritten a few lines below by the real
+                                # `final_skills = selected[:max_allowed]` — so as written it would
+                                # have had no effect. Real integration: seed `selected` (the list
+                                # that actually survives to `final_skills`) with master skills
+                                # FIRST, using the real per-item data this file already has
+                                # (`tailored_data.get('skills', [])` — the same source
+                                # `skill_to_category` above reads from).
+                                print(f"\n[tailor] PHASE 4: Including all master skills in selection")
+                                master_priority = []
+
+                                for group in tailored_data.get('skills', []):
+                                    if group['category'] == 'Languages':
+                                        for item in group.get('items', []):
+                                            if item.lower() in master_skill_names and item not in master_priority:
+                                                master_priority.append(item)
+                                                print(f"[tailor]   ✓ {item} (master skill)")
+
+                                for group in tailored_data.get('skills', []):
+                                    if group['category'] != 'Languages':
+                                        for item in group.get('items', []):
+                                            if item.lower() in master_skill_names and item not in master_priority:
+                                                master_priority.append(item)
+                                                print(f"[tailor]   ✓ {item} (master skill)")
+
+                                print(f"[tailor] PHASE 4: {len(master_priority)} master skills reserved")
+
                                 # TIER 1: Keep all skills from Languages category
                                 # (Phase 4 removal + hard skills injection mapping should ensure they're valid)
                                 for group in tailored_data.get('skills', []):
@@ -1312,8 +3322,20 @@ def api_tailor():
 
                                 print(f"[tailor] ║ Tier 5 (Concepts): {len(tier5_skills)} ║")
 
-                                # Select skills: T1 first, then T2, T3, T4, T5
+                                # Select skills: PROTECTED first, master second, then T1, T2, T3, T4, T5
                                 selected = []
+                                
+                                # FIX #4 (Phase 6): Protected keywords ALWAYS first — never removed
+                                if protected_keywords_registry:
+                                    for group in tailored_data.get('skills', []):
+                                        for item in group.get('items', []):
+                                            if item.lower().strip() in protected_keywords_registry:
+                                                if item not in selected:
+                                                    selected.append(item)
+                                    if selected:
+                                        print(f"[tailor] ✓ {len(selected)} protected keywords placed first (never removed)")
+                                
+                                selected.extend(master_priority)   # PHASE 4: master skills first, always
                                 selected.extend(tier1_skills)      # All languages (NEVER removed)
                                 selected.extend(tier2_skills[:3])  # Top 3 JD skills
                                 selected.extend(tier3_skills[:5])  # Top 5 frameworks
@@ -1331,12 +3353,50 @@ def api_tailor():
 
                                 # Cap at max_allowed
                                 final_skills = selected[:max_allowed]
+                                
+                                # FIX #4 (Phase 6): Post-cap verification — re-add any protected that were cut
+                                if protected_keywords_registry:
+                                    final_skills_lower = {s.lower().strip() for s in final_skills}
+                                    for group in tailored_data.get('skills', []):
+                                        for item in group.get('items', []):
+                                            if item.lower().strip() in protected_keywords_registry and item.lower().strip() not in final_skills_lower:
+                                                final_skills.append(item)
+                                                final_skills_lower.add(item.lower().strip())
+                                                print(f"[tailor] ✓ RE-ADDED protected keyword after cap: '{item}'")
+                                
                                 removed_skills = set(skill_to_category.keys()) - set(final_skills)
 
                                 print(f"\n[tailor] FINAL SELECTION: {len(final_skills)}/{max_allowed} skills")
                                 print(f"[tailor] Removed: {len(removed_skills)} skills")
                                 for skill in removed_skills:
                                     print(f"[tailor] ✗ {skill} ({skill_to_category.get(skill, 'Unknown')})")
+
+                                # PHASE 4: Verify all master skills included
+                                # NOTE: guide's original snippet checked against `jd_lower`,
+                                # which is not defined anywhere in this scope (it's created
+                                # ~800 lines later, in the unrelated hard-skills-injection
+                                # section). Using `jd_hard_skills_lower` — the actual in-scope
+                                # variable for "JD hard skills, lowercased" defined earlier
+                                # in this same enforcement block.
+                                final_skills_lower = set(s.lower() for s in final_skills)
+                                missing_master = [s for s in master_skill_names if s not in final_skills_lower]
+
+                                if missing_master:
+                                    print(f"[tailor] ⚠️ PHASE 1 WARNING: {len(missing_master)} master skills not in final selection")
+                                    print(f"[tailor]   Missing: {missing_master}")
+                                    # Add missing master skills by removing non-master skills
+                                    non_master_final = [s for s in final_skills if s.lower() not in jd_hard_skills_lower]
+                                    if non_master_final:
+                                        room = len(non_master_final) - len(missing_master)
+                                        if room >= 0:
+                                            final_skills = [s for s in final_skills if s.lower() in master_skill_names or s.lower() in jd_hard_skills_lower]
+                                            # Fix: master_skill_names/missing_master are lowercase
+                                            # (built by Step A1's .lower()) — re-insert using the
+                                            # original casing so the resume doesn't show "kubernetes"
+                                            final_skills.extend(master_skill_casing.get(s, s) for s in missing_master)
+                                            print(f"[tailor] ✓ PHASE 4: Re-added missing master skills")
+                                else:
+                                    print(f"[tailor] ✓ PHASE 4: All {len(master_skill_names)} master skills preserved in final selection")
 
                                 # Rebuild skills array with only selected skills
                                 # Keep categories as-is (no moving)
@@ -1537,6 +3597,16 @@ def api_tailor():
 
                     tailored_data['summary'] = ' '.join(sentences)
                     print(f"[tailor] summary: master preserved, {len(unique_kw)} keywords injected programmatically")
+
+                    # TASK 2: validate/fix the programmatically-built summary (real
+                    # integration point — this codebase has no TailorPipeline class
+                    # for this to hook into, so it's wired directly where the
+                    # summary is actually produced)
+                    _summary_gen = get_summary_generator()
+                    _fixed_summary, _summary_report = _summary_gen.validate_and_fix_summary(tailored_data['summary'])
+                    tailored_data['summary'] = _fixed_summary
+                    print(f"[tailor] TASK 2: summary validated (valid={_summary_report['final_valid']}, "
+                          f"{_summary_report['final_length']} chars, steps={_summary_report['steps_applied']})")
 
                 # enforce experience: keep AI's smart-injected bullets, enforce structure
                 if master.bullets:
@@ -2070,6 +4140,14 @@ def api_tailor():
                                     category = cat
                                     break
                         if not category:
+                            # Fallback to _COMPREHENSIVE_CATEGORY_MAP (has finance, healthcare, domain terms)
+                            category = _COMPREHENSIVE_CATEGORY_MAP.get(skill_lower)
+                        if not category:
+                            for key, cat in _COMPREHENSIVE_CATEGORY_MAP.items():
+                                if key in skill_lower or skill_lower in key:
+                                    category = cat
+                                    break
+                        if not category:
                             # Default heuristic: multi-word → Concepts, single word → Tools
                             category = 'Concepts' if len(skill.split()) >= 2 else 'Tools & Platforms'
 
@@ -2090,9 +4168,25 @@ def api_tailor():
                             target_cat = {'category': category, 'items': []}
                             current_skills.append(target_cat)
 
-                        # Check for exact duplicate
-                        existing_items_lower = [item.lower() for item in target_cat.get('items', [])]
-                        if skill_lower in existing_items_lower:
+                        # Check for duplicate across ALL categories (fuzzy match)
+                        is_duplicate = False
+                        for dup_cat in current_skills:
+                            for dup_item in dup_cat.get('items', []):
+                                dup_lower = dup_item.lower()
+                                if (skill_lower == dup_lower or
+                                    skill_lower in dup_lower or
+                                    dup_lower in skill_lower):
+                                    is_duplicate = True
+                                    break
+                            if is_duplicate:
+                                break
+                        if is_duplicate:
+                            continue
+
+                        # CHUNK 4.3: Validation gate — validate skill before injection
+                        is_valid_skill, reject_reason = validate_skill(skill)
+                        if not is_valid_skill:
+                            print(f"[tailor] ✗ Skill '{skill}' REJECTED: {reject_reason}")
                             continue
 
                         # Inject the skill
@@ -2135,14 +4229,46 @@ def api_tailor():
                     other_items = [i for i in items if i.lower() not in jd_lower and i.lower() not in injected_skill_names]
                     cat['items'] = injected_items + jd_items + other_items
 
-                # Store injected skill names in tailored_data for LaTeX to reference
+                # Store injected and master skill names in tailored_data for LaTeX to reference
                 if injected_skill_names:
                     if 'metadata' not in tailored_data:
                         tailored_data['metadata'] = {}
                     tailored_data['metadata']['injected_skills'] = list(injected_skill_names)
 
+                # PHASE 4: Store master skills in metadata for preservation logic
+                if 'metadata' not in tailored_data:
+                    tailored_data['metadata'] = {}
+                tailored_data['metadata']['master_skills'] = sorted(list(master_skill_names))
+
+                print(f"[tailor] PHASE 4: Stored {len(master_skill_names)} master skills in metadata")
+
                 tailored_data['skills'] = current_skills
                 print(f"[tailor] skills reordered: injected + JD-matched keywords placed first in each category")
+
+                # ========== PHASE 4: MASTER SKILLS PRESERVATION SUMMARY ==========
+                print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
+                print(f"[tailor] ║ PHASE 4: MASTER SKILLS PRESERVATION SUMMARY            ║")
+                print(f"[tailor] ╠═══════════════════════════════════════════════════════╣")
+
+                # Count preserved master skills in final output
+                preserved_count = 0
+                final_skills_lower = set()
+                for skill_group in tailored_data.get('skills', []):
+                    for item in skill_group.get('items', []):
+                        final_skills_lower.add(item.strip().lower())
+                        if item.strip().lower() in master_skill_names:
+                            preserved_count += 1
+
+                print(f"[tailor] ║ Master Skills Extracted: {len(master_skill_names)}")
+                print(f"[tailor] ║ Master Skills Preserved: {preserved_count}")
+
+                if preserved_count == len(master_skill_names):
+                    print(f"[tailor] ║ Status: ✓ 100% PRESERVED")
+                else:
+                    missing = len(master_skill_names) - preserved_count
+                    print(f"[tailor] ║ Status: ⚠️ {missing} MISSING")
+
+                print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
 
                 # ============= FIX #3: Debug logging for hard skills verification =============
                 print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
@@ -2379,6 +4505,30 @@ def api_tailor():
         if cliche_found:
             print("[tailor] clichés detected and removed (post-processing safety net)")
 
+    # ═══════════════════════════════════════════════════════════════════
+    # CHUNK 5.5: Validate and Log Summary
+    # Validates summary before output, fixes truncation
+    # ═══════════════════════════════════════════════════════════════════
+    if isinstance(tailored_data, dict):
+        summary = tailored_data.get('summary', '')
+        if summary:
+            print(f"[tailor] Summary generated: {len(summary)} chars")
+            
+            # Fix truncation
+            from app.services.prompts.resume_tailor import fix_truncated_sentences, validate_sentence_completeness
+            summary = fix_truncated_sentences(summary)
+            
+            # Validate completeness
+            is_valid, issues = validate_sentence_completeness(summary)
+            if is_valid:
+                print(f"[tailor] ✓ Summary validation: PASS")
+            else:
+                print(f"[tailor] ✗ Summary validation: FAIL")
+                for issue in issues:
+                    print(f"[tailor]   - {issue}")
+            
+            tailored_data['summary'] = summary
+
     # ========== SOFT SKILLS INJECTION INTO BULLETS ==========
     # FIX #2: Initialize soft skills verification score (will be set if soft skills are injected)
     soft_skills_verification_score = 0.0
@@ -2588,6 +4738,7 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
     if isinstance(tailored_data, dict):
         try:
             print("[tailor] Running guided convergence engine...")
+            _pre_convergence_summary = tailored_data.get('summary', '')
 
             # FIX #4: Increase convergence iterations from 3 to 10 for better score improvement
             convergence_result = run_convergence(
@@ -2597,6 +4748,19 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
             )
 
             tailored_data = convergence_result['tailored_resume']
+
+            # TASK 2: convergence guard — the convergence engine's MicroEditGenerator
+            # can inject text straight into 'summary' with none of Task 2's
+            # completeness/dedup protections, so re-validate it here and revert
+            # to the pre-convergence summary if it comes back broken.
+            if isinstance(tailored_data, dict) and tailored_data.get('summary'):
+                _conv_guard = get_convergence_guard()
+                _guarded_summary, _used_convergence_summary = _conv_guard.validate_convergence_output(
+                    _pre_convergence_summary,
+                    tailored_data['summary'],
+                )
+                tailored_data['summary'] = _guarded_summary
+                print(f"[tailor] TASK 2: convergence guard applied (used_convergence_output={_used_convergence_summary})")
 
             if convergence_result['status'] == 'converged':
                 convergence_iterations = convergence_result['iterations']
@@ -2839,6 +5003,89 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
                 db.session.rollback()
                 app_record = None  # ensure we don't reference a broken record
 
+    # (PHASE 6.5 MOVED: Guarantee engine now runs as PHASE 3 immediately after AI tailoring)
+
+    # ========== PHASE 2: KEYWORD SECTION ROUTING ENGINE ==========
+    routing_report = {}
+    try:
+        tailored_data, routing_report = keyword_section_routing_engine(
+            tailored_data, jd_analysis, keyword_data,
+            soft_skills_data, jd_text, resume_text
+        )
+    except Exception as e:
+        print(f"[tailor] Phase 2 routing engine failed (non-fatal): {e}")
+
+    # ========== FINAL DEDUP + RE-CATEGORIZATION PASS ==========
+    # Catches any duplicates introduced at ANY pipeline stage
+    try:
+        if isinstance(tailored_data, dict) and tailored_data.get('skills'):
+            total_before = sum(len(g.get('items', [])) for g in tailored_data['skills'])
+            seen_skills = set()  # normalized lowercase set
+            dedup_fixes = 0
+            recat_fixes = 0
+
+            for skill_group in tailored_data['skills']:
+                deduped_items = []
+                for item in skill_group.get('items', []):
+                    # Normalize for dedup (strip parenthetical variants)
+                    item_lower = item.lower().strip()
+                    # Create a canonical key: remove "(OOP)" type suffixes for comparison
+                    canonical = item_lower
+                    # Remove common parenthetical suffixes for dedup matching
+                    base_match = _re.match(r'^(.+?)\s*\(.*\)\s*$', canonical)
+                    base_canonical = base_match.group(1).strip() if base_match else canonical
+
+                    # Check if this skill (or its base form) was already seen
+                    if item_lower in seen_skills or base_canonical in seen_skills:
+                        dedup_fixes += 1
+                        print(f"[tailor] DEDUP: Removed duplicate '{item}' from {skill_group.get('category', '')}")
+                        continue
+
+                    # Check if this skill is in the wrong category
+                    correct_cat = _COMPREHENSIVE_CATEGORY_MAP.get(item_lower)
+                    if not correct_cat:
+                        correct_cat = _COMPREHENSIVE_CATEGORY_MAP.get(base_canonical)
+
+                    if correct_cat and correct_cat.lower() != skill_group.get('category', '').lower():
+                        # This skill is miscategorized — move it
+                        # Find the correct category group
+                        moved = False
+                        for other_group in tailored_data['skills']:
+                            if other_group.get('category', '').lower() == correct_cat.lower():
+                                # Check it's not already there
+                                if item_lower not in {x.lower() for x in other_group.get('items', [])}:
+                                    other_group['items'].append(item)
+                                    recat_fixes += 1
+                                    print(f"[tailor] RECAT: Moved '{item}' from {skill_group.get('category', '')} → {correct_cat}")
+                                else:
+                                    dedup_fixes += 1
+                                    print(f"[tailor] DEDUP: '{item}' already in {correct_cat}, removed from {skill_group.get('category', '')}")
+                                moved = True
+                                break
+                        if not moved:
+                            # Correct category doesn't exist yet — keep in current
+                            deduped_items.append(item)
+                            seen_skills.add(item_lower)
+                            seen_skills.add(base_canonical)
+                    else:
+                        deduped_items.append(item)
+                        seen_skills.add(item_lower)
+                        seen_skills.add(base_canonical)
+
+                skill_group['items'] = deduped_items
+
+            # Remove empty groups
+            tailored_data['skills'] = [g for g in tailored_data['skills'] if g.get('items')]
+
+            total_after = sum(len(g.get('items', [])) for g in tailored_data['skills'])
+            if dedup_fixes or recat_fixes:
+                print(f"[tailor] Final cleanup: {total_before} → {total_after} skills ({dedup_fixes} duplicates removed, {recat_fixes} re-categorized)")
+            else:
+                print(f"[tailor] Final cleanup: no duplicates found ({total_after} skills)")
+
+    except Exception as e:
+        print(f"[tailor] Final dedup pass failed (non-fatal): {e}")
+
     # ========== FINAL RESUME QUALITY REPORT ==========
     quality_report = {}
     try:
@@ -2931,6 +5178,7 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
         'pipeline_steps': pipeline_steps,
         'application_id': app_record.id if app_record else None,
         'quality_report': quality_report,
+        'routing_report': routing_report,
     })
 
 

@@ -132,28 +132,60 @@ def _trim_bullets_to_fit(resume_data, max_chars=155):
 def _cap_skills_per_category(resume_data, max_per_cat=8):
     """Cap the number of skills per category to prevent line overflow.
 
-    Preserves injected skills (tracked in resume_data['metadata']['injected_skills'])
-    even when capping, so newly-added JD-required skills don't get truncated off
-    the end of an already-long category.
+    Preserves BOTH master and injected skills (tracked in metadata)
+    even when capping, so master resume skills never get removed.
+
+    Priority: 1) Protected keywords, 2) Master skills, 3) Injected skills, 4) Others
     """
+    master_skills = set(resume_data.get('metadata', {}).get('master_skills', []))
     injected_skills = set(resume_data.get('metadata', {}).get('injected_skills', []))
+    # FIX #5: Get protected keywords from guarantee engine
+    protected_keywords = resume_data.get('_protected_keywords', {})
+
     skills = resume_data.get('skills', [])
     for group in skills:
         items = group.get('items', [])
         if len(items) > max_per_cat:
-            # Split into: injected, non-injected
-            injected = [i for i in items if i.lower() in injected_skills]
-            non_injected = [i for i in items if i.lower() not in injected_skills]
+            if protected_keywords:
+                # FIX #5: Separate protected from non-protected FIRST
+                protected = [i for i in items if i.lower().strip() in protected_keywords]
+                non_protected = [i for i in items if i.lower().strip() not in protected_keywords]
 
-            # Keep ALL injected skills, cap non-injected
-            remaining_slots = max_per_cat - len(injected)
-            if remaining_slots < 0:
-                # Even injected skills exceed the limit (rare)
-                group['items'] = injected[:max_per_cat]
+                # Within non-protected, prioritize master > injected > other
+                np_master = [i for i in non_protected if i.lower() in master_skills]
+                np_injected = [i for i in non_protected if i.lower() in injected_skills and i.lower() not in master_skills]
+                np_other = [i for i in non_protected if i.lower() not in master_skills and i.lower() not in injected_skills]
+
+                # Keep all protected, then fill remaining slots
+                spaces_available = max_per_cat - len(protected)
+                kept_non_protected = (np_master + np_injected + np_other)[:max(0, spaces_available)]
+
+                group['items'] = protected + kept_non_protected
+
+                print(f"[latex] Protected capping '{group.get('category','')[:20]}': {len(items)} → {len(group['items'])}")
+                print(f"[latex]   Protected kept: {len(protected)}")
+                print(f"[latex]   Non-protected removed: {len(items) - len(group['items'])}")
             else:
-                # Keep all injected + as many non-injected as fits
-                group['items'] = injected + non_injected[:remaining_slots]
-            print(f"[latex] capped skills '{group.get('category','')[:20]}': {len(items)} → {len(group['items'])} (preserved {len(injected)} injected)")
+                # No protection — use original priority logic
+                # Split into: master, injected, other
+                master = [i for i in items if i.lower() in master_skills]
+                injected = [i for i in items if i.lower() in injected_skills]
+                other = [i for i in items if i.lower() not in master_skills and i.lower() not in injected_skills]
+
+                # Priority: Master first (never remove), then injected, then others
+                total_reserved = len(master) + len(injected)
+
+                if total_reserved > max_per_cat:
+                    # Extreme case: master + injected exceed limit
+                    remaining = max_per_cat - len(master)
+                    group['items'] = master + injected[:remaining]
+                    print(f"[latex] capped skills '{group.get('category','')[:20]}': {len(items)} → {len(group['items'])} (preserved {len(master)} master, {len(injected[:remaining])} injected)")
+                else:
+                    # Normal case: keep all master + injected, add others to fill
+                    remaining_for_other = max_per_cat - total_reserved
+                    group['items'] = master + injected + other[:remaining_for_other]
+                    print(f"[latex] capped skills '{group.get('category','')[:20]}': {len(items)} → {len(group['items'])} (PHASE 4: preserved {len(master)} master, {len(injected)} injected)")
+    print(f"[tailor] ✓ CHECKPOINT 5: LaTeX protection applied")
 
 
 def render_latex(resume_data):

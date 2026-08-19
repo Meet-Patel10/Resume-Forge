@@ -291,28 +291,34 @@ class SemanticKeywordExtractor:
     
     def _extract_all_keywords(self, jd_text: str, jd_sections: Dict) -> List[Dict]:
         """
-        Extract raw keywords from JD.
+        Extract raw keywords from JD by scanning for known technical terms.
 
-        For now: simple keyword tokenization. Later: can use NER.
+        D3 / P1-2: this used to begin by grabbing every maximal run of
+        same-case words:
+
+            re.findall(r'\\b(?:[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)+|[a-z]+(?:\\s+[a-z]+)+)\\b', jd_text)
+
+        "Runs of adjacent words" is not a definition of a skill. Worse,
+        `[a-z]` excludes `-` and `'`, so compounds shattered: "full-stack
+        solutions across front-end interfaces" produced "stack solutions
+        across front" + "end interfaces"; "on-call rotation" produced "call
+        rotation"; "you'll" produced "ll ...". The long _JD_FRAGMENT_PATTERNS
+        blacklist below existed only to suppress this regex's own output.
+
+        Measured on a representative JD: the phrase path produced 22
+        candidates and 0 of them survived to must_haves/important — all 9
+        surviving keywords came from the curated scan below. So the phrase
+        block is deleted rather than repaired.
+
+        Known limitation: a tool absent from _TOOL_PATTERNS /
+        _HARD_SKILL_PATTERNS is invisible here. That is correct behaviour for
+        a system that must not fabricate — an unrecognised tool should
+        surface as a reported gap, not an invented skill.
         """
         keywords = []
+        seen_lower = set()
 
-        # Extract multi-word phrases first
-        # Common technical phrases like "machine learning", "rest api"
-        phrases = re.findall(
-            r'\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|[a-z]+(?:\s+[a-z]+)+)\b',
-            jd_text
-        )
-
-        for phrase in phrases:
-            if len(phrase) > 2:  # Skip very short phrases
-                keywords.append({
-                    'text': phrase,
-                    'sections': self._find_sections_for_keyword(phrase, jd_sections),
-                    'frequency': jd_text.lower().count(phrase.lower()),
-                })
-
-        # TASK 11 fix: the phrase regex above requires TWO OR MORE
+        # TASK 11 fix: the removed phrase regex required TWO OR MORE
         # consecutive words of matching case, so a lone technical term
         # ("Python", "AWS", "SQL", "Kubernetes", "React"...) was NEVER
         # proposed as a candidate here — meaning it could never reach
@@ -325,7 +331,6 @@ class SemanticKeywordExtractor:
         # word-boundary-safe, already-curated regexes _classify_single_
         # keyword() (Task 6) already relies on — to scan jd_text directly
         # for known single/short technical-term mentions.
-        seen_lower = {kw['text'].lower() for kw in keywords}
         for pattern in self._TOOL_PATTERNS + self._HARD_SKILL_PATTERNS:
             for match in re.finditer(pattern, jd_text, re.IGNORECASE):
                 text = match.group()

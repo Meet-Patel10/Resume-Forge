@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, jsonify, session, send_file, current_app
 from app.routes.auth import login_required
+from sqlalchemy.exc import OperationalError, InterfaceError
 from app import db
 from app.models.master_resume import MasterResume
 from app.models.application import Application
@@ -8,7 +9,7 @@ from app.models.resume_version import ResumeVersion
 from app.services.claude_client import claude
 from app.services.prompts.resume_tailor import (
     RESUME_TAILOR_SYSTEM, build_tailor_message,
-    get_summary_generator, get_convergence_guard, verify_summary_integrity,
+    get_summary_generator, verify_summary_integrity,
 )
 from app.services.prompts.bullet_rewriter import BULLET_REWRITER_SYSTEM, build_bullet_message
 from app.services.prompts.cover_letter import COVER_LETTER_SYSTEM, COVER_LETTER_ADJUST_SYSTEM, build_cover_letter_message, build_adjust_message
@@ -17,7 +18,7 @@ from app.services.prompts.keyword_extractor import KEYWORD_EXTRACTOR_SYSTEM, bui
 from app.services.prompts.jd_analyzer import JD_ANALYZER_SYSTEM, build_jd_analysis_message
 
 
-from app.services.latex_engine import render_latex
+from app.services.latex_engine import render_latex, enforce_one_page
 from app.services.ats_scorer import calculate_ats_score
 import json as json_mod
 from flask import current_app
@@ -31,8 +32,7 @@ from app.validators.skill_validator import validate_skill, aggressive_cleanup as
 from app.validators.timeline_validator import analyze_employment_timeline
 from app.validators.email_optimizer import optimize_email_subject_line
 from app.services.jd_tier_extractor import JDTierExtractor
-from app.scoring.gap_analyzer import WeightedGapAnalyzer
-from app.services.micro_edit_generator import MicroEditGenerator, apply_edit
+from app.scoring.gap_report import build_gap_report
 from app.validators.skill_categorizer import validate_and_fix_skills
 
 tailor_bp = Blueprint('tailor', __name__)
@@ -61,63 +61,6 @@ _CITY_TO_PROVINCE = {
 
 _DEFAULT_LOCATION = 'Halifax, NS'
 
-# ─── Soft skills: keyword patterns for verification (Stage 1) ───
-SOFT_SKILL_KEYWORDS = {
-    'innovation': ['pioneer', 'innovate', 'innovat', 'novel', 'first', 'created new', 'breakthrough', 'develop new'],
-    'communication': ['communica', 'present', 'document', 'explain', 'articulate', 'convey', 'discuss', 'share insight'],
-    'adaptability': ['adapt', 'adjust', 'pivot', 'respond', 'accommodat', 'flexible', 'adjust', 'quickly adapted'],
-    'accountability': ['ownership', 'owned', 'respons', 'led', 'drove', 'took charge', 'champion', 'took ownership', 'accountab'],
-    'mentoring': ['mentor', 'guid', 'teach', 'coach', 'develop team', 'train', 'onboard'],
-    'collaboration': ['collabora', 'worked with', 'partner', 'cross-functional', 'team', 'coordi', 'cooperat']
-}
-
-# ─── Soft skills: templates for injection prompt (Stage 2) ───
-SOFT_SKILL_TEMPLATES = {
-    'innovation': {
-        'description': 'Introducing new ideas, creative problem-solving, pioneering approaches',
-        'keywords': ['pioneered', 'innovated', 'introduced novel', 'developed new approach', 'created breakthrough'],
-        'example': 'Pioneered new approach to X, resulting in Y',
-        'instructions': 'Add "pioneered", "innovated", or "introduced new" to show creative problem-solving'
-    },
-    'communication': {
-        'description': 'Clear articulation, documentation, presentation, stakeholder engagement',
-        'keywords': ['communicated', 'presented', 'documented', 'explained', 'articulated'],
-        'example': 'Clearly communicated architecture decisions to cross-functional teams',
-        'instructions': 'Add "communicated", "presented", or "documented" to show clear communication'
-    },
-    'adaptability': {
-        'description': 'Quick response to change, flexibility, learning new skills',
-        'keywords': ['adapted', 'adjusted', 'quickly responded', 'pivoted', 'accommodated'],
-        'example': 'Quickly adapted codebase to handle new requirements',
-        'instructions': 'Add "adapted", "adjusted", or "responded" to show flexibility'
-    },
-    'accountability': {
-        'description': 'Taking ownership, responsibility, driving results, follow-through',
-        'keywords': ['took ownership', 'owned', 'responsible for', 'led', 'drove'],
-        'example': 'Took ownership of critical system, delivering on time',
-        'instructions': 'Add "took ownership", "owned", or "led" to show accountability'
-    },
-    'mentoring': {
-        'description': 'Teaching others, guidance, team development, knowledge transfer',
-        'keywords': ['mentored', 'guided', 'coached', 'trained', 'developed'],
-        'example': 'Mentored 3 junior developers through complex architecture',
-        'instructions': 'Add "mentored", "guided", or "coached" to show mentoring'
-    }
-}
-
-# ─── Soft skills: strict stem-only variants (no synonyms) for post-injection
-# validation. ATS keyword scanners match the literal skill word or a direct
-# variant (innovate/innovation/innovative) — NOT a synonym like "pioneered".
-# SOFT_SKILL_TEMPLATES['keywords'] above includes synonyms for prompt guidance,
-# but synonyms must not be what actually gets validated as "correct".
-SOFT_SKILL_STRICT_VARIANTS = {
-    'innovation': ['innovation', 'innovate', 'innovates', 'innovated', 'innovating', 'innovative', 'innovatively'],
-    'communication': ['communication', 'communicate', 'communicates', 'communicated', 'communicating'],
-    'accountability': ['accountability', 'accountable'],
-    'collaboration': ['collaboration', 'collaborate', 'collaborates', 'collaborated', 'collaborating', 'collaborative'],
-    'adaptability': ['adaptability', 'adapt', 'adapts', 'adapted', 'adapting', 'adaptive'],
-    'mentoring': ['mentor', 'mentors', 'mentored', 'mentoring'],
-}
 
 
 def _resolve_sign_off_location(city_input):
@@ -236,106 +179,148 @@ def api_analyze_jd_advanced():
         return jsonify({'error': str(e)}), 500
 
 
-def run_convergence(tailored_resume, jd_text, max_iterations=4, target_score=85):
-    """
-    Guided Convergence Engine with validation: iteratively close the highest-ROI
-    JD gaps in a tailored resume until the weighted ATS estimate hits target_score
-    or no feasible edits remain. Skips (rather than lying) when JD extraction
-    quality is too low, and flags suspiciously high scores instead of declaring
-    false success.
-    """
-
-    # Step 1: Extract tiered JD
-    tier_extractor = JDTierExtractor()
-    jd_tiers = tier_extractor.extract_tiered_requirements(jd_text)
-
-    # Step 2: Analyze gap
-    gap_analyzer = WeightedGapAnalyzer()
-    gap = gap_analyzer.analyze_gap(tailored_resume, jd_tiers)
-
-    # VALIDATION: Should we even run convergence?
-    if gap.skip_convergence:
-        print(f"[converge] SKIPPING CONVERGENCE: {gap.skip_reason}")
-        return {
-            'status': 'skipped',
-            'reason': gap.skip_reason,
-            'jd_quality': jd_tiers.quality_score * 100,
-            'message': 'JD extraction quality too low. Manual review recommended.',
-            'tailored_resume': tailored_resume,
-        }
-
-    # VALIDATION: Check if score is suspiciously high
-    if gap.weighted_ats_estimate >= 95:
-        print(f"[converge] ⚠ WARNING: Estimated score is suspiciously high ({gap.weighted_ats_estimate:.1f}%)")
-        print(f"  Required: {gap.required_match_score:.0f}%")
-        print(f"  Preferred: {gap.preferred_match_score:.0f}%")
-        print(f"  → This suggests JD extraction may have failed. Check required/preferred skill counts.")
-
-        return {
-            'status': 'suspicious_score',
-            'estimated_score': gap.weighted_ats_estimate,
-            'message': 'Score seems too high. JD extraction may have issues.',
-            'debug': {
-                'required_skills': len(jd_tiers.required_hard_skills),
-                'preferred_skills': len(jd_tiers.preferred_hard_skills),
-                'quality_score': jd_tiers.quality_score,
-            },
-            'tailored_resume': tailored_resume,
-        }
-
-    # Normal convergence loop
-    current_resume = tailored_resume
-    iteration_history = []
-
-    for iteration in range(1, max_iterations + 1):
-        gap = gap_analyzer.analyze_gap(current_resume, jd_tiers)
-        current_score = gap.weighted_ats_estimate
-
-        print(f"[converge] Iteration {iteration}: Score {current_score:.1f}")
-
-        if current_score >= target_score:
-            print(f"[converge] Target reached! Score: {current_score:.1f}")
-            break
-
-        # Generate edits
-        edit_generator = MicroEditGenerator()
-        edits = edit_generator.generate_edits(current_resume, gap)
-
-        if not edits:
-            print(f"[converge] No feasible edits remaining")
-            break
-
-        # Apply best edit
-        best_edit = max(edits, key=lambda e: e.ats_gain * e.feasibility)
-        print(f"[converge]   Applying: {best_edit.gap_skill} ({best_edit.ats_gain:.1f} points)")
-
-        current_resume = apply_edit(current_resume, best_edit)
-
-        iteration_history.append({
-            'iteration': iteration,
-            'score': current_score,
-            'edit_applied': best_edit.gap_skill,
-            'gain': best_edit.ats_gain,
-        })
-
-    return {
-        'status': 'converged',
-        'tailored_resume': current_resume,
-        'final_score': gap.weighted_ats_estimate,
-        'iterations': iteration_history,
-        'convergence_details': {
-            'required_match': gap.required_match_score,
-            'preferred_match': gap.preferred_match_score,
-            'nice_match': gap.nice_match_score,
-        }
-    }
-
-
-
 # ============================================================================
 # COMPREHENSIVE CATEGORY MAPPING FOR ALL SKILL TYPES
 # Used by cleanup function to validate and fix AI categorization
 # ============================================================================
+_CATEGORY_MAP = {
+    # Languages
+    'python': 'Languages', 'java': 'Languages', 'javascript': 'Languages',
+    'c++': 'Languages', 'c#': 'Languages', 'typescript': 'Languages',
+    'sql': 'Languages', 'r': 'Languages', 'go': 'Languages', 'golang': 'Languages',
+    'rust': 'Languages', 'ruby': 'Languages', 'scala': 'Languages',
+    'kotlin': 'Languages', 'swift': 'Languages', 'php': 'Languages',
+    'html': 'Languages', 'html5': 'Languages', 'css': 'Languages',
+    'css3': 'Languages', 'bash': 'Languages', 'shell': 'Languages',
+    'perl': 'Languages', 'matlab': 'Languages', 'julia': 'Languages',
+    'haskell': 'Languages', 'c programming': 'Languages',
+    # Frameworks & Libraries
+    'react': 'Frameworks & Libraries', 'react native': 'Frameworks & Libraries',
+    'angular': 'Frameworks & Libraries', 'vue': 'Frameworks & Libraries',
+    'vue.js': 'Frameworks & Libraries', 'spring boot': 'Frameworks & Libraries',
+    'spring': 'Frameworks & Libraries', 'django': 'Frameworks & Libraries',
+    'flask': 'Frameworks & Libraries', 'fastapi': 'Frameworks & Libraries',
+    'express': 'Frameworks & Libraries', 'express.js': 'Frameworks & Libraries',
+    'node.js': 'Frameworks & Libraries', 'pytorch': 'Frameworks & Libraries',
+    'tensorflow': 'Frameworks & Libraries', 'scikit-learn': 'Frameworks & Libraries',
+    'pandas': 'Frameworks & Libraries', 'numpy': 'Frameworks & Libraries',
+    'langchain': 'Frameworks & Libraries', 'hugging face': 'Frameworks & Libraries',
+    'huggingface': 'Frameworks & Libraries', 'next.js': 'Frameworks & Libraries',
+    'jquery': 'Frameworks & Libraries', '.net': 'Frameworks & Libraries',
+    'bootstrap': 'Frameworks & Libraries', 'sqlalchemy': 'Frameworks & Libraries',
+    'jinja2': 'Frameworks & Libraries', 'restful apis': 'Frameworks & Libraries',
+    'keras': 'Frameworks & Libraries', 'opencv': 'Frameworks & Libraries',
+    'peft': 'Frameworks & Libraries', 'transformers': 'Frameworks & Libraries',
+    'agent development kits': 'Frameworks & Libraries',
+    # *** CRITICAL: Concepts (NOT Languages!) ***
+    'ai-driven methods': 'Concepts', 'numerical methods': 'Concepts',
+    'computational numerical methods': 'Concepts',
+    'gnss error modeling': 'Concepts', 'gnss': 'Concepts',
+    'algorithm tuning': 'Concepts', 'linear optimization': 'Concepts',
+    'non-linear optimization': 'Concepts', 'optimization': 'Concepts',
+    'regression analysis': 'Concepts', 'statistical analysis': 'Concepts',
+    'customer support': 'Concepts', 'automation': 'Concepts',
+    'automation tools': 'Concepts', 'automated test suites': 'Concepts',
+    'big data analysis': 'Concepts',
+    # Issue #1 fix: degrees/methodologies → Concepts, NOT Languages
+    'electrical engineering': 'Concepts',
+    'geomatics engineering': 'Concepts',
+    'software engineering': 'Concepts',
+    'computer science': 'Concepts',
+    'positioning algorithms': 'Concepts',
+    'agile': 'Concepts',
+    'scrum': 'Concepts',
+    'automation tools for regression analysis': 'Concepts',
+    'technical communication': 'Concepts',
+    # Tools & Platforms
+    'docker': 'Tools & Platforms', 'kubernetes': 'Tools & Platforms',
+    'aws': 'Tools & Platforms', 'azure': 'Tools & Platforms',
+    'gcp': 'Tools & Platforms', 'google cloud': 'Tools & Platforms',
+    'git': 'Tools & Platforms', 'github': 'Tools & Platforms',
+    'gitlab': 'Tools & Platforms', 'jenkins': 'Tools & Platforms',
+    'jira': 'Tools & Platforms', 'linux': 'Tools & Platforms',
+    'terraform': 'Tools & Platforms', 'ansible': 'Tools & Platforms',
+    'kafka': 'Tools & Platforms', 'redis': 'Tools & Platforms',
+    'elasticsearch': 'Tools & Platforms', 'heroku': 'Tools & Platforms',
+    'vercel': 'Tools & Platforms', 'postman': 'Tools & Platforms',
+    'grafana': 'Tools & Platforms', 'prometheus': 'Tools & Platforms',
+    'mysql': 'Tools & Platforms', 'postgresql': 'Tools & Platforms',
+    'mongodb': 'Tools & Platforms', 'dynamodb': 'Tools & Platforms',
+    'datadog': 'Tools & Platforms', 'splunk': 'Tools & Platforms',
+    'aws bedrock': 'Tools & Platforms', 'vs code': 'Tools & Platforms',
+    'maven': 'Tools & Platforms', 'gradle': 'Tools & Platforms',
+    'circleci': 'Tools & Platforms', 'travis ci': 'Tools & Platforms',
+    'airflow': 'Tools & Platforms', 'mlflow': 'Tools & Platforms',
+    'wandb': 'Tools & Platforms', 'dvc': 'Tools & Platforms',
+    # Concepts
+    'ci/cd': 'Concepts', 'ci/cd pipelines': 'Concepts',
+    'agile': 'Concepts', 'scrum': 'Concepts',
+    'microservices': 'Concepts', 'machine learning': 'Concepts',
+    'deep learning': 'Concepts', 'nlp': 'Concepts',
+    'natural language processing': 'Concepts',
+    'devops': 'Concepts', 'cloud orchestration': 'Concepts',
+    'code review': 'Concepts', 'unit testing': 'Concepts',
+    'test-driven development': 'Concepts', 'tdd': 'Concepts',
+    'distributed systems': 'Concepts', 'data pipelines': 'Concepts',
+    'data preprocessing': 'Concepts', 'feature engineering': 'Concepts',
+    'statistical modeling': 'Concepts', 'api design': 'Concepts',
+    'software engineering best practices': 'Concepts',
+    'version control systems': 'Concepts',
+    'collaborative development environments': 'Concepts',
+    'open-source': 'Concepts', 'open source': 'Concepts',
+    'highly concurrent systems': 'Concepts',
+    'server applications': 'Concepts',
+    'containerization': 'Concepts',
+    # Programming Concepts
+    'data structures': 'Programming Concepts',
+    'algorithms': 'Programming Concepts',
+    'object-oriented programming': 'Programming Concepts',
+    'oop': 'Programming Concepts', 'multithreading': 'Programming Concepts',
+    'time complexity': 'Programming Concepts',
+    'design patterns': 'Programming Concepts',
+}
+
+
+def _fuzzy_term_match(text, terms):
+    """True if any term in `terms` occurs in `text` on word boundaries.
+
+    Terms of 1-2 characters are skipped entirely: they are too short to fuzzy
+    match safely (see _lookup_category for the same reasoning).
+    """
+    return any(
+        _re.search(rf'\b{_re.escape(t)}\b', text)
+        for t in terms if len(t) > 2
+    )
+
+
+def _lookup_category(skill, *mappings):
+    """Resolve a skill to a category: exact match first, then word-boundary.
+
+    D4: the previous implementation was `if key in skill_lower or skill_lower
+    in key`, and both maps contain 1-2 character keys ('r', 'go', 'c#', 'f#').
+    `'r' in 'dynatrace'` is True, so Dynatrace, Prometheus, 'monitoring tools',
+    'content delivery', 'observability tools' and 'event-driven architectures'
+    were all classified as programming languages; 'scala' in 'scalable apis'
+    did the same. Word boundaries fix it (\bscala\b does not match
+    'scalable'), and keys of 1-2 chars are never fuzzy-matched at all — they
+    are only ever reachable by exact match.
+    """
+    s = (skill or '').lower().strip()
+    if not s:
+        return None
+    for m in mappings:
+        if s in m:
+            return m[s]
+    for m in mappings:
+        for key, cat in m.items():
+            if len(key) <= 2:
+                continue
+            if _re.search(rf'\b{_re.escape(key)}\b', s):
+                return cat
+    return None
+
+
+
 _COMPREHENSIVE_CATEGORY_MAP = {
     # ======== PROGRAMMING LANGUAGES (ONLY actual languages) ========
     'python': 'Languages', 'java': 'Languages', 'javascript': 'Languages',
@@ -513,74 +498,6 @@ _COMPREHENSIVE_CATEGORY_MAP = {
     'team collaboration': 'Concepts', 'problem-solving': 'Concepts',
     'innovation': 'Concepts', 'adaptability': 'Concepts', 'accountability': 'Concepts',
 }
-
-
-# ═══════════════════════════════════════════════════════════════════
-# TASK 7: Naturalness validation for injected soft skills
-#
-# Supersedes the old dead "CHUNK 7.1/7.2" block that used to live here
-# (a static template-splice engine from an earlier abandoned attempt,
-# never wired into the real pipeline, and which shadowed the real
-# Stage-2 SOFT_SKILL_TEMPLATES dict defined near the top of this file —
-# a landmine left for whoever next tried to use skill_config).
-#
-# The real injection (below, "SOFT SKILLS INJECTION INTO BULLETS") asks
-# the AI to rewrite the whole bullet and requires the literal skill
-# stem to appear (see SOFT_SKILL_STRICT_VARIANTS) so ATS keyword
-# scanners still match — synonym-based templates would silently
-# reopen that bug. This validator instead catches AI-sounding SURFACE
-# patterns post-generation so we can ask the AI to retry, without ever
-# giving up the literal-stem requirement.
-# ═══════════════════════════════════════════════════════════════════
-
-def validate_soft_skill_grammaticality(bullet_text):
-    """
-    Validate that a bullet with an injected soft skill sounds natural.
-
-    Returns: (is_valid, issues)
-    """
-    import re
-    issues = []
-
-    # Check for AI-sounding patterns
-    ai_patterns = [
-        (r'\bInnovatively\s+\w+', "AI-sounding adverb: 'Innovatively'"),
-        (r'\bCommunicated\s+automation', "Unnatural phrase: 'Communicated automation'"),
-        (r'\bCollaboratively\s+developed', "AI-sounding: 'Collaboratively developed'"),
-        (r'\bProactively\s+\w+ed', "AI-sounding adverb: 'Proactively'"),
-        (r'^(Innovatively|Communicatively|Collaboratively|Adaptably|Accountably)\s',
-         "Bullet opens with an awkward -ly adverb"),
-        (r'\bCommunicated\s+.*\s+by\s+(developing|creating)', "Awkward structure: 'Communicated ... by developing/creating'"),
-        (r'\bCollaborative\s+(approach|solution|effort)\b', "Stiff phrasing: 'Collaborative approach/solution/effort'"),
-        (r'\b(and|with)\s+creative\s+(solutions|approaches)\b', "Tacked-on phrase: 'and/with creative solutions/approaches'"),
-    ]
-
-    for pattern, message in ai_patterns:
-        if re.search(pattern, bullet_text, re.IGNORECASE):
-            issues.append(message)
-
-    return len(issues) == 0, issues
-
-
-def get_natural_skill_guidance(skill_lower):
-    """
-    Per-skill guidance for the soft-skill injection prompt (TASK 7 fix).
-
-    Ordering matters: the AI tends to lead with whichever variant is
-    listed first, so awkward adverb forms ("innovatively") are listed
-    last instead of first, favoring natural adjective/verb forms
-    ("innovative", "innovated") while keeping every listed word a
-    literal stem variant of the skill (required for ATS matching —
-    see SOFT_SKILL_STRICT_VARIANTS, SOFT_SKILLS_SYNONYM_BUG).
-    """
-    guidance = {
-        'innovation': "- Use: 'innovative' (as an adjective), 'innovated', or 'innovation' — avoid opening the bullet with 'Innovatively'\n",
-        'communication': "- Use: 'communicated', 'communication', 'clearly explained', or 'documented' — integrate mid-sentence, not as a bolted-on clause\n",
-        'accountability': "- Use: 'accountability', 'accountable', 'took ownership', or 'responsible'\n",
-        'collaboration': "- Use: 'collaborated', 'collaboration', 'worked together', or 'team effort' — avoid the stiff phrase 'collaborative approach'\n",
-        'adaptability': "- Use: 'adapted', 'adaptability', 'flexible', 'adjusted to', or 'pivoted'\n",
-    }
-    return guidance.get(skill_lower, '')
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -945,15 +862,8 @@ def validate_and_fix_skill_categories(tailored_data, category_map):
     for skill, current_cat in current_skill_category.items():
         skill_lower = skill.lower()
 
-        # Try exact match first
-        correct_cat = category_map.get(skill_lower)
-
-        # Try fuzzy match (partial match)
-        if not correct_cat:
-            for key, cat in category_map.items():
-                if key in skill_lower or skill_lower in key:
-                    correct_cat = cat
-                    break
+        # Exact, then word-boundary match (D4: never fuzzy-match 1-2 char keys)
+        correct_cat = _lookup_category(skill, category_map)
 
         # Use default heuristic for unmapped skills
         if not correct_cat:
@@ -1166,22 +1076,21 @@ def classify_keyword(keyword, jd_title=''):
     if first_word in _PROCESS_VERBS:
         return ('RESPONSIBILITY_PHRASE', 'process')
 
-    # Fuzzy classification: check partial matches
-    for lang in _PROGRAMMING_LANGUAGES:
-        if lang in kw_lower or kw_lower in lang:
-            return ('HARD_SKILL', 'programming_language')
-    for fw in _FRAMEWORKS:
-        if fw in kw_lower or kw_lower in fw:
-            return ('HARD_SKILL', 'framework')
-    for tool in _DEV_TOOLS | _CLOUD_SERVICES:
-        if tool in kw_lower or kw_lower in tool:
-            return ('TOOL_PLATFORM', 'dev_tool')
-    for soft in _SOFT_SKILL_LEADERSHIP | _SOFT_SKILL_COMMUNICATION | _SOFT_SKILL_ANALYTICAL | _SOFT_SKILL_INTERPERSONAL:
-        if soft in kw_lower or kw_lower in soft:
-            return ('SOFT_SKILL', 'interpersonal')
-    for domain in _INDUSTRY_VERTICALS | _BUSINESS_DOMAINS:
-        if domain in kw_lower or kw_lower in domain:
-            return ('DOMAIN_TERM', 'business_domain')
+    # Fuzzy classification: word-boundary matches only.
+    # D4 again — _PROGRAMMING_LANGUAGES contains 'r', 'go', 'c#' and 'f#', so a
+    # plain substring test classified Dynatrace as a programming language here
+    # too. _fuzzy_term_match skips 1-2 char terms and anchors the rest.
+    if _fuzzy_term_match(kw_lower, _PROGRAMMING_LANGUAGES):
+        return ('HARD_SKILL', 'programming_language')
+    if _fuzzy_term_match(kw_lower, _FRAMEWORKS):
+        return ('HARD_SKILL', 'framework')
+    if _fuzzy_term_match(kw_lower, _DEV_TOOLS | _CLOUD_SERVICES):
+        return ('TOOL_PLATFORM', 'dev_tool')
+    if _fuzzy_term_match(kw_lower, _SOFT_SKILL_LEADERSHIP | _SOFT_SKILL_COMMUNICATION
+                         | _SOFT_SKILL_ANALYTICAL | _SOFT_SKILL_INTERPERSONAL):
+        return ('SOFT_SKILL', 'interpersonal')
+    if _fuzzy_term_match(kw_lower, _INDUSTRY_VERTICALS | _BUSINESS_DOMAINS):
+        return ('DOMAIN_TERM', 'business_domain')
 
     # Default: multi-word → DOMAIN_TERM, single-word with technical context → HARD_SKILL
     if len(keyword.split()) >= 2:
@@ -1949,29 +1858,6 @@ def keyword_section_routing_engine(tailored_data, jd_analysis, keyword_data,
 
     return tailored_data, routing_report
 
-@tailor_bp.route('/api/tailor-converge', methods=['POST'])
-@login_required
-def api_tailor_converge():
-    """
-    Run guided convergence engine with validation.
-    """
-
-    data = request.get_json()
-    tailored_resume = data.get('tailored_resume')  # From previous api_tailor call
-    jd_text = data.get('jd_text')
-    max_iterations = data.get('max_iterations', 4)
-    target_score = data.get('target_score', 85)
-
-    result = run_convergence(
-        tailored_resume,
-        jd_text,
-        max_iterations=max_iterations,
-        target_score=target_score,
-    )
-
-    return jsonify(result)
-
-
 @tailor_bp.route('/api/tailor', methods=['POST'])
 @login_required
 def api_tailor():
@@ -1987,6 +1873,13 @@ def api_tailor():
 
     if not jd_text or not resume_text:
         return jsonify({'error': 'Both job description and resume text are required'}), 400
+
+    # Bound unconditionally here because the PHASE 4 assignment further down
+    # sits inside nested `if`/`try` blocks. Python is function-scoped, so the
+    # name is visible at the aggressive-cleanup call site either way — but if
+    # that branch never runs, the reference there raises NameError, which the
+    # surrounding `except Exception` would swallow, silently skipping cleanup.
+    master_skill_names = set()
 
     # Canadian city → province code mapping (comprehensive)
     CITY_TO_PROVINCE = {
@@ -3378,6 +3271,25 @@ def api_tailor():
                                             # original casing so the resume doesn't show "kubernetes"
                                             final_skills.extend(master_skill_casing.get(s, s) for s in missing_master)
                                             print(f"[tailor] ✓ PHASE 4: Re-added missing master skills")
+
+                                            # The cap is the last word.
+                                            #
+                                            # This re-add runs AFTER the role-coherence auto-fix
+                                            # selected exactly max_allowed skills, and could push
+                                            # the total back over it — the pipeline capping to 25
+                                            # and then shipping 34. When the master resume has more
+                                            # skills than the role level allows the two goals are
+                                            # mathematically incompatible, and the cap wins: 34
+                                            # skills on a mid-level resume dilutes rather than
+                                            # strengthens. JD-relevant skills are kept first.
+                                            if len(final_skills) > max_allowed:
+                                                _jd_first = [s for s in final_skills if s.lower() in jd_hard_skills_lower]
+                                                _rest = [s for s in final_skills if s.lower() not in jd_hard_skills_lower]
+                                                _capped = (_jd_first + _rest)[:max_allowed]
+                                                _dropped = [s for s in final_skills if s not in _capped]
+                                                final_skills = _capped
+                                                print(f"[tailor] ✓ Re-applied {detected_role_level} cap "
+                                                      f"({max_allowed}): dropped {len(_dropped)} → {_dropped}")
                                 else:
                                     print(f"[tailor] ✓ PHASE 4: All {len(master_skill_names)} master skills preserved in final selection")
 
@@ -4011,125 +3923,16 @@ def api_tailor():
                             all_proof_text += ts.lower() + ' '
                     all_proof_text += (tailored_data.get('summary', '') or '').lower()
 
-                    # ── Category mapping for automatic placement ──
-                    _CATEGORY_MAP = {
-                        # Languages
-                        'python': 'Languages', 'java': 'Languages', 'javascript': 'Languages',
-                        'c++': 'Languages', 'c#': 'Languages', 'typescript': 'Languages',
-                        'sql': 'Languages', 'r': 'Languages', 'go': 'Languages', 'golang': 'Languages',
-                        'rust': 'Languages', 'ruby': 'Languages', 'scala': 'Languages',
-                        'kotlin': 'Languages', 'swift': 'Languages', 'php': 'Languages',
-                        'html': 'Languages', 'html5': 'Languages', 'css': 'Languages',
-                        'css3': 'Languages', 'bash': 'Languages', 'shell': 'Languages',
-                        'perl': 'Languages', 'matlab': 'Languages', 'julia': 'Languages',
-                        'haskell': 'Languages', 'c programming': 'Languages',
-                        # Frameworks & Libraries
-                        'react': 'Frameworks & Libraries', 'react native': 'Frameworks & Libraries',
-                        'angular': 'Frameworks & Libraries', 'vue': 'Frameworks & Libraries',
-                        'vue.js': 'Frameworks & Libraries', 'spring boot': 'Frameworks & Libraries',
-                        'spring': 'Frameworks & Libraries', 'django': 'Frameworks & Libraries',
-                        'flask': 'Frameworks & Libraries', 'fastapi': 'Frameworks & Libraries',
-                        'express': 'Frameworks & Libraries', 'express.js': 'Frameworks & Libraries',
-                        'node.js': 'Frameworks & Libraries', 'pytorch': 'Frameworks & Libraries',
-                        'tensorflow': 'Frameworks & Libraries', 'scikit-learn': 'Frameworks & Libraries',
-                        'pandas': 'Frameworks & Libraries', 'numpy': 'Frameworks & Libraries',
-                        'langchain': 'Frameworks & Libraries', 'hugging face': 'Frameworks & Libraries',
-                        'huggingface': 'Frameworks & Libraries', 'next.js': 'Frameworks & Libraries',
-                        'jquery': 'Frameworks & Libraries', '.net': 'Frameworks & Libraries',
-                        'bootstrap': 'Frameworks & Libraries', 'sqlalchemy': 'Frameworks & Libraries',
-                        'jinja2': 'Frameworks & Libraries', 'restful apis': 'Frameworks & Libraries',
-                        'keras': 'Frameworks & Libraries', 'opencv': 'Frameworks & Libraries',
-                        'peft': 'Frameworks & Libraries', 'transformers': 'Frameworks & Libraries',
-                        'agent development kits': 'Frameworks & Libraries',
-                        # *** CRITICAL: Concepts (NOT Languages!) ***
-                        'ai-driven methods': 'Concepts', 'numerical methods': 'Concepts',
-                        'computational numerical methods': 'Concepts',
-                        'gnss error modeling': 'Concepts', 'gnss': 'Concepts',
-                        'algorithm tuning': 'Concepts', 'linear optimization': 'Concepts',
-                        'non-linear optimization': 'Concepts', 'optimization': 'Concepts',
-                        'regression analysis': 'Concepts', 'statistical analysis': 'Concepts',
-                        'customer support': 'Concepts', 'automation': 'Concepts',
-                        'automation tools': 'Concepts', 'automated test suites': 'Concepts',
-                        'big data analysis': 'Concepts',
-                        # Issue #1 fix: degrees/methodologies → Concepts, NOT Languages
-                        'electrical engineering': 'Concepts',
-                        'geomatics engineering': 'Concepts',
-                        'software engineering': 'Concepts',
-                        'computer science': 'Concepts',
-                        'positioning algorithms': 'Concepts',
-                        'agile': 'Concepts',
-                        'scrum': 'Concepts',
-                        'automation tools for regression analysis': 'Concepts',
-                        'technical communication': 'Concepts',
-                        # Tools & Platforms
-                        'docker': 'Tools & Platforms', 'kubernetes': 'Tools & Platforms',
-                        'aws': 'Tools & Platforms', 'azure': 'Tools & Platforms',
-                        'gcp': 'Tools & Platforms', 'google cloud': 'Tools & Platforms',
-                        'git': 'Tools & Platforms', 'github': 'Tools & Platforms',
-                        'gitlab': 'Tools & Platforms', 'jenkins': 'Tools & Platforms',
-                        'jira': 'Tools & Platforms', 'linux': 'Tools & Platforms',
-                        'terraform': 'Tools & Platforms', 'ansible': 'Tools & Platforms',
-                        'kafka': 'Tools & Platforms', 'redis': 'Tools & Platforms',
-                        'elasticsearch': 'Tools & Platforms', 'heroku': 'Tools & Platforms',
-                        'vercel': 'Tools & Platforms', 'postman': 'Tools & Platforms',
-                        'grafana': 'Tools & Platforms', 'prometheus': 'Tools & Platforms',
-                        'mysql': 'Tools & Platforms', 'postgresql': 'Tools & Platforms',
-                        'mongodb': 'Tools & Platforms', 'dynamodb': 'Tools & Platforms',
-                        'datadog': 'Tools & Platforms', 'splunk': 'Tools & Platforms',
-                        'aws bedrock': 'Tools & Platforms', 'vs code': 'Tools & Platforms',
-                        'maven': 'Tools & Platforms', 'gradle': 'Tools & Platforms',
-                        'circleci': 'Tools & Platforms', 'travis ci': 'Tools & Platforms',
-                        'airflow': 'Tools & Platforms', 'mlflow': 'Tools & Platforms',
-                        'wandb': 'Tools & Platforms', 'dvc': 'Tools & Platforms',
-                        # Concepts
-                        'ci/cd': 'Concepts', 'ci/cd pipelines': 'Concepts',
-                        'agile': 'Concepts', 'scrum': 'Concepts',
-                        'microservices': 'Concepts', 'machine learning': 'Concepts',
-                        'deep learning': 'Concepts', 'nlp': 'Concepts',
-                        'natural language processing': 'Concepts',
-                        'devops': 'Concepts', 'cloud orchestration': 'Concepts',
-                        'code review': 'Concepts', 'unit testing': 'Concepts',
-                        'test-driven development': 'Concepts', 'tdd': 'Concepts',
-                        'distributed systems': 'Concepts', 'data pipelines': 'Concepts',
-                        'data preprocessing': 'Concepts', 'feature engineering': 'Concepts',
-                        'statistical modeling': 'Concepts', 'api design': 'Concepts',
-                        'software engineering best practices': 'Concepts',
-                        'version control systems': 'Concepts',
-                        'collaborative development environments': 'Concepts',
-                        'open-source': 'Concepts', 'open source': 'Concepts',
-                        'highly concurrent systems': 'Concepts',
-                        'server applications': 'Concepts',
-                        'containerization': 'Concepts',
-                        # Programming Concepts
-                        'data structures': 'Programming Concepts',
-                        'algorithms': 'Programming Concepts',
-                        'object-oriented programming': 'Programming Concepts',
-                        'oop': 'Programming Concepts', 'multithreading': 'Programming Concepts',
-                        'time complexity': 'Programming Concepts',
-                        'design patterns': 'Programming Concepts',
-                    }
 
                     injected = []
                     skipped = []
                     for skill in sorted(missing):
                         skill_lower = skill.lower()
 
-                        # Determine category
-                        category = _CATEGORY_MAP.get(skill_lower)
-                        if not category:
-                            # Fuzzy: check if any map key is contained in the skill or vice versa
-                            for key, cat in _CATEGORY_MAP.items():
-                                if key in skill_lower or skill_lower in key:
-                                    category = cat
-                                    break
-                        if not category:
-                            # Fallback to _COMPREHENSIVE_CATEGORY_MAP (has finance, healthcare, domain terms)
-                            category = _COMPREHENSIVE_CATEGORY_MAP.get(skill_lower)
-                        if not category:
-                            for key, cat in _COMPREHENSIVE_CATEGORY_MAP.items():
-                                if key in skill_lower or skill_lower in key:
-                                    category = cat
-                                    break
+                        # Determine category. _COMPREHENSIVE_CATEGORY_MAP is the
+                        # fallback (it carries finance/healthcare/domain terms).
+                        category = _lookup_category(
+                            skill, _CATEGORY_MAP, _COMPREHENSIVE_CATEGORY_MAP)
                         if not category:
                             # Default heuristic: multi-word → Concepts, single word → Tools
                             category = 'Concepts' if len(skill.split()) >= 2 else 'Tools & Platforms'
@@ -4224,6 +4027,38 @@ def api_tailor():
                 tailored_data['metadata']['master_skills'] = sorted(list(master_skill_names))
 
                 print(f"[tailor] PHASE 4: Stored {len(master_skill_names)} master skills in metadata")
+
+                # ── FINAL CAP: hard-skills injection above can push the total
+                # back over the role-level cap that was already enforced
+                # earlier (~line 3231) — that enforcement ran BEFORE this
+                # injection step added new items, so it never saw them. This
+                # is the last point that mutates skills before the quality
+                # gate re-counts them, so the cap has to be re-applied here
+                # too. Protected keywords and master skills are never
+                # dropped; JD-matched/injected skills are kept next;
+                # everything else is dropped last.
+                _final_role_level = detected_role_level if 'detected_role_level' in locals() else 'mid_level'
+                _final_cap = ROLE_SKILL_MATRIX.get(_final_role_level, {}).get('max_total_skills')
+                if _final_cap:
+                    _all_items = [item for cat in current_skills for item in cat.get('items', [])]
+                    if len(_all_items) > _final_cap:
+                        def _keep_rank(s):
+                            s_low = s.lower().strip()
+                            if s_low in protected_keywords_registry:
+                                return 0
+                            if s_low in master_skill_names:
+                                return 1
+                            if s_low in injected_skill_names or s_low in jd_lower:
+                                return 2
+                            return 3
+                        _ranked = sorted(_all_items, key=_keep_rank)
+                        _kept = set(_ranked[:_final_cap])
+                        _dropped = [s for s in _all_items if s not in _kept]
+                        for cat in current_skills:
+                            cat['items'] = [i for i in cat.get('items', []) if i in _kept]
+                        current_skills = [c for c in current_skills if c.get('items')]
+                        print(f"[tailor] ✓ Final skill cap enforced after hard-skills injection "
+                              f"({_final_role_level}, max {_final_cap}): dropped {len(_dropped)} → {_dropped}")
 
                 tailored_data['skills'] = current_skills
                 print(f"[tailor] skills reordered: injected + JD-matched keywords placed first in each category")
@@ -4512,289 +4347,47 @@ def api_tailor():
             
             tailored_data['summary'] = summary
 
-    # ========== SOFT SKILLS INJECTION INTO BULLETS ==========
-    # FIX #2: Initialize soft skills verification score (will be set if soft skills are injected)
-    soft_skills_verification_score = 0.0
 
-    if isinstance(tailored_data, dict) and soft_skills_data.get('missing_soft_skills'):
-        missing_skills = soft_skills_data['missing_soft_skills']
-        print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
-        print(f"[tailor] ║ SOFT SKILLS INJECTION - {len(missing_skills)} missing skills     ║")
-        print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
-
-        # Collect all bullets from experience and projects
-        all_bullets = []
-        bullet_locations = []  # Track which section each bullet came from
-
-        for exp_idx, exp in enumerate(tailored_data.get('experience', [])):
-            for bullet_idx, bullet in enumerate(exp.get('bullets', [])):
-                all_bullets.append(bullet)
-                bullet_locations.append(('experience', exp_idx, bullet_idx))
-
-        for proj_idx, proj in enumerate(tailored_data.get('projects', [])):
-            for bullet_idx, bullet in enumerate(proj.get('bullets', [])):
-                all_bullets.append(bullet)
-                bullet_locations.append(('project', proj_idx, bullet_idx))
-
-        if all_bullets:
-            # Map soft skills to bullets (distribute evenly)
-            for skill_idx, skill in enumerate(missing_skills):
-                # Find which bullet should get this skill
-                bullet_position = (skill_idx * len(all_bullets)) // len(missing_skills)
-
-                if bullet_position < len(all_bullets):
-                    section, section_idx, bullet_idx = bullet_locations[bullet_position]
-                    original_bullet = all_bullets[bullet_position]
-
-                    skill_lower = skill.lower()
-
-                    def _build_soft_skill_prompt(skill, skill_lower, original_bullet, retry_issues=None):
-                        # Force the literal keyword or a direct variant, not a
-                        # synonym (see SOFT_SKILLS_SYNONYM_BUG)
-                        prompt = f"""
-Rewrite this bullet to EXPLICITLY include the soft skill '{skill}':
-
-Original: "{original_bullet}"
-
-CRITICAL REQUIREMENTS:
-1. The word '{skill}' or its direct variant MUST appear in the rewritten text
-   - For '{skill}': use '{skill}', '{skill}ed', '{skill}ing', or similar variants ONLY
-   - Do NOT use synonyms (e.g., don't use "pioneered" for "innovation")
-   - Place the skill keyword in the first 15 words
-2. Keep the original technical achievement and impact
-3. Sound natural and professional (no awkward forced insertion)
-   - Do NOT open the bullet with an "-ly" adverb (e.g. "Innovatively...", "Collaboratively...")
-   - Integrate the skill mid-sentence rather than bolting it onto the end
-4. Keep under 155 characters (important for PDF formatting)
-
-Rewriting strategy for '{skill}':
-"""
-                        # Add skill-specific guidance (TASK 7: natural forms first)
-                        prompt += get_natural_skill_guidance(skill_lower)
-
-                        if retry_issues:
-                            prompt += (
-                                "\nYour previous attempt sounded AI-written for these reasons:\n"
-                                + "\n".join(f"- {issue}" for issue in retry_issues)
-                                + "\nTry again, avoiding those specific patterns.\n"
-                            )
-
-                        prompt += "\nReturn ONLY the rewritten bullet text. Include the keyword. No explanation.\n"
-                        return prompt
-
-                    try:
-                        enhanced_bullet = None
-                        naturalness_issues = None
-                        skill_keywords = SOFT_SKILL_STRICT_VARIANTS.get(skill_lower, [])
-
-                        # TASK 7: up to 2 attempts — retry once if the first
-                        # pass is ATS-valid but sounds AI-written.
-                        for attempt in range(2):
-                            soft_skill_prompt = _build_soft_skill_prompt(
-                                skill, skill_lower, original_bullet,
-                                retry_issues=naturalness_issues if attempt > 0 else None,
-                            )
-
-                            soft_skill_result = ai_client.analyze(
-                                "You are a professional resume writer. Enhance bullets with soft skills.",
-                                soft_skill_prompt,
-                                max_tokens=150,
-                            )
-
-                            if soft_skill_result.get('error'):
-                                print(f"[tailor] ⚠ Failed to inject '{skill}': {soft_skill_result['error']}")
-                                enhanced_bullet = None
-                                break
-
-                            enhanced_raw = soft_skill_result['response']
-                            if isinstance(enhanced_raw, str):
-                                enhanced_bullet = enhanced_raw.strip('"').strip()
-                            else:
-                                enhanced_bullet = str(enhanced_raw).strip('"').strip()
-
-                            total_tokens += soft_skill_result.get('tokens_used', 0)
-                            total_cost += soft_skill_result.get('cost_usd', 0.0)
-
-                            # VERIFY the enhanced bullet contains the literal skill keyword
-                            # or a direct stem-variant — NOT a synonym (SOFT_SKILLS_SYNONYM_BUG)
-                            keyword_found = any(keyword in enhanced_bullet.lower() for keyword in skill_keywords)
-                            if not keyword_found:
-                                print(f"[tailor] ✗ Soft skill '{skill}' enhancement failed (no keywords in result)")
-                                print(f"[tailor]   Expected one of: {', '.join(skill_keywords)}")
-                                print(f"[tailor]   Got: {enhanced_bullet[:60]}...")
-                                enhanced_bullet = None
-                                break
-
-                            # TASK 7: naturalness check — retry once if it fails,
-                            # but an ATS-valid rewrite is always kept even if the
-                            # retry doesn't improve naturalness.
-                            is_natural, naturalness_issues = validate_soft_skill_grammaticality(enhanced_bullet)
-                            if is_natural:
-                                break
-                            elif attempt == 0:
-                                print(f"[tailor] ⟳ Soft skill '{skill}' sounds AI-written, retrying: {naturalness_issues}")
-
-                        if enhanced_bullet:
-                            if section == 'experience':
-                                tailored_data['experience'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
-                            else:
-                                tailored_data['projects'][section_idx]['bullets'][bullet_idx] = enhanced_bullet
-
-                            print(f"[tailor] ✓ Soft skill '{skill}' injected into {section} bullet #{bullet_idx}")
-                            print(f"[tailor]   Before: {original_bullet[:60]}...")
-                            print(f"[tailor]   After:  {enhanced_bullet[:60]}...")
-                            if naturalness_issues:
-                                print(f"[tailor]   (kept despite naturalness flag after retry: {naturalness_issues})")
-
-                    except Exception as e:
-                        print(f"[tailor] ⚠ Soft skill injection error for '{skill}': {e}")
-
-            # ========== SOFT SKILLS VERIFICATION: KEYWORD MATCH + SEMANTIC FALLBACK ==========
-            all_bullets = flatten_bullets(tailored_data)
-            all_bullets_text = '\n'.join(all_bullets).lower()
-
-            print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
-            print(f"[tailor] ║ SOFT SKILLS VERIFICATION (Keyword + Semantic)      ║")
-            print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
-
-            verified_skills = []
-            unverified = []
-
-            for skill in missing_skills:
-                skill_found = False
-
-                # Try 1: keyword pattern match (fast)
-                if skill.lower() in SOFT_SKILL_KEYWORDS:
-                    keywords_to_check = SOFT_SKILL_KEYWORDS[skill.lower()]
-
-                    for keyword in keywords_to_check:
-                        if keyword in all_bullets_text:
-                            verified_skills.append(skill)
-                            skill_found = True
-                            print(f"[tailor] ✓ {skill:20s} (found via '{keyword}')")
-                            break
-                else:
-                    # Fallback: exact match if no keywords defined
-                    if skill.lower() in all_bullets_text:
-                        verified_skills.append(skill)
-                        skill_found = True
-                        print(f"[tailor] ✓ {skill:20s} (found via exact match)")
-
-                # Try 2: semantic verification using Claude — catches evidence that
-                # doesn't contain any of the known keyword patterns
-                if not skill_found:
-                    verification_prompt = f"""
-Review these resume bullets and determine if any clearly demonstrate or require '{skill}'.
-Look for evidence even if the exact word '{skill}' doesn't appear.
-
-Bullets:
-{chr(10).join('- ' + b for b in all_bullets)}
-
-Does any bullet demonstrate '{skill}'? Answer yes or no only.
-"""
-                    try:
-                        result = claude.analyze(
-                            "You are a resume expert. Verify if bullets demonstrate soft skills.",
-                            verification_prompt,
-                            max_tokens=10,
-                            temperature=0.0
-                        )
-                        response_text = str(result.get('response', '')).lower().strip()
-
-                        if 'yes' in response_text or 'true' in response_text:
-                            verified_skills.append(skill)
-                            skill_found = True
-                            print(f"[tailor] ✓ {skill:20s} (found via semantic check)")
-                        else:
-                            print(f"[tailor] ✗ {skill:20s} (semantic check: not demonstrated)")
-                    except Exception as e:
-                        print(f"[tailor] ⚠ Soft skill verification failed for '{skill}': {e}")
-                        # If semantic check fails, assume it's demonstrated (optimistic)
-                        verified_skills.append(skill)
-                        skill_found = True
-
-                if not skill_found:
-                    # Diagnostic ✗ line was already printed above (semantic check result)
-                    unverified.append(skill)
-
-            # Print summary
-            verification_percentage = (len(verified_skills) / max(len(missing_skills), 1)) * 100
-            # FIX #2: Store verification result for final score calculation
-            soft_skills_verification_score = verification_percentage
-            print(f"\n[tailor] ╔═══════════════════════════════════════════════════════╗")
-            print(f"[tailor] ║ VERIFICATION RESULT: {len(verified_skills)}/{len(missing_skills)} soft skills found ║")
-            print(f"[tailor] ║ Success Rate: {verification_percentage:.0f}%")
-            if verification_percentage >= 75:
-                print(f"[tailor] ║ STATUS: ✓ EXCELLENT")
-            elif verification_percentage >= 50:
-                print(f"[tailor] ║ STATUS: ⚠ GOOD (but could improve)")
-            else:
-                print(f"[tailor] ║ STATUS: ✗ NEEDS IMPROVEMENT")
-            print(f"[tailor] ╚═══════════════════════════════════════════════════════╝\n")
-
-            # Store verification result
-            soft_skills_data['verified_count'] = len(verified_skills)
-            soft_skills_data['verified_skills'] = verified_skills
-            soft_skills_data['missing_unverified'] = unverified
-
-    # Step 3.5: Run guided convergence (NEW)
-    convergence_iterations = []
-    convergence_result = None
+    # Step 3.5: Report JD gaps (read-only).
+    #
+    # Replaces the convergence engine, which "closed" gaps by appending
+    # "Experienced with {skill}, focusing on..." to the summary and then
+    # scored the substring it had just written. Gaps a resume cannot honestly
+    # close are now surfaced to the user instead of papered over.
+    gap_report = None
     if isinstance(tailored_data, dict):
         try:
-            print("[tailor] Running guided convergence engine...")
-            _pre_convergence_summary = tailored_data.get('summary', '')
-
-            # FIX #4: Increase convergence iterations from 3 to 10 for better score improvement
-            convergence_result = run_convergence(
-                tailored_data,
-                jd_text,
-                max_iterations=10
-            )
-
-            tailored_data = convergence_result['tailored_resume']
-
-            # TASK 2: convergence guard — the convergence engine's MicroEditGenerator
-            # can inject text straight into 'summary' with none of Task 2's
-            # completeness/dedup protections, so re-validate it here and revert
-            # to the pre-convergence summary if it comes back broken.
-            if isinstance(tailored_data, dict) and tailored_data.get('summary'):
-                _conv_guard = get_convergence_guard()
-                _guarded_summary, _used_convergence_summary = _conv_guard.validate_convergence_output(
-                    _pre_convergence_summary,
-                    tailored_data['summary'],
-                )
-                tailored_data['summary'] = _guarded_summary
-                print(f"[tailor] TASK 2: convergence guard applied (used_convergence_output={_used_convergence_summary})")
-
-            if convergence_result['status'] == 'converged':
-                convergence_iterations = convergence_result['iterations']
-                print(f"[tailor] Convergence complete: {convergence_result['final_score']:.1f}/100")
-                for it in convergence_iterations:
-                    print(f"  Iter {it['iteration']}: {it['score']:.1f}% (+{it['gain']:.1f} from {it['edit_applied']})")
+            _jd_tiers = JDTierExtractor().extract_tiered_requirements(jd_text)
+            gap_report = build_gap_report(tailored_data, _jd_tiers)
+            if gap_report['status'] == 'ok':
+                print(f"[tailor] JD coverage: required={gap_report['coverage']['required']:.0f}%, "
+                      f"preferred={gap_report['coverage']['preferred']:.0f}%")
+                if gap_report['required_missing']:
+                    print(f"[tailor] Unmet required: {gap_report['required_missing']}")
             else:
-                print(f"[tailor] Convergence {convergence_result['status']}: {convergence_result.get('message', '')}")
+                print(f"[tailor] Gap report unavailable: {gap_report['reason']}")
         except Exception as e:
-            print(f"[tailor] convergence engine failed (non-fatal): {e}")
+            print(f"[tailor] gap report failed (non-fatal): {e}")
 
     # ========== TASK 4: AGGRESSIVE SKILL CLEANUP (final safety net) ==========
     # validate_skill() at the hard-skills-injection gate only catches junk
     # introduced by that one step. This runs last, right before the PDF is
     # rendered and the resume is scored, and catches nonsense skills from
     # ANY source (AI's own tailoring output, master-skill preservation,
-    # guarantee engine injection, convergence engine edits, etc.).
+    # guarantee engine injection, etc.).
     if isinstance(tailored_data, dict):
         try:
-            tailored_data = aggressive_skill_cleanup(tailored_data)
+            tailored_data = aggressive_skill_cleanup(
+                tailored_data, master_skills=master_skill_names)
         except Exception as e:
             print(f"[tailor] aggressive skill cleanup failed (non-fatal): {e}")
 
     # ========== TASK 5: FINAL SUMMARY INTEGRITY CHECK (last safety net) ==========
     # Everything before this point already protects the summary at each
     # individual stage (construction from master, Task 2's validator right
-    # after, curated_summary save/restore around the structure validator,
-    # ConvergenceGuard around convergence). This is the one final check of
-    # the truly-final summary against the master, right before output.
+    # after, curated_summary save/restore around the structure validator).
+    # This is the one final check of the truly-final summary against the
+    # master, right before output.
     if isinstance(tailored_data, dict) and master:
         try:
             _final_summary, _was_restored = verify_summary_integrity(
@@ -4815,28 +4408,64 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
     # Wired in here, non-fatal like every other check in this block: it logs
     # the score/issues and stores them on the resume for visibility instead of
     # silently sending a low-quality resume.
+    #
+    # Enforce one page BEFORE the quality gate, so the gate judges the document
+    # that actually ships. Running it after meant the gate evaluated a 34-skill
+    # resume that reduction then cut down — failing role_consistency on content
+    # the PDF was never going to contain. Same principle as D9: judge the
+    # document you produce.
     if isinstance(tailored_data, dict):
+        try:
+            tailored_data = enforce_one_page(tailored_data)
+        except Exception as e:
+            print(f"[tailor] one-page enforcement failed (non-fatal): {e}")
+
+    # This gate BLOCKS. It previously computed a report, printed it, and fell
+    # through to render_latex twelve lines later — `_quality_report` was
+    # written and read nowhere. For a system whose failure mode is shipping a
+    # bad document, a check that cannot stop the document is not a check.
+    # Send force=true to override deliberately.
+    if isinstance(tailored_data, dict):
+        _gate_report = None
         try:
             from app.validators.quality_validator import run_quality_gates
             _role_level_for_qa = detected_role_level if 'detected_role_level' in locals() else 'mid_level'
-            quality_report = run_quality_gates(tailored_data, _role_level_for_qa)
-            tailored_data['_quality_report'] = quality_report
+            _gate_report = run_quality_gates(
+                tailored_data, _role_level_for_qa, master_skills=master_skill_names)
+            tailored_data['_quality_report'] = _gate_report
 
-            print(f"[tailor] TASK 10: Quality gate — score {quality_report['overall_score']:.1f}/100, "
-                  f"pass={quality_report['overall_pass']}")
-            if not quality_report['overall_pass']:
-                if not quality_report['summary']['is_valid']:
-                    print(f"[tailor]   ⚠ Summary issues: {quality_report['summary']['issues']}")
-                if not quality_report['skills']['is_valid']:
-                    print(f"[tailor]   ⚠ Invalid skills: {quality_report['skills']['invalid_skills']}")
-                if not quality_report['categorization']['is_valid']:
-                    print(f"[tailor]   ⚠ Categorization issues: {quality_report['categorization']['issues']}")
-                if not quality_report['naturalness']['is_valid']:
-                    print(f"[tailor]   ⚠ AI-sounding phrases: {quality_report['naturalness']['flagged_phrases']}")
-                if not quality_report['role_consistency']['is_valid']:
-                    print(f"[tailor]   ⚠ Role consistency issues: {quality_report['role_consistency']['issues']}")
+            print(f"[tailor] Quality gate — score {_gate_report['overall_score']:.1f}/100, "
+                  f"pass={_gate_report['overall_pass']}")
+            if not _gate_report['overall_pass']:
+                for _key, _label in (
+                    ('summary', 'Summary issues'),
+                    ('skills', 'Invalid skills'),
+                    ('evidence', 'Skills without evidence'),
+                    ('categorization', 'Categorization issues'),
+                    ('naturalness', 'AI-sounding phrases'),
+                    ('role_consistency', 'Role consistency issues'),
+                ):
+                    if not _gate_report[_key]['is_valid']:
+                        _detail = (_gate_report[_key].get('issues')
+                                   or _gate_report[_key].get('invalid_skills')
+                                   or _gate_report[_key].get('skills_without_evidence')
+                                   or _gate_report[_key].get('flagged_phrases'))
+                        print(f"[tailor]   ⚠ {_label}: {_detail}")
         except Exception as e:
-            print(f"[tailor] TASK 10 quality gate failed (non-fatal): {e}")
+            # A gate that crashes must not silently pass the document.
+            print(f"[tailor] Quality gate errored: {e}")
+            return jsonify({
+                'error': 'quality_gate_error',
+                'message': str(e),
+                'hint': 'Re-send with force=true to bypass the quality gate.',
+            }), 500
+
+        if not _gate_report['overall_pass'] and not data.get('force'):
+            return jsonify({
+                'error': 'quality_gate_failed',
+                'report': _gate_report,
+                'hint': 'Fix the issues above, or re-send with force=true to override.',
+            }), 422
 
     # generate the latex
     latex_output = ''
@@ -5045,29 +4674,33 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
             version.resume_latex = latex_output
             version.score_breakdown = ats
             version.pipeline_steps = pipeline_steps
-            if convergence_iterations:
-                version.ats_score_before_convergence = convergence_iterations[0]['score']
-                version.ats_score_after_convergence = convergence_result['final_score']
-                version.convergence_iterations = convergence_iterations
-                version.convergence_applied = True
             db.session.add(version)
             db.session.commit()
             print(f"[tailor] Resume version {version.version_number} saved for application {app_record.id}")
 
         try:
             _save_to_db()
-        except Exception as db_err:
-            # Handle stale/broken DB connections (e.g. SSL drop during long NVIDIA timeouts)
-            print(f"[tailor] DB save failed: {db_err}. Rolling back and retrying...")
+        except (OperationalError, InterfaceError) as conn_err:
+            # Transient only (e.g. SSL drop during a long model call). The retry
+            # resets app_record so fresh objects are built against the new
+            # session — which is why it must NOT run for deterministic errors:
+            # a schema mismatch cannot succeed on retry, and the reset would
+            # orphan one Application row per attempt.
+            print(f"[tailor] DB connection lost: {conn_err}. Rolling back and retrying...")
+            db.session.rollback()
+            app_record = None
             try:
-                db.session.rollback()
-                app_record = None  # reset so retry creates fresh objects
                 _save_to_db()
                 print("[tailor] DB save succeeded on retry")
             except Exception as retry_err:
                 print(f"[tailor] DB save retry also failed: {retry_err}. Skipping DB save.")
                 db.session.rollback()
-                app_record = None  # ensure we don't reference a broken record
+                app_record = None
+        except Exception as db_err:
+            # Deterministic (schema mismatch, bad data) — retrying cannot help.
+            print(f"[tailor] DB save failed, not retrying: {db_err}")
+            db.session.rollback()
+            app_record = None
 
     # (PHASE 6.5 MOVED: Guarantee engine now runs as PHASE 3 immediately after AI tailoring)
 
@@ -5159,14 +4792,22 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
         print(f"[tailor] ║         FINAL RESUME QUALITY ASSESSMENT               ║")
         print(f"[tailor] ╚═══════════════════════════════════════════════════════╝")
 
-        # Calculate scores
-        # FIX #1: Use ATS scorer's hard skills score (already calculated correctly)
+        # Calculate scores.
+        #
+        # D13: this composite is the number the user actually sees. Before
+        # remediation, 50 of its ~86 points were self-awarded: keywords_score
+        # was the literal constant 100, and the heaviest single weight (0.35)
+        # measured whether the pipeline's own soft-skill injector had pasted
+        # its own substring back in. Both terms are gone. What remains is
+        # measured against the finished document, so the number can now fall.
         hard_skills_score = ats.get('breakdown', {}).get('hard_skills', 0)
 
-        # FIX #2: Use soft skills verification results (already calculated correctly)
-        soft_skills_score = soft_skills_verification_score
-
-        keywords_score = 100  # Base from keyword extraction
+        # Required-tier JD coverage from the read-only gap report. Unlike the
+        # old constant, this can be low — that is the point.
+        if gap_report and gap_report.get('status') == 'ok':
+            jd_coverage_score = gap_report['coverage']['required']
+        else:
+            jd_coverage_score = hard_skills_score  # gap report unavailable
 
         # Use coherence_check if it was computed
         try:
@@ -5182,10 +4823,9 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
 
         # Composite ATS score (weighted)
         composite_score = (
-            hard_skills_score * 0.25 +    # Hard skills importance
-            soft_skills_score * 0.35 +     # Soft skills importance (modern ATS)
-            keywords_score * 0.15 +         # Keyword matching
-            coherence_score_val * 0.15 +    # Resume coherence
+            hard_skills_score * 0.40 +      # Hard skills present in the document
+            jd_coverage_score * 0.25 +      # Required JD requirements evidenced
+            coherence_score_val * 0.25 +    # Resume coherence
             timeline_score * 0.10           # Timeline validity
         )
 
@@ -5194,8 +4834,7 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
         print(f"[tailor] │ COMPONENT SCORES                                    │")
         print(f"[tailor] ├─────────────────────────────────────────────────────┤")
         print(f"[tailor] │ Hard Skills Match:    {hard_skills_score:5.0f}%  {'✓' if hard_skills_score >= 90 else '✗'}")
-        print(f"[tailor] │ Soft Skills Match:    {soft_skills_score:5.0f}%  {'✓' if soft_skills_score >= 70 else '✗'}")
-        print(f"[tailor] │ Keyword Match:        {keywords_score:5.0f}%  {'✓' if keywords_score >= 90 else '✗'}")
+        print(f"[tailor] │ JD Required Coverage: {jd_coverage_score:5.0f}%  {'✓' if jd_coverage_score >= 90 else '✗'}")
         print(f"[tailor] │ Role Coherence:       {coherence_score_val:5.0f}%  {'✓' if coherence_score_val >= 90 else '✗'}")
         print(f"[tailor] │ Timeline Validity:    {timeline_score:5.0f}%  {'✓' if timeline_score >= 90 else '✗'}")
         print(f"[tailor] └─────────────────────────────────────────────────────┘")
@@ -5209,7 +4848,7 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
             recommendation = "Confidence: High. Submit this resume."
         elif composite_score >= 70:
             readiness = "⚠ ACCEPTABLE"
-            recommendation = "Confidence: Medium. Consider improving soft skills."
+            recommendation = "Confidence: Medium. Review the unmet JD requirements."
         elif composite_score >= 60:
             readiness = "⚠ MARGINAL"
             recommendation = "Confidence: Low. Major improvements recommended."
@@ -5224,8 +4863,7 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
         # Add to response
         quality_report = {
             'hard_skills_score': hard_skills_score,
-            'soft_skills_score': soft_skills_score,
-            'keywords_score': keywords_score,
+            'jd_coverage_score': jd_coverage_score,
             'coherence_score': coherence_score_val,
             'timeline_score': timeline_score,
             'estimated_ats_score': composite_score,
@@ -5245,6 +4883,8 @@ Does any bullet demonstrate '{skill}'? Answer yes or no only.
         'application_id': app_record.id if app_record else None,
         'quality_report': quality_report,
         'routing_report': routing_report,
+        # Gaps the resume cannot honestly close — reported, never filled.
+        'gap_report': gap_report,
     })
 
 

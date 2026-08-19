@@ -268,21 +268,35 @@ def validate_skill_with_confidence(skill_text):
 # hard-skills-injection step that validate_skill() already gates.
 # ═══════════════════════════════════════════════════════════════════
 
-def aggressive_cleanup(resume_json, min_confidence=0.7):
+def aggressive_cleanup(resume_json, master_skills=None, min_confidence=0.7):
     """
     Final cleanup pass: validate every skill in resume_json['skills'] and
     drop anything that doesn't pass, regardless of how it got there.
 
+    Evidence beats heuristics. A skill present in the master resume is kept
+    regardless of confidence; the regex allowlist only filters skills that
+    have NO evidence behind them.
+
+    This matters because the allowlist cannot tell a true obscure skill from
+    a fabricated famous one — Prometheus and Dynatrace both score 0.60. The
+    master resume is the only thing in the system that knows which of the two
+    the candidate actually has.
+
     Args:
         resume_json: Resume dict with a 'skills' key
             (list of {'category': str, 'items': [str, ...]})
-        min_confidence: Minimum confidence threshold (default 0.7)
+        master_skills: iterable of skill names from the master resume. Skills
+            in this set are always kept. Pass None/empty to fall back to
+            allowlist-only behaviour.
+        min_confidence: Minimum confidence threshold for UNEVIDENCED skills.
 
     Returns:
         The same resume_json dict, mutated in place, with 'skills' cleaned.
     """
     if not isinstance(resume_json, dict) or 'skills' not in resume_json:
         return resume_json
+
+    master = {str(s).lower().strip() for s in (master_skills or set())}
 
     cleaned_skills = []
     total_removed = 0
@@ -293,12 +307,19 @@ def aggressive_cleanup(resume_json, min_confidence=0.7):
 
         cleaned_items = []
         for item in items:
+            if item.lower().strip() in master:
+                cleaned_items.append(item)      # evidenced → keep, no questions
+                continue
             is_valid, reason, confidence = validate_skill_with_confidence(item)
             if is_valid and confidence >= min_confidence:
                 cleaned_items.append(item)
             else:
                 total_removed += 1
-                print(f"[tailor] ✗ Skill '{item}' REMOVED from {category_name} (final cleanup): {reason}")
+                # Report why it was REMOVED. The old code printed `reason`,
+                # which for the 0.5-0.7 band is the acceptance string
+                # "Probably valid" — a removal that logged an approval.
+                print(f"[tailor] ✗ Skill '{item}' REMOVED from {category_name} "
+                      f"(no master-resume evidence; confidence={confidence:.2f})")
 
         if cleaned_items:
             cleaned_skills.append({'category': category_name, 'items': cleaned_items})

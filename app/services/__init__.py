@@ -8,5 +8,5 @@ from app.services.prompts import (
     interview_planner,
     cover_letter,
 )
-from app.services.latex_engine import render_latex, sanitize_latex
+from app.services.latex_engine import render_latex, sanitize_latex, enforce_one_page
 from app.services.ats_scorer import calculate_ats_score

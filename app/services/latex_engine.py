@@ -188,28 +188,23 @@ def _cap_skills_per_category(resume_data, max_per_cat=8):
     print(f"[tailor] ✓ CHECKPOINT 5: LaTeX protection applied")
 
 
-def render_latex(resume_data):
-    """Build a .tex file that matches Meet_Patel_Resume_v4.tex template EXACTLY.
+def enforce_one_page(resume_data):
+    """Reduce content until it fits one page. Mutates and returns resume_data.
 
-    Spacing is calculated dynamically based on content volume to ensure
-    the resume always fits on exactly one page.
+    D9: this was inline in render_latex, which deep-copied first — so the
+    caller's dict kept every skill while the rendered .tex lost some. Since
+    the ATS score is computed from the caller's dict, the score described a
+    document that was never produced. (Observed: GCP was injected, scored,
+    and silently dropped by 'capped skills Tools & Platforms: 8 -> 7'.)
+
+    Extracted and made mutating so the scored document and the rendered
+    document are the same object. render_latex is now a pure function of its
+    input, and callers must run this first.
     """
-    header = resume_data.get('header', {})
-    s = sanitize_latex
-
-    # estimate content and pick spacing tier
     est_lines = _estimate_lines(resume_data)
-    use_small_font = False
-    left_margin = '0.7in'
-    right_margin = '0.7in'
 
-    # Progressive content reduction for strict 1-page enforcement
     # NOTE: We NEVER trim bullet text — only cap skills to save lines
     if est_lines > 62:
-        import copy
-        resume_data = copy.deepcopy(resume_data)
-
-        # Only cap skills — DO NOT trim bullets
         _cap_skills_per_category(resume_data, max_per_cat=8)
         _trim_bullets_to_fit(resume_data, max_chars=155)  # logging only, no truncation
         est_lines = _estimate_lines(resume_data)
@@ -220,6 +215,27 @@ def render_latex(resume_data):
             _cap_skills_per_category(resume_data, max_per_cat=6)
             est_lines = _estimate_lines(resume_data)
             print(f"[latex] 1-page pass 2 (skills capped to 6): est={est_lines}")
+
+    return resume_data
+
+
+def render_latex(resume_data):
+    """Build a .tex file that matches Meet_Patel_Resume_v4.tex template EXACTLY.
+
+    Spacing is calculated dynamically based on content volume to ensure
+    the resume always fits on exactly one page.
+
+    Pure with respect to resume_data: call enforce_one_page() first if the
+    content may overflow.
+    """
+    header = resume_data.get('header', {})
+    s = sanitize_latex
+
+    # estimate content and pick spacing tier
+    est_lines = _estimate_lines(resume_data)
+    use_small_font = False
+    left_margin = '0.7in'
+    right_margin = '0.7in'
 
     # Tier thresholds calibrated to actual LaTeX rendering capacity:
     #   light/medium: ~60 usable lines (0.45in margins, no enlarge)

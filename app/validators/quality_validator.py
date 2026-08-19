@@ -143,10 +143,30 @@ def validate_all_skills(resume_json):
 # Ensures skills have evidence in experience bullets
 # ═══════════════════════════════════════════════════════════════════
 
-def validate_skill_evidence(resume_json):
+def validate_skill_evidence(resume_json, master_skills=None):
     """
-    Validate that skills have evidence in experience/projects.
-    
+    Validate that every skill claimed in the Skills section is backed by
+    something — either the master resume, or prose elsewhere in the document.
+
+    Two things this deliberately does NOT do:
+
+    1. It does not require a bullet per skill. Real resumes list tools
+       (Jira, Postman, GitHub) that never earn their own bullet. Demanding
+       one would fail every honest resume ever written.
+    2. It does not read only bullets. Project tech stacks and education
+       coursework are evidence too — PyTorch and Hugging Face live in a
+       project's tech_stack, Embedded Systems in coursework. Reading only
+       bullets reported all of them as fabricated.
+
+    What it DOES catch is the thing that matters: a skill that appears in
+    neither the master resume nor anywhere in the document's prose — i.e. one
+    the pipeline injected because a JD asked for it.
+
+    Args:
+        resume_json: the resume dict
+        master_skills: skill names from the master resume. Anything here is
+            evidenced by definition — the candidate genuinely has it.
+
     Returns: {
         'is_valid': bool,
         'skills_with_evidence': int,
@@ -154,15 +174,36 @@ def validate_skill_evidence(resume_json):
         'coverage_percentage': float
     }
     """
-    # Collect all experience/project text
-    evidence_text = ''
+    def _norm(text):
+        """Loose key for master-set comparison: 'Object-Oriented Programming
+        (OOP)' and 'object oriented programming oop' should match. Keeps
+        +#. so C++, C# and Node.js stay distinct."""
+        return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9+#.]+', ' ', str(text).lower())).strip()
+
+    master = set()
+    for s in (master_skills or set()):
+        master.add(str(s).lower().strip())
+        master.add(_norm(s))
+
+    # Collect every piece of prose that can evidence a skill.
+    evidence_parts = [resume_json.get('summary', '') or '']
     for exp in resume_json.get('experience', []):
-        for bullet in exp.get('bullets', []):
-            evidence_text += ' ' + bullet.lower()
+        evidence_parts.extend(exp.get('bullets', []) or [])
+        evidence_parts.append(exp.get('title', '') or '')
     for proj in resume_json.get('projects', []):
-        for bullet in proj.get('bullets', []):
-            evidence_text += ' ' + bullet.lower()
-    
+        evidence_parts.extend(proj.get('bullets', []) or [])
+        evidence_parts.append(proj.get('tech_stack', '') or '')
+        evidence_parts.append(proj.get('name', '') or '')
+    for edu in resume_json.get('education', []):
+        details = edu.get('details', '') or ''
+        if isinstance(details, list):
+            evidence_parts.extend(details)
+        else:
+            evidence_parts.append(details)
+        evidence_parts.append(edu.get('degree', '') or '')
+
+    evidence_text = ' ' + ' '.join(str(p).lower() for p in evidence_parts) + ' '
+
     # Check each skill
     skills_with_evidence = 0
     skills_without_evidence = []
@@ -172,10 +213,29 @@ def validate_skill_evidence(resume_json):
         for skill in skill_group.get('items', []):
             total_skills += 1
             skill_lower = skill.lower()
-            
-            # Check if any word from the skill appears in evidence
-            skill_words = [w for w in skill_lower.split() if len(w) > 2]
-            has_evidence = any(word in evidence_text for word in skill_words)
+
+            # Present in the master resume → evidenced, no further questions.
+            # Same standard aggressive_cleanup uses; the master resume is the
+            # only thing in this system that knows what the candidate has.
+            if skill_lower.strip() in master or _norm(skill) in master:
+                skills_with_evidence += 1
+                continue
+
+            # EVERY token of the skill must appear on a word boundary.
+            # `any(word in evidence_text ...)` passed 'cloud platforms' on the
+            # bare word 'cloud', which made this check pass almost anything —
+            # unacceptable now that it participates in overall_pass.
+            #
+            # Skills whose tokens are all <=2 chars ('Go', 'R', 'C', 'AI') have
+            # no long tokens to match on, so they match the whole name instead.
+            # Dropping them outright would report a skill named in the bullets
+            # as unevidenced.
+            skill_tokens = {w for w in skill_lower.split() if len(w) > 2}
+            if not skill_tokens:
+                skill_tokens = {skill_lower.strip()}
+            has_evidence = all(
+                re.search(rf'\b{re.escape(w)}\b', evidence_text) for w in skill_tokens
+            )
             
             if has_evidence:
                 skills_with_evidence += 1
@@ -185,7 +245,14 @@ def validate_skill_evidence(resume_json):
     coverage = (skills_with_evidence / total_skills * 100) if total_skills > 0 else 100
     
     return {
-        'is_valid': coverage >= 70,  # Allow some skills without direct evidence
+        # 90, not 70. The old tolerance assumed evidence meant "has a bullet",
+        # where many legitimate skills genuinely have none. Now that the master
+        # resume counts as evidence, an unevidenced skill is a skill the
+        # candidate does not demonstrably have — i.e. injected. At 70% a resume
+        # could carry four fabricated tools and still pass. The remaining slack
+        # absorbs naming variation (master "RESTful APIs" vs output "REST API"),
+        # not fabrication.
+        'is_valid': coverage >= 90,
         'skills_with_evidence': skills_with_evidence,
         'skills_without_evidence': skills_without_evidence,
         'coverage_percentage': coverage
@@ -284,7 +351,7 @@ def validate_role_consistency(resume_json, detected_role_level):
 # only. This reuses that same pattern list, generalized to scan the
 # WHOLE resume (summary + every experience/project bullet), so a bullet
 # that becomes AI-sounding from some OTHER pipeline step (hard-skill
-# injection, convergence-engine edits) is also caught — not just soft
+# injection) is also caught — not just soft
 # skill injections.
 # ═══════════════════════════════════════════════════════════════════
 
@@ -343,7 +410,7 @@ def validate_keyword_naturalness(resume_json):
 # Master Quality Gate — Runs all validators
 # ═══════════════════════════════════════════════════════════════════
 
-def run_quality_gates(resume_json, detected_role_level='mid_level'):
+def run_quality_gates(resume_json, detected_role_level='mid_level', master_skills=None):
     """
     Run all quality validation gates.
     
@@ -359,25 +426,32 @@ def run_quality_gates(resume_json, detected_role_level='mid_level'):
     """
     summary_result = validate_summary_quality(resume_json.get('summary', ''))
     skills_result = validate_all_skills(resume_json)
-    evidence_result = validate_skill_evidence(resume_json)
+    evidence_result = validate_skill_evidence(resume_json, master_skills=master_skills)
     categorization_result = validate_skill_categorization(resume_json)
     role_result = validate_role_consistency(resume_json, detected_role_level)
     naturalness_result = validate_keyword_naturalness(resume_json)  # TASK 10 fix
 
+    # `evidence` was 20% of the score but excluded from overall_pass — the one
+    # check that can catch fabrication could not fail the gate. Now it can.
     overall_pass = all([
         summary_result['is_valid'],
         skills_result['is_valid'],
+        evidence_result['is_valid'],
         categorization_result['is_valid'],
         role_result['is_valid'],
         naturalness_result['is_valid'],
     ])
 
+    # Conversely, role_consistency counted toward overall_pass but not toward
+    # overall_score, which is how a run could report "score 90.3, pass=False".
+    # Every component that can fail the gate now also moves the number.
     overall_score = (
         summary_result['score'] * 0.20 +
-        skills_result['score'] * 0.20 +
+        skills_result['score'] * 0.15 +
         evidence_result['coverage_percentage'] * 0.20 +
-        (100 if categorization_result['is_valid'] else 50) * 0.20 +
-        naturalness_result['score'] * 0.20
+        (100 if categorization_result['is_valid'] else 50) * 0.15 +
+        (100 if role_result['is_valid'] else 50) * 0.15 +
+        naturalness_result['score'] * 0.15
     )
 
     return {

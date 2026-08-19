@@ -1621,62 +1621,12 @@ Return ONLY the tailored summary (no explanation, no quotes)."""
 
 
 # ============================================================================
-# SECTION 2: CONVERGENCE ENGINE PROTECTION
-# ============================================================================
-
-class ConvergenceGuard:
-    """
-    Prevents convergence engine from violating Task 2 constraints.
-    Wraps convergence output validation.
-    """
-
-    def __init__(self):
-        self.summary_gen = SummaryGenerator()
-
-    def validate_convergence_output(self, original_summary: str,
-                                   convergence_summary: str) -> Tuple[str, bool]:
-        """
-        Validate convergence engine output against Task 2 constraints.
-        If convergence breaks rules, revert to original.
-
-        Args:
-            original_summary: Summary before convergence
-            convergence_summary: Summary after convergence
-
-        Returns:
-            (final_summary: str, used_convergence: bool)
-        """
-        # Validate convergence output
-        is_valid, issues = self.summary_gen.validate_summary_completeness(convergence_summary)
-
-        if is_valid:
-            print(f"[tailor] ✓ Convergence output valid, using it")
-            return convergence_summary, True
-        else:
-            # Fix convergence output
-            fixed, report = self.summary_gen.validate_and_fix_summary(convergence_summary)
-
-            if report['final_valid']:
-                print(f"[tailor] ✓ Fixed convergence output, using fixed version")
-                return fixed, True
-            else:
-                print(f"[tailor] ✗ Convergence output invalid and unfixable, "
-                      f"reverting to original")
-                return original_summary, False
-
-
-# ============================================================================
 # SECTION 3: INTEGRATION FUNCTIONS
 # ============================================================================
 
 def get_summary_generator() -> SummaryGenerator:
     """Factory function to get summary generator instance."""
     return SummaryGenerator()
-
-
-def get_convergence_guard() -> ConvergenceGuard:
-    """Factory function to get convergence guard instance."""
-    return ConvergenceGuard()
 
 
 # ============================================================================
@@ -1688,8 +1638,8 @@ def get_convergence_guard() -> ConvergenceGuard:
 # level); SummaryGenerator.validate_and_fix_summary() runs immediately after
 # construction (Task 2); curated_summary is saved before the structure
 # validator and restored after (tailor.py's "RE-ENFORCE curated skills,
-# summary & header" block); and ConvergenceGuard wraps the convergence
-# engine. Rather than adding a fifth, mostly-redundant "SummaryPreserver"
+# summary & header" block). Rather than adding a fourth, mostly-redundant
+# "SummaryPreserver"
 # class (TASK_5_COMPLETE_SOLUTION.md's config values — 400/350/50 chars —
 # are identical to SummaryConstraints above), this adds the one thing none
 # of those four cover: a final check of the truly-final summary against the
